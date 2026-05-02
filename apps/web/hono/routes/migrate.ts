@@ -7,9 +7,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Hono } from 'hono';
+import { createLogger } from '@dns-ops/logging';
 import { sql } from 'drizzle-orm';
+import { Hono } from 'hono';
 import type { Env } from '../types.js';
+
+const logger = createLogger({ service: 'migrate-routes' });
 
 const migrateRoutes = new Hono<Env>();
 
@@ -48,7 +51,15 @@ const CRITICAL_COLUMNS: Record<string, string[]> = {
   suggestions: ['id', 'domain_id', 'tenant_id', 'action', 'target', 'description'],
   domain_notes: ['id', 'domain_id', 'tenant_id', 'content', 'created_by', 'created_at'],
   domain_tags: ['id', 'domain_id', 'tenant_id', 'tag', 'created_by', 'created_at'],
-  monitored_domains: ['id', 'domain_id', 'schedule', 'tenant_id', 'created_by', 'created_at', 'is_active'],
+  monitored_domains: [
+    'id',
+    'domain_id',
+    'schedule',
+    'tenant_id',
+    'created_by',
+    'created_at',
+    'is_active',
+  ],
   alerts: ['id', 'monitored_domain_id', 'tenant_id', 'status', 'severity', 'message'],
   audit_events: ['id', 'tenant_id', 'action', 'actor_id', 'created_at'],
   ruleset_versions: ['id', 'version', 'rules', 'tenant_id', 'created_at'],
@@ -70,7 +81,7 @@ migrateRoutes.get('/status', async (c) => {
   }
 
   try {
-    const results = await db.getDrizzle().execute(sql`
+    const results = await db.execute(sql`
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -82,12 +93,15 @@ migrateRoutes.get('/status', async (c) => {
     const missingTables = REQUIRED_TABLES.filter((t) => !existingTables.includes(t));
 
     if (missingTables.length > 0) {
-      return c.json({
-        status: 'incomplete',
-        missingTables,
-        existingTables,
-        message: `Missing tables: ${missingTables.join(', ')}`,
-      }, 200);
+      return c.json(
+        {
+          status: 'incomplete',
+          missingTables,
+          existingTables,
+          message: `Missing tables: ${missingTables.join(', ')}`,
+        },
+        200
+      );
     }
 
     return c.json({
@@ -114,7 +128,7 @@ migrateRoutes.get('/schema', async (c) => {
     const schemaResults: Record<string, { columns: string[]; missing: string[] }> = {};
 
     for (const [table, requiredCols] of Object.entries(CRITICAL_COLUMNS)) {
-      const colResults = await db.getDrizzle().execute(sql`
+      const colResults = await db.execute(sql`
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = ${table} AND table_schema = 'public'
@@ -136,11 +150,14 @@ migrateRoutes.get('/schema', async (c) => {
       .map(([table, data]) => ({ table, missing: data.missing }));
 
     if (tablesWithMissing.length > 0) {
-      return c.json({
-        status: 'incomplete',
-        issues: tablesWithMissing,
-        message: `${tablesWithMissing.length} tables have missing columns`,
-      }, 200);
+      return c.json(
+        {
+          status: 'incomplete',
+          issues: tablesWithMissing,
+          message: `${tablesWithMissing.length} tables have missing columns`,
+        },
+        200
+      );
     }
 
     return c.json({
@@ -164,8 +181,11 @@ migrateRoutes.post('/reset', async (c) => {
   }
 
   try {
-    await db.getDrizzle().execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
-    return c.json({ status: 'reset', message: 'Migration tracker cleared. Migrations will re-run on next request.' });
+    await db.execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
+    return c.json({
+      status: 'reset',
+      message: 'Migration tracker cleared. Migrations will re-run on next request.',
+    });
   } catch (err: any) {
     return c.json({ status: 'error', message: err.message }, 500);
   }
@@ -224,15 +244,15 @@ migrateRoutes.post('/rebuild', async (c) => {
 
     for (const table of tablesToDrop) {
       try {
-        await db.getDrizzle().execute(sql.raw(`DROP TABLE IF EXISTS "${table}" CASCADE;`));
-        console.log(`[Rebuild] Dropped ${table}`);
+        await db.execute(sql.raw(`DROP TABLE IF EXISTS "${table}" CASCADE;`));
+        logger.info(`[Rebuild] Dropped ${table}`);
       } catch (err: any) {
-        console.log(`[Rebuild] Could not drop ${table}: ${err.message}`);
+        logger.warn(`[Rebuild] Could not drop ${table}: ${err.message}`);
       }
     }
 
     // Clear migration tracker
-    await db.getDrizzle().execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
+    await db.execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
 
     return c.json({
       status: 'rebuilt',
@@ -255,7 +275,14 @@ migrateRoutes.post('/run-init', async (c) => {
   }
 
   try {
-    const migrationFile = join(process.cwd(), 'packages', 'db', 'src', 'migrations', '0000_nebulous_steve_rogers.sql');
+    const migrationFile = join(
+      process.cwd(),
+      'packages',
+      'db',
+      'src',
+      'migrations',
+      '0000_nebulous_steve_rogers.sql'
+    );
     const content = await readFile(migrationFile, 'utf-8');
     const statements = content
       .split('--> statement-breakpoint')
@@ -266,7 +293,7 @@ migrateRoutes.post('/run-init', async (c) => {
 
     for (const statement of statements) {
       try {
-        await db.getDrizzle().execute(sql.raw(statement));
+        await db.execute(sql.raw(statement));
         results.push({ statement: statement.slice(0, 60), status: 'ok' });
       } catch (err: any) {
         const errorMsg = err.message || String(err);
@@ -276,6 +303,7 @@ migrateRoutes.post('/run-init', async (c) => {
           'cannot drop',
           'DuplicateObject',
           'duplicate_object',
+          'no such table',
         ];
         const isSkipped = skipErrors.some((e) => errorMsg.includes(e));
         results.push({
@@ -288,11 +316,14 @@ migrateRoutes.post('/run-init', async (c) => {
 
     const errors = results.filter((r) => r.status === 'error');
     if (errors.length > 0) {
-      return c.json({
-        status: 'partial',
-        total: results.length,
-        errors: errors.map((e) => ({ statement: e.statement, error: e.error })),
-      }, 200);
+      return c.json(
+        {
+          status: 'partial',
+          total: results.length,
+          errors: errors.map((e) => ({ statement: e.statement, error: e.error })),
+        },
+        200
+      );
     }
 
     return c.json({

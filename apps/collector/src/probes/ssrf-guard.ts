@@ -279,12 +279,15 @@ export function checkResolvedIP(ip: string): SSRFCheckResult {
 export async function resolveAndCheck(
   hostname: string
 ): Promise<{ allowed: true; ip: string } | (SSRFCheckResult & { allowed: false })> {
-  // Skip resolution for IP literals — checkSSRF handles them directly
+  // Check hostname/IP against SSRF blocklists first (covers empty, localhost, IP literals)
+  const ssrfResult = checkSSRF(hostname);
+  if (!ssrfResult.allowed) {
+    return { ...ssrfResult, allowed: false as const };
+  }
+
+  // Skip resolution for IP literals — we already checked them above
   if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname.includes(':')) {
-    const result = checkSSRF(hostname);
-    return result.allowed
-      ? { allowed: true, ip: hostname }
-      : { ...result, allowed: false as const };
+    return { allowed: true, ip: hostname };
   }
 
   try {

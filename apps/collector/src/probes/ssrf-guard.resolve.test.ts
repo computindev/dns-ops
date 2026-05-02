@@ -21,15 +21,21 @@
  *   Same TOCTOU gap in a different call site. Both must be checked.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-// We test the exported function directly — it's a pure async function
-// that calls dns.promises.lookup internally
+import { promises as dnsPromises } from 'node:dns';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkSSRF, resolveAndCheck, validateUrl } from './ssrf-guard.js';
 
+vi.mock('node:dns', () => ({
+  promises: {
+    lookup: vi.fn(),
+  },
+}));
+
+const mockLookup = dnsPromises.lookup as ReturnType<typeof vi.fn>;
+
 describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+  beforeEach(() => {
+    mockLookup.mockReset();
   });
 
   describe('IP literal passthrough', () => {
@@ -64,66 +70,79 @@ describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
 
   describe('hostname resolution', () => {
     it('blocks hostname that resolves to private IP (the DNS rebinding case)', async () => {
-      // Mock dns.promises.lookup to return a private IP
-      vi.doMock('node:dns', () => ({
-        promises: {
-          lookup: vi.fn().mockResolvedValue({ address: '10.0.0.1', family: 4 }),
-        },
-      }));
+      mockLookup.mockResolvedValue({ address: '10.0.0.1', family: 4 });
 
-      // Re-import to pick up the mock
-      const { resolveAndCheck: resolveAndCheckMocked } = await import('./ssrf-guard.js');
-      const result = await resolveAndCheckMocked('evil.attacker.com');
+      const result = await resolveAndCheck('evil.attacker.com');
 
       expect(result.allowed).toBe(false);
       if (!result.allowed) {
         expect(result.reason).toContain('DNS rebinding blocked');
         expect(result.reason).toContain('10.0.0.1');
       }
-
-      vi.doUnmock('node:dns');
     });
 
     it('allows hostname that resolves to public IP', async () => {
-      vi.doMock('node:dns', () => ({
-        promises: {
-          lookup: vi.fn().mockResolvedValue({ address: '93.184.216.34', family: 4 }),
-        },
-      }));
+      mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
 
-      const { resolveAndCheck: resolveAndCheckMocked } = await import('./ssrf-guard.js');
-      const result = await resolveAndCheckMocked('example.com');
+      const result = await resolveAndCheck('example.com');
 
       expect(result.allowed).toBe(true);
       if (result.allowed) {
         expect(result.ip).toBe('93.184.216.34');
       }
-
-      vi.doUnmock('node:dns');
     });
   });
 
   describe('DNS failure handling (BUG-008)', () => {
     it('allows through when DNS resolution fails (ENOTFOUND)', async () => {
-      // This is the critical regression — we must NOT block on DNS failure
+      mockLookup.mockRejectedValue(
+        Object.assign(new Error('getaddrinfo ENOTFOUND nonexistent.invalid.test'), {
+          code: 'ENOTFOUND',
+        })
+      );
+
       const result = await resolveAndCheck('nonexistent.invalid.test');
       expect(result.allowed).toBe(true);
     });
 
     it('allows through when DNS resolution fails (any error)', async () => {
-      vi.doMock('node:dns', () => ({
-        promises: {
-          lookup: vi.fn().mockRejectedValue(new Error('ESERVFAIL')),
-        },
-      }));
+      mockLookup.mockRejectedValue(new Error('ESERVFAIL'));
 
-      const { resolveAndCheck: resolveAndCheckMocked } = await import('./ssrf-guard.js');
-      const result = await resolveAndCheckMocked('timeout.test');
+      const result = await resolveAndCheck('timeout.test');
 
       // Must allow — DNS failure is not a rebinding attack
       expect(result.allowed).toBe(true);
+    });
 
-      vi.doUnmock('node:dns');
+    it('blocks hostname that resolves to private IPv6', async () => {
+      mockLookup.mockResolvedValue({ address: 'fc00::1', family: 6 });
+
+      const result = await resolveAndCheck('evil-ipv6.attacker.com');
+
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.reason).toContain('DNS rebinding blocked');
+        expect(result.reason).toContain('fc00::1');
+      }
+    });
+
+    it('allows hostname that resolves to public IPv6', async () => {
+      mockLookup.mockResolvedValue({ address: '2606:4700:4700::1111', family: 6 });
+
+      const result = await resolveAndCheck('cloudflare-dns.com');
+
+      expect(result.allowed).toBe(true);
+      if (result.allowed) {
+        expect(result.ip).toBe('2606:4700:4700::1111');
+      }
+    });
+
+    it('handles empty hostname gracefully', async () => {
+      const result = await resolveAndCheck('');
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.reason).toContain('empty hostname');
+      }
     });
   });
 });

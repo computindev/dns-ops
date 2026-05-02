@@ -2,11 +2,11 @@
  * Auth Routes - Signup & Login with passwords
  */
 
-import { Hono } from 'hono';
-import { hash, verify } from '@node-rs/argon2';
-import { eq, and, gt } from 'drizzle-orm';
 import { getTenantUUID } from '@dns-ops/contracts';
 import { sessions, users } from '@dns-ops/db/schema';
+import { hash, verify } from '@node-rs/argon2';
+import { and, eq, gt } from 'drizzle-orm';
+import { Hono } from 'hono';
 import type { Env } from '../types.js';
 
 const authRoutes = new Hono<Env>();
@@ -65,7 +65,7 @@ authRoutes.post('/signup', async (c) => {
   }
 
   // Check if user already exists
-  const existingUser = await db.getDrizzle().query.users.findFirst({
+  const existingUser = await (db.getDrizzle() as any).query.users.findFirst({
     where: eq(users.email, email.toLowerCase()),
   });
 
@@ -85,7 +85,7 @@ authRoutes.post('/signup', async (c) => {
   const tenantId = email.split('@')[1];
   const tenantUUID = await getTenantUUID(tenantId);
 
-  await db.getDrizzle().insert(users).values({
+  await (db.getDrizzle() as any).insert(users).values({
     email: email.toLowerCase(),
     passwordHash,
     tenantId: tenantUUID,
@@ -95,8 +95,8 @@ authRoutes.post('/signup', async (c) => {
   // Create session
   const token = generateToken();
   const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
-  
-  await db.getDrizzle().insert(sessions).values({
+
+  await (db.getDrizzle() as any).insert(sessions).values({
     token,
     userEmail: email.toLowerCase(),
     tenantId: tenantUUID,
@@ -129,7 +129,7 @@ authRoutes.post('/login', async (c) => {
   }
 
   // Find user
-  const user = await db.getDrizzle().query.users.findFirst({
+  const user = await (db.getDrizzle() as any).query.users.findFirst({
     where: eq(users.email, email.toLowerCase()),
   });
 
@@ -146,8 +146,8 @@ authRoutes.post('/login', async (c) => {
   // Create session in database
   const token = generateToken();
   const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
-  
-  await db.getDrizzle().insert(sessions).values({
+
+  await (db.getDrizzle() as any).insert(sessions).values({
     token,
     userEmail: user.email,
     tenantId: user.tenantId,
@@ -173,7 +173,7 @@ authRoutes.post('/logout', async (c) => {
 
   if (token && db) {
     // Delete session from database
-    await db.getDrizzle().delete(sessions).where(eq(sessions.token, token));
+    await (db.getDrizzle() as any).delete(sessions).where(eq(sessions.token, token));
   }
 
   c.header('Set-Cookie', 'dns_ops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
@@ -189,7 +189,7 @@ authRoutes.get('/me', async (c) => {
   if (!db) {
     return c.json({ authenticated: false }, 401);
   }
-  
+
   const cookies = parseCookies(c.req.header('Cookie'));
   const token = cookies['dns_ops_session'];
 
@@ -198,11 +198,8 @@ authRoutes.get('/me', async (c) => {
   }
 
   // Find valid session in database
-  const session = await db.getDrizzle().query.sessions.findFirst({
-    where: and(
-      eq(sessions.token, token),
-      gt(sessions.expiresAt, new Date())
-    ),
+  const session = await (db.getDrizzle() as any).query.sessions.findFirst({
+    where: and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())),
   });
 
   if (!session) {

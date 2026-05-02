@@ -48,6 +48,30 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     policy: 'public',
     notes: 'Shared report access via token',
   },
+  {
+    path: '/api/auth/signup',
+    method: 'POST',
+    policy: 'public',
+    notes: 'Public auth endpoint, does not use requireAuth',
+  },
+  {
+    path: '/api/auth/login',
+    method: 'POST',
+    policy: 'public',
+    notes: 'Public auth endpoint, does not use requireAuth',
+  },
+  {
+    path: '/api/auth/logout',
+    method: 'POST',
+    policy: 'auth-read',
+    notes: 'Session endpoint, checks cookie directly not requireAuth',
+  },
+  {
+    path: '/api/auth/me',
+    method: 'GET',
+    policy: 'auth-read',
+    notes: 'Session endpoint, checks cookie directly not requireAuth',
+  },
 
   // =============================================================================
   // ADMIN ROUTES - requireAdminAccess
@@ -461,6 +485,19 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     policy: 'auth-read',
     notes: 'Router-level auth, uses requireAuth',
   },
+  // Migrate routes (admin only)
+  {
+    path: '/api/migrate/status',
+    method: 'GET',
+    policy: 'admin',
+    notes: 'Database migration status',
+  },
+  { path: '/api/migrate/schema', method: 'GET', policy: 'admin', notes: 'Database schema check' },
+  { path: '/api/migrate/reset', method: 'POST', policy: 'admin', notes: 'Reset migration tracker' },
+  { path: '/api/migrate/repair', method: 'POST', policy: 'admin', notes: 'Repair schema' },
+  { path: '/api/migrate/rebuild', method: 'POST', policy: 'admin', notes: 'Rebuild database' },
+  { path: '/api/migrate/run-init', method: 'POST', policy: 'admin', notes: 'Run init migration' },
+
   // Provider templates admin (uses requireAdminAccess)
   // Already covered above
 ];

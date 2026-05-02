@@ -5,7 +5,7 @@
  * Drizzle's strict typing while maintaining clean interfaces.
  */
 
-import type { SQL } from 'drizzle-orm';
+import type { SQL, SQLWrapper } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgTable } from 'drizzle-orm/pg-core';
@@ -29,6 +29,14 @@ export class SimpleDatabaseAdapter {
    */
   getDrizzle(): AnyDrizzleDB {
     return this.db;
+  }
+
+  /**
+   * Execute a raw SQL query
+   */
+  async execute(query: SQLWrapper): Promise<unknown> {
+    const db = this.db as NodePgDatabase<Schema>;
+    return db.execute(query);
   }
 
   /**

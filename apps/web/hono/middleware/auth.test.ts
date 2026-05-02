@@ -27,6 +27,7 @@ vi.mock('@dns-ops/contracts', () => ({
 }));
 
 // Import after mocking
+import { getTenantUUID } from '@dns-ops/contracts';
 import { authMiddleware, internalOnlyMiddleware, requireAuthMiddleware } from './auth.js';
 
 const originalEnv = process.env;
@@ -288,7 +289,7 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(403);
       const body = (await res.json()) as JsonBody;
       expect(body.error).toBe('Forbidden');
-      expect(body.message).toContain('internal services');
+      expect(body.message).toContain('Internal access only');
     });
 
     it('should allow requests with valid internal secret', async () => {
@@ -424,6 +425,114 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
       expect(body.tenantId).toBe('uuid-for-acme.com');
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should lowercase CF Access email domain before tenant normalization', async () => {
+      app.use('*', authMiddleware);
+      app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
+
+      const res = await app.request('/test', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user@Example.COM',
+          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBe('uuid-for-example.com');
+    });
+
+    it('should return 401 in authMiddleware when getTenantUUID throws', async () => {
+      vi.mocked(getTenantUUID).mockRejectedValueOnce(new Error('tenant not found'));
+
+      app.use('*', authMiddleware);
+      app.get('/test', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/test', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user@bad-tenant.com',
+          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as JsonBody;
+      expect(body.message).toContain('Invalid tenant context');
+    });
+
+    it('should return 401 in requireAuthMiddleware when getTenantUUID throws', async () => {
+      vi.mocked(getTenantUUID).mockRejectedValueOnce(new Error('tenant not found'));
+
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user@bad-tenant.com',
+          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+        },
+      });
+
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as JsonBody;
+      expect(body.message).toContain('Invalid tenant context');
+    });
+
+    it('should fall through to CF Access when database session lookup throws', async () => {
+      app.use('*', async (c, next) => {
+        c.set('db', {
+          getDrizzle: () => ({
+            query: {
+              sessions: {
+                findFirst: vi.fn().mockRejectedValue(new Error('DB error')),
+              },
+            },
+          }),
+        } as unknown as Env['Variables']['db']);
+        await next();
+      });
+      app.use('*', authMiddleware);
+      app.get('/test', (c) =>
+        c.json({
+          tenantId: c.get('tenantId'),
+          actorId: c.get('actorId'),
+        })
+      );
+
+      const res = await app.request('/test', {
+        headers: {
+          Cookie: 'dns_ops_session=bad-token',
+          'CF-Access-Authenticated-User-Email': 'user@fallback.com',
+          'CF-Access-Authenticated-User-Id': 'cf-fallback',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBe('uuid-for-fallback.com');
+      expect(body.actorId).toBe('cf-fallback');
+    });
+
+    it('should handle CF Access email with plus sign', async () => {
+      app.use('*', authMiddleware);
+      app.get('/test', (c) =>
+        c.json({ tenantId: c.get('tenantId'), actorEmail: c.get('actorEmail') })
+      );
+
+      const res = await app.request('/test', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user+tag@example.com',
+          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBe('uuid-for-example.com');
+      expect(body.actorEmail).toBe('user+tag@example.com');
     });
   });
 });

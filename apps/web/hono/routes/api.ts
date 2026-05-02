@@ -1,5 +1,3 @@
-import authRoutes from './signup.js';
-import migrateRoutes from './migrate.js';
 import {
   DomainRepository,
   type IDatabaseAdapter,
@@ -29,12 +27,14 @@ import { findingsRoutes } from './findings.js';
 import { fleetReportRoutes } from './fleet-report.js';
 import { legacyToolsRoutes } from './legacy-tools.js';
 import { mailRoutes } from './mail.js';
+import migrateRoutes from './migrate.js';
 import { monitoringRoutes } from './monitoring.js';
 import { portfolioRoutes } from './portfolio.js';
 import { providerTemplateRoutes } from './provider-templates.js';
 import { rulesetVersionRoutes } from './ruleset-versions.js';
 import { selectorRoutes } from './selectors.js';
 import { shadowComparisonRoutes } from './shadow-comparison.js';
+import authRoutes from './signup.js';
 import { simulationRoutes } from './simulation.js';
 import { snapshotRoutes } from './snapshots.js';
 import { suggestionsRoutes } from './suggestions.js';
@@ -170,6 +170,7 @@ apiRoutes.route('/', mailRoutes);
 apiRoutes.route('/shadow-comparison', shadowComparisonRoutes);
 apiRoutes.route('/mail', providerTemplateRoutes);
 apiRoutes.route('/snapshots', snapshotRoutes);
+apiRoutes.use('/migrate/*', requireAdminAccess);
 apiRoutes.route('/migrate', migrateRoutes);
 apiRoutes.route('/portfolio', portfolioRoutes);
 apiRoutes.route('/ruleset-versions', rulesetVersionRoutes);

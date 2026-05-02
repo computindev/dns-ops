@@ -51,7 +51,9 @@ test.describe('Mail tab renders native analysis (no preview badge)', () => {
     const mailTab = page.getByRole('tab', { name: /mail/i });
     await expect(mailTab).toHaveAttribute('aria-selected', 'true', { timeout: 10000 });
     // Wait for mail content to render
-    await page.getByRole('heading', { name: /mail security analysis/i }).waitFor({ state: 'visible', timeout: 15000 });
+    await page
+      .getByRole('heading', { name: /mail security analysis/i })
+      .waitFor({ state: 'visible', timeout: 15000 });
 
     // Preview badge and legacy disclaimer must NOT be present
     await expect(page.getByTestId('mail-preview-badge')).toHaveCount(0);
@@ -78,7 +80,9 @@ test.describe('DiscoveredSelectors Component', () => {
     const mailTab = page.getByRole('tab', { name: /mail/i });
     await expect(mailTab).toHaveAttribute('aria-selected', 'true', { timeout: 10000 });
     // Wait for mail tab content to render
-    await page.getByRole('heading', { name: /dkim selectors/i }).waitFor({ state: 'visible', timeout: 15000 });
+    await page
+      .getByRole('heading', { name: /dkim selectors/i })
+      .waitFor({ state: 'visible', timeout: 15000 });
   }
 
   test.describe('Confidence Badge Rendering', () => {

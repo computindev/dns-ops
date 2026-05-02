@@ -116,7 +116,9 @@ export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) 
     setError(null);
 
     try {
-      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, { credentials: "include" });
+      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, {
+        credentials: 'include',
+      });
       if (!response.ok) {
         if (response.status === 401) {
           setAuthRequired(true);

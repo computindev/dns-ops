@@ -132,7 +132,9 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
     setError(null);
 
     try {
-      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, { credentials: 'include' });
+      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, {
+        credentials: 'include',
+      });
       if (!response.ok) {
         if (response.status === 401) {
           setAuthRequired(true);

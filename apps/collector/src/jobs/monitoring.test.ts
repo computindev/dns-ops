@@ -15,6 +15,13 @@ import { monitoringRoutes } from './monitoring.js';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+// Mock DNS so resolveAndCheck() doesn't hit the network and hang
+vi.mock('node:dns', () => ({
+  promises: {
+    lookup: vi.fn().mockResolvedValue({ address: '93.184.216.34', family: 4 }),
+  },
+}));
+
 // Normalized tenant UUID for 'test-tenant' (deterministic via UUID v5)
 // Auth middleware normalizes tenantId, so tests using raw 'test-tenant' in mock
 // middleware will have the auth value overwritten. Use this constant to match.
@@ -633,6 +640,11 @@ describe('Webhook Notification Integration', () => {
   });
 
   describe('Webhook Delivery Behavior', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockFetch.mockReset();
+    });
+
     it('sendAlertWebhook succeeds for valid public URL', async () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 
@@ -742,6 +754,69 @@ describe('Webhook Notification Integration', () => {
           body: JSON.stringify(payload),
         })
       );
+    });
+
+    it('sendAlertWebhook returns TIMEOUT when fetch aborts', async () => {
+      mockFetch.mockRejectedValueOnce(
+        Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+      );
+
+      const { sendAlertWebhook } = await import('../notifications/webhook.js');
+
+      const result = await sendAlertWebhook('https://webhook.example.com/alerts', {
+        alertId: 'alert-123',
+        title: 'Test Alert',
+        description: 'Test description',
+        severity: 'high',
+        domain: 'example.com',
+        tenantId: NORMALIZED_TENANT_ID,
+        timestamp: new Date().toISOString(),
+        domain360Link: 'https://app.example.com/domain/example.com',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('TIMEOUT');
+    });
+
+    it('sendAlertWebhook handles non-Error fetch rejections', async () => {
+      mockFetch.mockRejectedValueOnce('string-rejection');
+
+      const { sendAlertWebhook } = await import('../notifications/webhook.js');
+
+      const result = await sendAlertWebhook('https://webhook.example.com/alerts', {
+        alertId: 'alert-123',
+        title: 'Test Alert',
+        description: 'Test description',
+        severity: 'high',
+        domain: 'example.com',
+        tenantId: NORMALIZED_TENANT_ID,
+        timestamp: new Date().toISOString(),
+        domain360Link: 'https://app.example.com/domain/example.com',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('UNKNOWN_ERROR');
+    });
+
+    it('sendAlertWebhook includes resolvedHostname in network error result', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      const { sendAlertWebhook } = await import('../notifications/webhook.js');
+
+      const result = await sendAlertWebhook('https://webhook.example.com/alerts', {
+        alertId: 'alert-123',
+        title: 'Test Alert',
+        description: 'Test description',
+        severity: 'high',
+        domain: 'example.com',
+        tenantId: NORMALIZED_TENANT_ID,
+        timestamp: new Date().toISOString(),
+        domain360Link: 'https://app.example.com/domain/example.com',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('ECONNREFUSED');
+      expect(result.resolvedHostname).toBe('webhook.example.com');
     });
   });
 

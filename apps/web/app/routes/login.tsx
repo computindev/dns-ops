@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useState } from 'react';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { useId, useState } from 'react';
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -7,6 +7,9 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
   const navigate = useNavigate();
+  const emailId = useId();
+  const passwordId = useId();
+  const confirmPasswordId = useId();
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,12 +49,15 @@ function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      const raw = await response.json();
+      const data = raw as Record<string, unknown>;
 
       if (response.ok) {
         navigate({ to: '/portfolio' });
       } else {
-        setError(data.error || (isSignup ? 'Signup failed' : 'Login failed'));
+        setError(
+          (data.error as string | undefined) || (isSignup ? 'Signup failed' : 'Login failed')
+        );
       }
     } catch {
       setError('Network error. Please try again.');
@@ -74,7 +80,10 @@ function LoginPage() {
                   Already have an account?{' '}
                   <button
                     type="button"
-                    onClick={() => { setIsSignup(false); setError(''); }}
+                    onClick={() => {
+                      setIsSignup(false);
+                      setError('');
+                    }}
                     className="font-medium text-blue-600 hover:text-blue-500"
                   >
                     Sign in
@@ -85,7 +94,10 @@ function LoginPage() {
                   Need an account?{' '}
                   <button
                     type="button"
-                    onClick={() => { setIsSignup(true); setError(''); }}
+                    onClick={() => {
+                      setIsSignup(true);
+                      setError('');
+                    }}
                     className="font-medium text-blue-600 hover:text-blue-500"
                   >
                     Sign up
@@ -97,12 +109,12 @@ function LoginPage() {
 
           <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              <label htmlFor={emailId} className="block text-sm font-medium text-gray-700">
                 Email address
               </label>
               <div className="mt-1">
                 <input
-                  id="email"
+                  id={emailId}
                   name="email"
                   type="email"
                   autoComplete="email"
@@ -116,12 +128,12 @@ function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+              <label htmlFor={passwordId} className="block text-sm font-medium text-gray-700">
                 Password
               </label>
               <div className="mt-1">
                 <input
-                  id="password"
+                  id={passwordId}
                   name="password"
                   type="password"
                   autoComplete={isSignup ? 'new-password' : 'current-password'}
@@ -137,12 +149,15 @@ function LoginPage() {
 
             {isSignup && (
               <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
+                <label
+                  htmlFor={confirmPasswordId}
+                  className="block text-sm font-medium text-gray-700"
+                >
                   Confirm Password
                 </label>
                 <div className="mt-1">
                   <input
-                    id="confirmPassword"
+                    id={confirmPasswordId}
                     name="confirmPassword"
                     type="password"
                     autoComplete="new-password"
@@ -157,9 +172,7 @@ function LoginPage() {
               </div>
             )}
 
-            {error && (
-              <div className="text-sm text-red-600">{error}</div>
-            )}
+            {error && <div className="text-sm text-red-600">{error}</div>}
 
             <div>
               <button
@@ -167,7 +180,7 @@ function LoginPage() {
                 disabled={loading}
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400"
               >
-                {loading ? 'Please wait...' : (isSignup ? 'Create Account' : 'Sign in')}
+                {loading ? 'Please wait...' : isSignup ? 'Create Account' : 'Sign in'}
               </button>
             </div>
           </form>
@@ -178,9 +191,7 @@ function LoginPage() {
                 <div className="w-full border-t border-gray-300" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">
-                  DNS Ops Workbench
-                </span>
+                <span className="px-2 bg-white text-gray-500">DNS Ops Workbench</span>
               </div>
             </div>
           </div>

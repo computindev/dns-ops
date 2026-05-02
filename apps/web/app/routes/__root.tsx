@@ -1,4 +1,12 @@
-import { createRootRoute, HeadContent, Link, Outlet, Scripts, useLocation, useNavigate } from '@tanstack/react-router';
+import {
+  createRootRoute,
+  HeadContent,
+  Link,
+  Outlet,
+  Scripts,
+  useLocation,
+  useNavigate,
+} from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import '../styles/app.css';
@@ -11,9 +19,7 @@ export const Route = createRootRoute({
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
     ],
-    links: [
-      { rel: 'stylesheet', href: '/_build/assets/client.css' },
-    ],
+    links: [{ rel: 'stylesheet', href: '/_build/assets/client.css' }],
   }),
 });
 
@@ -25,6 +31,7 @@ function AuthNav() {
   const navigate = useNavigate();
   const isLoggingOut = useRef(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only pathname matters for re-checking auth
   useEffect(() => {
     setMounted(true);
     if (isLoggingOut.current) {
@@ -32,11 +39,12 @@ function AuthNav() {
       return;
     }
     fetch('/api/auth/me', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((raw) => {
+        const data = raw as Record<string, unknown>;
         if (data.authenticated) {
           setIsAuthenticated(true);
-          setUserEmail(data.email || null);
+          setUserEmail((data.email as string | undefined) || null);
         } else {
           setIsAuthenticated(false);
           setUserEmail(null);
@@ -47,9 +55,9 @@ function AuthNav() {
 
   const handleLogout = async () => {
     isLoggingOut.current = true;
-    await fetch('/api/auth/logout', { 
+    await fetch('/api/auth/logout', {
       method: 'POST',
-      credentials: 'include' 
+      credentials: 'include',
     });
     flushSync(() => {
       setIsAuthenticated(false);
@@ -73,10 +81,9 @@ function AuthNav() {
   if (isAuthenticated) {
     return (
       <>
-        <span className="text-sm text-gray-500">
-          {userEmail}
-        </span>
+        <span className="text-sm text-gray-500">{userEmail}</span>
         <button
+          type="button"
           onClick={handleLogout}
           className="focus-ring rounded text-gray-600 hover:text-gray-900 text-sm"
         >

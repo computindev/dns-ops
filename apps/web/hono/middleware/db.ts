@@ -71,7 +71,7 @@ export const dbMiddleware = createMiddleware<Env>(async (c, next) => {
   if (databaseUrl) {
     const db = getSharedPgAdapter(databaseUrl);
     c.set('db', db);
-    
+
     // Run migrations and schema repair in background - don't block startup
     if (!hasRunMigrations) {
       hasRunMigrations = true;
