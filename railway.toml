@@ -1,10 +1,11 @@
 # Railway deployment configuration for DNS Ops monorepo
+# Both services run from repo root and use RAILWAY_SERVICE_NAME to select start command
 
 [build]
 buildCommand = "bun install && bun run build --filter=@dns-ops/web"
 
 [deploy]
-startCommand = "node apps/web/.output/server/index.mjs"
+startCommand = "sh -c 'if [ \"$RAILWAY_SERVICE_NAME\" = \"dns-ops\" ]; then node apps/collector/dist/index.js; else node apps/web/.output/server/index.mjs; fi'"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"

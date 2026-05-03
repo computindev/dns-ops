@@ -46,7 +46,7 @@ app.use(
   '*',
   createLoggingMiddleware({
     logger: collectorLogger,
-    skipPaths: ['/health', '/healthz', '/readyz'],
+    skipPaths: ['/health', '/healthz', '/readyz', '/api/health'],
   }) as unknown as MiddlewareHandler
 );
 
@@ -59,6 +59,15 @@ app.get('/healthz', (c) => {
 });
 
 app.get('/health', (c) => {
+  return c.json({
+    status: 'ok',
+    service: 'dns-ops-collector',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Shared health endpoint for unified railway.toml healthcheckPath
+app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'dns-ops-collector',
