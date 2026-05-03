@@ -5,7 +5,8 @@
  * glue records, divergence detection, and DNSSEC status.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface DelegationData {
@@ -45,55 +46,46 @@ interface DelegationPanelProps {
   snapshotId: string | null;
 }
 
+async function fetchDelegationData(snapshotId: string): Promise<{
+  delegation: DelegationData | null;
+  issues: DelegationIssue[];
+}> {
+  const [delegationRes, issuesRes] = await Promise.all([
+    fetch(`/api/snapshot/${snapshotId}/delegation`, { credentials: 'include' }),
+    fetch(`/api/snapshot/${snapshotId}/delegation/issues`, { credentials: 'include' }),
+  ]);
+
+  if (!delegationRes.ok) {
+    throw new Error(
+      `Failed to load delegation: ${delegationRes.status} ${delegationRes.statusText}`
+    );
+  }
+  if (!issuesRes.ok) {
+    throw new Error(
+      `Failed to load delegation issues: ${issuesRes.status} ${issuesRes.statusText}`
+    );
+  }
+
+  const [delegationData, issuesData] = await Promise.all([
+    delegationRes.json() as Promise<DelegationResponse>,
+    issuesRes.json() as Promise<DelegationIssuesResponse>,
+  ]);
+
+  return {
+    delegation: delegationData.delegation || null,
+    issues: issuesData.issues || [],
+  };
+}
+
 export function DelegationPanel({ snapshotId }: DelegationPanelProps) {
-  const [delegation, setDelegation] = useState<DelegationData | null>(null);
-  const [issues, setIssues] = useState<DelegationIssue[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
 
-  // All hooks must be called before any early returns
-  const fetchDelegationData = useCallback(async () => {
-    if (!snapshotId) return;
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['delegation', snapshotId],
+    queryFn: () => fetchDelegationData(snapshotId!),
+    enabled: !!snapshotId,
+  });
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const [delegationRes, issuesRes] = await Promise.all([
-        fetch(`/api/snapshot/${snapshotId}/delegation`),
-        fetch(`/api/snapshot/${snapshotId}/delegation/issues`),
-      ]);
-
-      if (!delegationRes.ok) {
-        throw new Error(
-          `Failed to load delegation: ${delegationRes.status} ${delegationRes.statusText}`
-        );
-      }
-      if (!issuesRes.ok) {
-        throw new Error(
-          `Failed to load delegation issues: ${issuesRes.status} ${issuesRes.statusText}`
-        );
-      }
-
-      const [delegationData, issuesData] = await Promise.all([
-        delegationRes.json() as Promise<DelegationResponse>,
-        issuesRes.json() as Promise<DelegationIssuesResponse>,
-      ]);
-
-      setDelegation(delegationData.delegation || null);
-      setIssues(issuesData.issues || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
-    } finally {
-      setLoading(false);
-    }
-  }, [snapshotId]);
-
-  useEffect(() => {
-    fetchDelegationData();
-  }, [fetchDelegationData]);
-
-  // Early return for no snapshot - AFTER all hooks are called
   if (!snapshotId) {
     return (
       <div data-testid="delegation-no-snapshot-state">
@@ -107,7 +99,7 @@ export function DelegationPanel({ snapshotId }: DelegationPanelProps) {
     );
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div data-testid="delegation-loading-state">
         <LoadingState message="Loading delegation data..." />
@@ -118,12 +110,12 @@ export function DelegationPanel({ snapshotId }: DelegationPanelProps) {
   if (error) {
     return (
       <div data-testid="delegation-error-state">
-        <ErrorState message={error} />
+        <ErrorState message={error.message} />
       </div>
     );
   }
 
-  if (!delegation) {
+  if (!data?.delegation) {
     return (
       <div data-testid="delegation-no-data-state">
         <EmptyState
@@ -135,12 +127,27 @@ export function DelegationPanel({ snapshotId }: DelegationPanelProps) {
     );
   }
 
+  const { delegation, issues } = data;
+
   return (
     <div className="space-y-6" data-testid="delegation-panel">
       {issues.length > 0 && (
         <div className="space-y-3">
           {issues.map((issue) => (
-            <IssueCard key={`${issue.type}-${issue.severity}-${issue.description}`} issue={issue} />
+            <IssueCard
+              key={`${issue.type}-${issue.severity}-${issue.description}`}
+              issue={issue}
+              isExpanded={
+                expandedIssueId === `${issue.type}-${issue.severity}-${issue.description}`
+              }
+              onToggle={() =>
+                setExpandedIssueId(
+                  expandedIssueId === `${issue.type}-${issue.severity}-${issue.description}`
+                    ? null
+                    : `${issue.type}-${issue.severity}-${issue.description}`
+                )
+              }
+            />
           ))}
         </div>
       )}
@@ -224,8 +231,15 @@ export function DelegationPanel({ snapshotId }: DelegationPanelProps) {
   );
 }
 
-function IssueCard({ issue }: { issue: DelegationIssue }) {
-  const [expanded, setExpanded] = useState(false);
+function IssueCard({
+  issue,
+  isExpanded,
+  onToggle,
+}: {
+  issue: DelegationIssue;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
   const hasEvidence = issue.evidence && issue.evidence.length > 0;
 
   const severityColors = {
@@ -252,12 +266,12 @@ function IssueCard({ issue }: { issue: DelegationIssue }) {
           {hasEvidence && (
             <button
               type="button"
-              onClick={() => setExpanded(!expanded)}
+              onClick={onToggle}
               className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
             >
               <svg
                 aria-hidden="true"
-                className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -275,8 +289,7 @@ function IssueCard({ issue }: { issue: DelegationIssue }) {
         </div>
       </div>
 
-      {/* Expandable Evidence Section */}
-      {expanded && hasEvidence && (
+      {isExpanded && hasEvidence && (
         <div className="border-t border-gray-200 bg-white/50 p-4">
           <h5 className="text-xs font-medium text-gray-500 uppercase mb-3">
             Observation Evidence ({issue.evidence?.length})
@@ -335,7 +348,6 @@ function EvidenceCard({ evidence }: { evidence: ObservationEvidence }) {
         )}
       </div>
 
-      {/* Raw observation data */}
       {showRaw && evidence.data && (
         <div className="mt-2 p-2 bg-gray-900 rounded text-xs overflow-x-auto">
           <pre className="text-gray-100 font-mono whitespace-pre-wrap">

@@ -5,7 +5,8 @@
  * showing which findings would resolve, remain, or be introduced.
  */
 
-import { useCallback, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface ProposedChange {
@@ -68,43 +69,48 @@ const ACTION_LABELS: Record<string, string> = {
   remove: 'Remove',
 };
 
-export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
-  const [result, setResult] = useState<SimulationResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+async function runSimulationFetch(snapshotId: string): Promise<SimulationResult> {
+  const response = await fetch('/api/simulate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ snapshotId }),
+    credentials: 'include',
+  });
 
-  const runSimulation = useCallback(async () => {
-    if (!snapshotId) return;
-
-    setLoading(true);
-    setError(null);
-
+  if (!response.ok) {
+    let errorMessage = `Simulation failed (${response.status})`;
     try {
-      const response = await fetch('/api/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ snapshotId }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = `Simulation failed (${response.status})`;
-        try {
-          const errData = (await response.json()) as { error?: string };
-          if (errData.error) errorMessage = errData.error;
-        } catch {
-          // Non-JSON error response — use status-based message
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = (await response.json()) as SimulationResult;
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
+      const errData = (await response.json()) as { error?: string };
+      if (errData.error) errorMessage = errData.error;
+    } catch {
+      // Non-JSON error response — use status-based message
     }
-  }, [snapshotId]);
+    throw new Error(errorMessage);
+  }
+
+  return (await response.json()) as SimulationResult;
+}
+
+export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
+  const queryClient = useQueryClient();
+  const [hasRun, setHasRun] = useState(false);
+
+  const {
+    data: result,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['simulation', snapshotId],
+    queryFn: () => runSimulationFetch(snapshotId!),
+    enabled: !!snapshotId && hasRun,
+    staleTime: 5 * 60 * 1000, // 5 minutes — simulation results are expensive
+  });
+
+  const handleRun = () => {
+    setHasRun(true);
+    refetch();
+  };
 
   if (!snapshotId) {
     return (
@@ -117,12 +123,12 @@ export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
     );
   }
 
-  if (loading) {
+  if (isLoading) {
     return <LoadingState message="Running simulation..." />;
   }
 
   if (error) {
-    return <ErrorState message={error} onRetry={runSimulation} />;
+    return <ErrorState message={error.message} onRetry={handleRun} />;
   }
 
   // Not yet run
@@ -134,7 +140,7 @@ export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
         </p>
         <button
           type="button"
-          onClick={runSimulation}
+          onClick={handleRun}
           style={{
             padding: '0.5rem 1.5rem',
             backgroundColor: '#2563eb',
@@ -274,7 +280,10 @@ export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
       <div style={{ textAlign: 'center' }}>
         <button
           type="button"
-          onClick={runSimulation}
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['simulation', snapshotId] });
+            refetch();
+          }}
           style={{
             padding: '0.375rem 1rem',
             backgroundColor: 'transparent',

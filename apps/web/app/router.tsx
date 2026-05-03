@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query';
 import type { AnyRouter } from '@tanstack/react-router';
 import { createRouter as createTanStackRouter } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen.js';
@@ -14,10 +15,20 @@ function DefaultNotFound() {
 }
 
 export function createRouter(): AnyRouter {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+      },
+    },
+  });
+
   return createTanStackRouter({
     routeTree,
-    context: {},
+    context: { queryClient },
     defaultPreload: 'intent',
+    defaultPreloadStaleTime: 0,
     defaultNotFoundComponent: DefaultNotFound,
   });
 }

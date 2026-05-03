@@ -6,7 +6,8 @@
  */
 
 import type { Finding, Suggestion } from '@dns-ops/db/schema';
-import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
@@ -36,31 +37,18 @@ interface MailFindingsData {
   suggestions: Suggestion[];
 }
 
+async function fetchMailFindings(snapshotId: string): Promise<MailFindingsData> {
+  const res = await fetch(`/api/snapshot/${snapshotId}/findings/mail`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch mail findings');
+  return (await res.json()) as MailFindingsData;
+}
+
 export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
-  const [data, setData] = useState<MailFindingsData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!snapshotId) return;
-
-    setLoading(true);
-    setError(null);
-
-    fetch(`/api/snapshot/${snapshotId}/findings/mail`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch mail findings');
-        return res.json();
-      })
-      .then((payload) => {
-        setData(payload as MailFindingsData);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, [snapshotId]);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['mail-findings', snapshotId],
+    queryFn: () => fetchMailFindings(snapshotId!),
+    enabled: !!snapshotId,
+  });
 
   if (!snapshotId) {
     return (
@@ -73,12 +61,12 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
     );
   }
 
-  if (loading) {
+  if (isLoading) {
     return <LoadingState message="Analyzing mail configuration..." size="sm" />;
   }
 
   if (error) {
-    return <ErrorState message={error} size="sm" />;
+    return <ErrorState message={error.message} size="sm" />;
   }
 
   if (!data) return null;
@@ -88,7 +76,6 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
 
   return (
     <div className="space-y-6">
-      {/* Security Score */}
       <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 border border-indigo-100">
         <div className="flex items-center justify-between">
           <div>
@@ -103,7 +90,6 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
         </div>
       </div>
 
-      {/* Configuration Status */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <ConfigStatusCard name="MX" present={mailConfig.hasMx} />
         <ConfigStatusCard name="SPF" present={mailConfig.hasSpf} />
@@ -113,7 +99,6 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
         <ConfigStatusCard name="TLS-RPT" present={mailConfig.hasTlsRpt} optional />
       </div>
 
-      {/* Issues and Recommendations */}
       {(mailConfig.issues.length > 0 || mailConfig.recommendations.length > 0) && (
         <div className="space-y-3">
           {mailConfig.issues.length > 0 && (
@@ -146,7 +131,6 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
         </div>
       )}
 
-      {/* Detailed Findings */}
       <div className="border-t pt-4">
         <div className="flex items-center justify-between mb-4">
           <h4 className="font-semibold text-gray-900">Mail Findings</h4>
@@ -185,7 +169,6 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
         })}
       </div>
 
-      {/* Metadata */}
       <div className="text-xs text-gray-400 pt-2 border-t">
         Ruleset v{data.rulesetVersion} · {data.persisted ? 'Persisted' : 'Live'} evaluation
       </div>
@@ -373,72 +356,52 @@ interface MailSuggestionCardProps {
 }
 
 function MailSuggestionCard({ suggestion, domain }: MailSuggestionCardProps) {
+  const queryClient = useQueryClient();
   const [showConfirm, setShowConfirm] = useState(false);
-  const [isApplying, setIsApplying] = useState(false);
-  const [isDismissing, setIsDismissing] = useState(false);
 
   const isPending = !suggestion.appliedAt && !suggestion.dismissedAt;
 
-  const handleApply = async () => {
-    if (suggestion.reviewOnly && !showConfirm) {
-      setShowConfirm(true);
-      return;
-    }
-
-    setIsApplying(true);
-    try {
+  const applyMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch(`/api/suggestions/${suggestion.id}/apply`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmApply: suggestion.reviewOnly ? true : undefined }),
       });
-
       if (!response.ok) {
         const error = (await response.json()) as { error?: string; code?: string };
-        if (response.status === 403 && error.code === 'REQUIRES_CONFIRMATION') {
-          console.warn(
-            '[MailFindingsPanel] Review-only suggestion applied without confirmation flag'
-          );
-        }
         throw new Error(error.error || 'Failed to apply suggestion');
       }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail-findings'] });
+    },
+  });
 
-      // Log warning for review-only applications
-      if (suggestion.reviewOnly) {
-        console.warn(
-          `[MailFindingsPanel] Review-only suggestion applied for ${domain}:`,
-          suggestion.id
-        );
-      }
-
-      // Refresh page to show updated state
-      window.location.reload();
-    } catch (err) {
-      console.error('Failed to apply suggestion:', err);
-      setIsApplying(false);
-      setShowConfirm(false);
-    }
-  };
-
-  const handleDismiss = async () => {
-    setIsDismissing(true);
-    try {
+  const dismissMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch(`/api/suggestions/${suggestion.id}/dismiss`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Dismissed by user' }),
       });
+      if (!response.ok) throw new Error('Failed to dismiss suggestion');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail-findings'] });
+    },
+  });
 
-      if (!response.ok) {
-        throw new Error('Failed to dismiss suggestion');
-      }
-
-      // Refresh page to show updated state
-      window.location.reload();
-    } catch (err) {
-      console.error('Failed to dismiss suggestion:', err);
-      setIsDismissing(false);
+  const handleApply = () => {
+    if (suggestion.reviewOnly && !showConfirm) {
+      setShowConfirm(true);
+      return;
     }
+    applyMutation.mutate();
+  };
+
+  const handleDismiss = () => {
+    dismissMutation.mutate();
   };
 
   return (
@@ -472,18 +435,18 @@ function MailSuggestionCard({ suggestion, domain }: MailSuggestionCardProps) {
             <button
               type="button"
               onClick={handleApply}
-              disabled={isApplying || isDismissing}
+              disabled={applyMutation.isPending || dismissMutation.isPending}
               className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              {isApplying ? 'Applying...' : 'Apply'}
+              {applyMutation.isPending ? 'Applying...' : 'Apply'}
             </button>
             <button
               type="button"
               onClick={handleDismiss}
-              disabled={isApplying || isDismissing}
+              disabled={applyMutation.isPending || dismissMutation.isPending}
               className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              {isDismissing ? 'Dismissing...' : 'Dismiss'}
+              {dismissMutation.isPending ? 'Dismissing...' : 'Dismiss'}
             </button>
           </div>
         )}
@@ -501,7 +464,6 @@ function MailSuggestionCard({ suggestion, domain }: MailSuggestionCardProps) {
         )}
       </div>
 
-      {/* Confirmation Dialog for Review-Only Suggestions */}
       <ConfirmDialog
         isOpen={showConfirm}
         title="Apply Review-Only Suggestion?"

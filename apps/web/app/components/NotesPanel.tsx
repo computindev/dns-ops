@@ -5,7 +5,8 @@
  * Allows creating, editing, and deleting notes for a domain.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
 interface Note {
   id: string;
@@ -24,231 +25,198 @@ interface NotesPanelProps {
   isDomainName?: boolean;
 }
 
+async function resolveDomain(domainId: string) {
+  const response = await fetch(`/api/portfolio/domains/by-name/${encodeURIComponent(domainId)}`, {
+    credentials: 'include',
+  });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (response.status === 404) {
+    const err = new Error('Not found');
+    (err as Error & { status: number }).status = 404;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to resolve domain');
+  const data = (await response.json()) as { domain?: { id?: string } };
+  return data.domain?.id ?? null;
+}
+
+async function fetchNotes(resolvedDomainId: string): Promise<Note[]> {
+  const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, {
+    credentials: 'include',
+  });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch notes');
+  const data = (await response.json()) as { notes?: Note[] };
+  return (data.notes || []).map((note) => ({
+    ...note,
+    author: note.author || note.createdBy || null,
+  }));
+}
+
 export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) {
-  const [resolvedDomainId, setResolvedDomainId] = useState<string | null>(
-    isDomainName ? null : domainId
-  );
-  const [resolutionAttempted, setResolutionAttempted] = useState(!isDomainName);
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
-  const [writeBlocked, setWriteBlocked] = useState(false);
+  const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isDomainName) {
-      setResolvedDomainId(domainId);
-      setResolutionAttempted(true);
-      return;
-    }
+  const {
+    data: resolvedDomainId,
+    isLoading: resolving,
+    error: resolveError,
+  } = useQuery({
+    queryKey: ['domain-resolve', domainId, isDomainName],
+    queryFn: () => (isDomainName ? resolveDomain(domainId) : Promise.resolve(domainId)),
+    enabled: !!domainId,
+    staleTime: Infinity,
+  });
 
-    async function resolveDomainId() {
-      setResolutionAttempted(false);
-      setError(null);
-      try {
-        const response = await fetch(
-          `/api/portfolio/domains/by-name/${encodeURIComponent(domainId)}`,
-          { credentials: 'include' }
-        );
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setResolvedDomainId(null);
-          setLoading(false);
-          setResolutionAttempted(true);
-          return;
-        }
-        if (response.status === 403) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('You do not have permission to view tenant notes for this domain.');
-          setResolutionAttempted(true);
-          return;
-        }
-        if (response.status === 404) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('This domain must exist in the tenant portfolio before notes can be attached.');
-          setResolutionAttempted(true);
-          return;
-        }
-        if (!response.ok) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('Failed to resolve domain context for notes');
-          setResolutionAttempted(true);
-          return;
-        }
+  const resolveStatus = resolveError
+    ? (resolveError as Error & { status?: number }).status
+    : undefined;
 
-        const data = (await response.json()) as { domain?: { id?: string } };
-        if (data.domain?.id) {
-          setAuthRequired(false);
-          setResolvedDomainId(data.domain.id);
-          setLoading(true);
-        } else {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('Resolved domain response did not include a domain ID.');
-        }
-      } catch {
-        setResolvedDomainId(null);
-        setLoading(false);
-        setError('Failed to resolve domain context for notes');
-      } finally {
-        setResolutionAttempted(true);
-      }
-    }
+  const {
+    data: notes = [],
+    isLoading: notesLoading,
+    error: notesError,
+  } = useQuery({
+    queryKey: ['notes', resolvedDomainId],
+    queryFn: () => fetchNotes(resolvedDomainId!),
+    enabled: !!resolvedDomainId,
+  });
 
-    void resolveDomainId();
-  }, [domainId, isDomainName]);
+  const notesStatus = notesError ? (notesError as Error & { status?: number }).status : undefined;
 
-  const fetchNotes = useCallback(async () => {
-    if (!resolvedDomainId) {
-      setLoading(false);
-      return;
-    }
+  const authRequired = resolveStatus === 401 || notesStatus === 401;
+  const writeBlocked = resolveStatus === 403 || notesStatus === 403;
+  const notFound = resolveStatus === 404;
+  const error =
+    localError ??
+    (resolveError && resolveStatus !== 401 && resolveStatus !== 403 && resolveStatus !== 404
+      ? resolveError.message
+      : null) ??
+    (notesError && notesStatus !== 401 && notesStatus !== 403 ? notesError.message : null);
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, {
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setNotes([]);
-          return;
-        }
-        if (response.status === 403) {
-          setNotes([]);
-          throw new Error('You do not have permission to view tenant notes.');
-        }
-        throw new Error('Failed to fetch notes');
-      }
-
-      setAuthRequired(false);
-      const data = (await response.json()) as { notes?: Note[] };
-      setNotes(
-        (data.notes || []).map((note) => ({
-          ...note,
-          author: note.author || note.createdBy || null,
-        }))
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load notes');
-    } finally {
-      setLoading(false);
-    }
-  }, [resolvedDomainId]);
-
-  useEffect(() => {
-    if (resolvedDomainId) {
-      void fetchNotes();
-    }
-  }, [resolvedDomainId, fetchNotes]);
-
-  const handleCreateNote = async () => {
-    if (!newNoteContent.trim() || !resolvedDomainId) return;
-
-    setIsSaving(true);
-    try {
+  const createMutation = useMutation({
+    mutationFn: async (content: string) => {
       const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newNoteContent }),
+        body: JSON.stringify({ content }),
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to create notes.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to create tenant notes.');
-        }
-        throw new Error('Failed to create note');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
-      setAuthRequired(false);
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to create note');
+      return response.json();
+    },
+    onSuccess: () => {
       setNewNoteContent('');
       setIsCreating(false);
-      await fetchNotes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create note');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['notes', resolvedDomainId] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to create note');
+    },
+  });
 
-  const handleUpdateNote = async (noteId: string) => {
-    if (!editContent.trim()) return;
-
-    setIsSaving(true);
-    try {
+  const updateMutation = useMutation({
+    mutationFn: async ({ noteId, content }: { noteId: string; content: string }) => {
       const response = await fetch(`/api/portfolio/notes/${noteId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editContent }),
+        body: JSON.stringify({ content }),
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to update notes.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to update tenant notes.');
-        }
-        throw new Error('Failed to update note');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
-      setAuthRequired(false);
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to update note');
+      return response.json();
+    },
+    onSuccess: () => {
       setEditingId(null);
       setEditContent('');
-      await fetchNotes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update note');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['notes', resolvedDomainId] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to update note');
+    },
+  });
 
-  const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return;
-
-    try {
+  const deleteMutation = useMutation({
+    mutationFn: async (noteId: string) => {
       const response = await fetch(`/api/portfolio/notes/${noteId}`, {
         method: 'DELETE',
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to delete notes.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to delete tenant notes.');
-        }
-        throw new Error('Failed to delete note');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to delete note');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notes', resolvedDomainId] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to delete note');
+    },
+  });
 
-      setAuthRequired(false);
-      await fetchNotes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete note');
-    }
+  const handleCreateNote = () => {
+    if (!newNoteContent.trim() || !resolvedDomainId) return;
+    createMutation.mutate(newNoteContent.trim());
+  };
+
+  const handleUpdateNote = (noteId: string) => {
+    if (!editContent.trim()) return;
+    updateMutation.mutate({ noteId, content: editContent.trim() });
+  };
+
+  const handleDeleteNote = (noteId: string) => {
+    if (!confirm('Are you sure you want to delete this note?')) return;
+    deleteMutation.mutate(noteId);
   };
 
   const startEditing = (note: Note) => {
@@ -260,6 +228,9 @@ export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) 
     setEditingId(null);
     setEditContent('');
   };
+
+  const loading = resolving || notesLoading;
+  const isSaving = createMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -296,7 +267,7 @@ export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) 
             {error}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => setLocalError(null)}
               className="ml-2 text-red-600 hover:text-red-800"
             >
               Dismiss
@@ -344,9 +315,13 @@ export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) 
           <div className="py-4 text-center text-gray-500">
             Sign in to view and manage tenant notes.
           </div>
-        ) : !resolvedDomainId && resolutionAttempted ? (
+        ) : notFound ? (
           <div className="py-4 text-center text-gray-500">
-            {error || 'Notes are unavailable until domain context can be resolved.'}
+            This domain must exist in the tenant portfolio before notes can be attached.
+          </div>
+        ) : !resolvedDomainId ? (
+          <div className="py-4 text-center text-gray-500">
+            Notes are unavailable until domain context can be resolved.
           </div>
         ) : notes.length === 0 ? (
           <div className="py-4 text-center text-gray-500">

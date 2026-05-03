@@ -5,7 +5,8 @@
  * Allows saving, loading, updating, deleting, and sharing filters.
  */
 
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useId, useState } from 'react';
 import {
   assessSavedCriteriaCompatibility,
   type CurrentFilters,
@@ -36,116 +37,107 @@ interface SavedFiltersPanelProps {
 
 export type { CurrentFilters } from '../lib/portfolio-filters.js';
 
+async function fetchFilters(): Promise<{ filters: SavedFilter[] }> {
+  const response = await fetch('/api/portfolio/filters', { credentials: 'include' });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch filters');
+  return (await response.json()) as { filters: SavedFilter[] };
+}
+
 export function SavedFiltersPanel({
   currentFilters,
   onLoadFilter,
   onSaveComplete,
 }: SavedFiltersPanelProps) {
-  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
+  const queryClient = useQueryClient();
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [editingFilter, setEditingFilter] = useState<SavedFilter | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const fetchFilters = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['saved-filters'],
+    queryFn: fetchFilters,
+  });
 
-    try {
-      const response = await fetch('/api/portfolio/filters');
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setSavedFilters([]);
-          return;
-        }
-        if (response.status === 403) {
-          setSavedFilters([]);
-          throw new Error('You do not have permission to view tenant saved filters.');
-        }
-        throw new Error('Failed to fetch filters');
-      }
+  const savedFilters = data?.filters ?? [];
+  const status = error ? (error as Error & { status?: number }).status : undefined;
+  const authRequired = status === 401;
 
-      setAuthRequired(false);
-      const data = (await response.json()) as { filters: SavedFilter[] };
-      setSavedFilters(data.filters || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load filters');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchFilters();
-  }, [fetchFilters]);
-
-  const handleLoadFilter = (filter: SavedFilter) => {
-    const compatibility = assessSavedCriteriaCompatibility(filter.criteria);
-    if (!compatibility.supported) {
-      setError(
-        `This saved filter uses unsupported criteria for the current UI: ${compatibility.reasons.join(', ')}.`
-      );
-      return;
-    }
-
-    onLoadFilter(savedCriteriaToCurrentFilters(filter.criteria));
-  };
-
-  const handleDeleteFilter = async (filterId: string) => {
-    if (!confirm('Are you sure you want to delete this filter?')) return;
-
-    try {
+  const deleteMutation = useMutation({
+    mutationFn: async (filterId: string) => {
       const response = await fetch(`/api/portfolio/filters/${filterId}`, {
         method: 'DELETE',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to delete saved filters.');
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to delete this filter.');
-        }
-        throw new Error('Failed to delete filter');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to delete filter');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['saved-filters'] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to delete filter');
+    },
+  });
 
-      await fetchFilters();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete filter');
-    }
-  };
-
-  const handleToggleShare = async (filter: SavedFilter) => {
-    try {
-      const response = await fetch(`/api/portfolio/filters/${filter.id}`, {
+  const toggleShareMutation = useMutation({
+    mutationFn: async ({ filterId, isShared }: { filterId: string; isShared: boolean }) => {
+      const response = await fetch(`/api/portfolio/filters/${filterId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isShared: !filter.isShared }),
+        body: JSON.stringify({ isShared }),
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to manage saved filters.');
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to manage this filter.');
-        }
-        throw new Error('Failed to update filter');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
-      await fetchFilters();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update filter');
-    }
-  };
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to update filter');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['saved-filters'] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to update filter');
+    },
+  });
 
   const controlsDisabled = authRequired;
   const activeFilters = hasActiveFilters(currentFilters);
   const normalizedCurrentFilters = normalizeCurrentFilters(currentFilters);
+
+  const handleLoadFilter = (filter: SavedFilter) => {
+    const compatibility = assessSavedCriteriaCompatibility(filter.criteria);
+    if (!compatibility.supported) {
+      setLocalError(
+        `This saved filter uses unsupported criteria for the current UI: ${compatibility.reasons.join(', ')}.`
+      );
+      return;
+    }
+    onLoadFilter(savedCriteriaToCurrentFilters(filter.criteria));
+  };
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -170,12 +162,12 @@ export function SavedFiltersPanel({
           </div>
         )}
 
-        {error && (
+        {localError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-            {error}
+            {localError}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => setLocalError(null)}
               className="ml-2 text-red-600 hover:text-red-800"
             >
               Dismiss
@@ -189,7 +181,7 @@ export function SavedFiltersPanel({
             editingFilter={editingFilter}
             authRequired={authRequired}
             onAuthRequired={() => {
-              setAuthRequired(true);
+              setLocalError('Operator sign-in is required to save filters.');
               setShowSaveDialog(false);
               setEditingFilter(null);
             }}
@@ -197,8 +189,8 @@ export function SavedFiltersPanel({
               setShowSaveDialog(false);
               setEditingFilter(null);
             }}
-            onSave={async () => {
-              await fetchFilters();
+            onSave={() => {
+              queryClient.invalidateQueries({ queryKey: ['saved-filters'] });
               setShowSaveDialog(false);
               setEditingFilter(null);
               onSaveComplete?.();
@@ -206,22 +198,18 @@ export function SavedFiltersPanel({
           />
         )}
 
-        {loading ? (
+        {isLoading ? (
           <div className="py-4 text-center text-gray-500">Loading saved filters...</div>
         ) : authRequired ? (
           <div className="py-4 text-center text-gray-500">
             Sign in to view tenant saved filters.
-          </div>
-        ) : error && savedFilters.length === 0 ? (
-          <div className="py-4 text-center text-gray-500">
-            Saved filters are unavailable right now.
           </div>
         ) : savedFilters.length === 0 ? (
           <div className="py-4 text-center text-gray-500">
             No saved filters yet.
             {activeFilters && (
               <>
-                {` `}
+                {' '}
                 <button
                   type="button"
                   onClick={() => setShowSaveDialog(true)}
@@ -242,8 +230,10 @@ export function SavedFiltersPanel({
                 isActive={isFilterActive(normalizedCurrentFilters, filter)}
                 onLoad={() => handleLoadFilter(filter)}
                 onEdit={() => setEditingFilter(filter)}
-                onDelete={() => handleDeleteFilter(filter.id)}
-                onToggleShare={() => handleToggleShare(filter)}
+                onDelete={() => deleteMutation.mutate(filter.id)}
+                onToggleShare={() =>
+                  toggleShareMutation.mutate({ filterId: filter.id, isShared: !filter.isShared })
+                }
               />
             ))}
           </div>
@@ -423,7 +413,7 @@ interface SaveFilterDialogProps {
   authRequired: boolean;
   onAuthRequired: () => void;
   onClose: () => void;
-  onSave: () => Promise<void>;
+  onSave: () => void;
 }
 
 function SaveFilterDialog({
@@ -491,7 +481,7 @@ function SaveFilterDialog({
         throw new Error(errorData.error || 'Failed to save filter');
       }
 
-      await onSave();
+      onSave();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save filter');
     } finally {

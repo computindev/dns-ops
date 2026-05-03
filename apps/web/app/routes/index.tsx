@@ -1,5 +1,7 @@
 import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router';
+import { AuthPending } from '../components/AuthPending.js';
 import { DomainInput } from '../components/DomainInput.js';
+import { requireAuthGuard } from '../lib/auth-guard.js';
 
 interface HomeSearchParams {
   domain?: string;
@@ -10,7 +12,8 @@ export const Route = createFileRoute('/')({
     domain:
       typeof search.domain === 'string' && search.domain.length > 0 ? search.domain : undefined,
   }),
-  beforeLoad: ({ search }) => {
+  beforeLoad: async ({ search }) => {
+    await requireAuthGuard();
     if (search.domain) {
       throw redirect({
         to: '/domain/$domain',
@@ -18,6 +21,7 @@ export const Route = createFileRoute('/')({
       });
     }
   },
+  pendingComponent: AuthPending,
   component: HomeComponent,
 });
 

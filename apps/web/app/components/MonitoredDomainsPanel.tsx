@@ -5,8 +5,9 @@
  * Allows operators to add, configure, and remove domains from monitoring.
  */
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useId, useState } from 'react';
 
 interface MonitoredDomain {
   id: string;
@@ -33,93 +34,90 @@ const SCHEDULE_OPTIONS: { value: 'hourly' | 'daily' | 'weekly'; label: string }[
   { value: 'weekly', label: 'Weekly' },
 ];
 
+async function fetchDomains(): Promise<{ monitoredDomains: MonitoredDomain[] }> {
+  const response = await fetch('/api/monitoring/domains', { credentials: 'include' });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch monitored domains');
+  return (await response.json()) as { monitoredDomains: MonitoredDomain[] };
+}
+
 export function MonitoredDomainsPanel() {
-  const [domains, setDomains] = useState<MonitoredDomain[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
+  const queryClient = useQueryClient();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingDomain, setEditingDomain] = useState<MonitoredDomain | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const fetchDomains = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['monitoring-domains'],
+    queryFn: fetchDomains,
+  });
 
-    try {
-      const response = await fetch('/api/monitoring/domains');
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setDomains([]);
-          return;
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to view monitored domains.');
-        }
-        throw new Error('Failed to fetch monitored domains');
+  const domains = data?.monitoredDomains ?? [];
+  const status = error ? (error as Error & { status?: number }).status : undefined;
+  const authRequired = status === 401;
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/monitoring/domains/${id}`, { method: 'DELETE' });
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-      setAuthRequired(false);
-      const data = (await response.json()) as { monitoredDomains: MonitoredDomain[] };
-      setDomains(data.monitoredDomains || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load monitored domains');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to delete');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['monitoring-domains'] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to delete');
+    },
+  });
 
-  useEffect(() => {
-    fetchDomains();
-  }, [fetchDomains]);
+  const toggleMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/monitoring/domains/${id}/toggle`, { method: 'POST' });
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
+      }
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to toggle');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['monitoring-domains'] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to toggle');
+    },
+  });
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     if (!confirm('Are you sure you want to remove this domain from monitoring?')) return;
-
-    try {
-      const response = await fetch(`/api/monitoring/domains/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setDomains([]);
-          return;
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to delete monitored domains.');
-        }
-        throw new Error('Failed to delete');
-      }
-
-      await fetchDomains();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete');
-    }
+    deleteMutation.mutate(id);
   };
 
-  const handleToggle = async (id: string) => {
-    try {
-      const response = await fetch(`/api/monitoring/domains/${id}/toggle`, {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setDomains([]);
-          return;
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to update monitored domains.');
-        }
-        throw new Error('Failed to toggle');
-      }
-
-      await fetchDomains();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to toggle');
-    }
+  const handleToggle = (id: string) => {
+    toggleMutation.mutate(id);
   };
 
   return (
@@ -146,13 +144,12 @@ export function MonitoredDomainsPanel() {
           </div>
         )}
 
-        {/* Error message */}
-        {error && (
+        {localError && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
-            {error}
+            {localError}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => setLocalError(null)}
               className="ml-2 text-red-600 hover:text-red-800"
             >
               Dismiss
@@ -160,31 +157,26 @@ export function MonitoredDomainsPanel() {
           </div>
         )}
 
-        {/* Add/Edit Dialog */}
         {(showAddDialog || editingDomain) && (
           <MonitoredDomainDialog
             editingDomain={editingDomain}
             authRequired={authRequired}
             onAuthRequired={() => {
-              setAuthRequired(true);
-              setDomains([]);
-              setShowAddDialog(false);
-              setEditingDomain(null);
+              setLocalError('Operator sign-in is required to save monitoring configuration.');
             }}
             onClose={() => {
               setShowAddDialog(false);
               setEditingDomain(null);
             }}
-            onSave={async () => {
-              await fetchDomains();
+            onSave={() => {
+              queryClient.invalidateQueries({ queryKey: ['monitoring-domains'] });
               setShowAddDialog(false);
               setEditingDomain(null);
             }}
           />
         )}
 
-        {/* Content */}
-        {loading ? (
+        {isLoading ? (
           <div className="text-center text-gray-500 py-8">Loading monitored domains...</div>
         ) : authRequired ? (
           <div className="text-center py-8 text-gray-500">
@@ -439,7 +431,7 @@ interface MonitoredDomainDialogProps {
   authRequired: boolean;
   onAuthRequired: () => void;
   onClose: () => void;
-  onSave: () => Promise<void>;
+  onSave: () => void;
 }
 
 function MonitoredDomainDialog({
@@ -526,7 +518,7 @@ function MonitoredDomainDialog({
         throw new Error(errorData.error || 'Failed to save');
       }
 
-      await onSave();
+      onSave();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     } finally {
@@ -548,7 +540,6 @@ function MonitoredDomainDialog({
         )}
 
         <div className="space-y-3">
-          {/* Domain name (only for new) */}
           {!editingDomain && (
             <div>
               <label
@@ -569,7 +560,6 @@ function MonitoredDomainDialog({
             </div>
           )}
 
-          {/* Schedule */}
           <div>
             <label htmlFor={scheduleId} className="block text-sm font-medium text-gray-700 mb-1">
               Check Schedule
@@ -589,7 +579,6 @@ function MonitoredDomainDialog({
             </select>
           </div>
 
-          {/* Alert Channels */}
           <div className="border-t pt-3">
             <h5 className="text-sm font-medium text-gray-700 mb-2">Alert Channels</h5>
 
@@ -641,7 +630,6 @@ function MonitoredDomainDialog({
             </div>
           </div>
 
-          {/* Noise Budget */}
           <div className="border-t pt-3">
             <h5 className="text-sm font-medium text-gray-700 mb-2">Noise Budget</h5>
 

@@ -5,7 +5,8 @@
  * Allows operators to customize provider templates per tenant.
  */
 
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useId, useState } from 'react';
 
 interface TemplateOverride {
   id: string;
@@ -31,84 +32,72 @@ const PROVIDER_LABELS: Record<string, string> = {
   custom: 'Custom Provider',
 };
 
+async function fetchOverrides(provider: string): Promise<TemplateOverride[]> {
+  const response = await fetch(
+    `/api/portfolio/templates/overrides?provider=${encodeURIComponent(provider)}`,
+    { credentials: 'include' }
+  );
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch overrides');
+  const data = (await response.json()) as { overrides: TemplateOverride[] };
+  return data.overrides || [];
+}
+
 export function TemplateOverridesPanel() {
+  const queryClient = useQueryClient();
   const providerSelectId = useId();
-  const [overrides, setOverrides] = useState<TemplateOverride[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
-  const [writeBlocked, setWriteBlocked] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [editingOverride, setEditingOverride] = useState<TemplateOverride | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const fetchOverrides = useCallback(async () => {
-    if (!selectedProvider) {
-      setOverrides([]);
-      setLoading(false);
-      return;
-    }
+  const {
+    data: overrides = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ['template-overrides', selectedProvider],
+    queryFn: () => fetchOverrides(selectedProvider),
+    enabled: !!selectedProvider,
+  });
 
-    setLoading(true);
-    setError(null);
+  const status = error ? (error as Error & { status?: number }).status : undefined;
+  const authRequired = status === 401;
+  const writeBlocked = status === 403;
 
-    try {
-      const response = await fetch(
-        `/api/portfolio/templates/overrides?provider=${encodeURIComponent(selectedProvider)}`
-      );
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setOverrides([]);
-          return;
-        }
-        if (response.status === 403) {
-          setOverrides([]);
-          throw new Error('You do not have permission to view tenant template overrides.');
-        }
-        throw new Error('Failed to fetch overrides');
-      }
-
-      setAuthRequired(false);
-      const data = (await response.json()) as { overrides: TemplateOverride[] };
-      setOverrides(data.overrides || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load overrides');
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedProvider]);
-
-  useEffect(() => {
-    void fetchOverrides();
-  }, [fetchOverrides]);
-
-  const handleDeleteOverride = async (overrideId: string) => {
-    if (!confirm('Are you sure you want to delete this override?')) return;
-
-    try {
+  const deleteMutation = useMutation({
+    mutationFn: async (overrideId: string) => {
       const response = await fetch(`/api/portfolio/templates/overrides/${overrideId}`, {
         method: 'DELETE',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to delete overrides.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to delete tenant overrides.');
-        }
-        throw new Error('Failed to delete override');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
-      setAuthRequired(false);
-      await fetchOverrides();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete override');
-    }
-  };
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to delete override');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['template-overrides'] });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to delete override');
+    },
+  });
 
   const readControlsDisabled = authRequired;
   const writeControlsDisabled = authRequired || writeBlocked;
@@ -164,12 +153,12 @@ export function TemplateOverridesPanel() {
           </select>
         </div>
 
-        {error && (
+        {localError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-            {error}
+            {localError}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => setLocalError(null)}
               className="ml-2 text-red-600 hover:text-red-800"
             >
               Dismiss
@@ -183,13 +172,15 @@ export function TemplateOverridesPanel() {
             defaultProvider={selectedProvider}
             authRequired={authRequired}
             writeBlocked={writeBlocked}
-            onWriteBlocked={() => setWriteBlocked(true)}
+            onWriteBlocked={() =>
+              setLocalError('You do not have permission to save tenant overrides.')
+            }
             onClose={() => {
               setShowCreateDialog(false);
               setEditingOverride(null);
             }}
-            onSave={async () => {
-              await fetchOverrides();
+            onSave={() => {
+              queryClient.invalidateQueries({ queryKey: ['template-overrides'] });
               setShowCreateDialog(false);
               setEditingOverride(null);
             }}
@@ -204,11 +195,11 @@ export function TemplateOverridesPanel() {
           <div className="py-8 text-center text-gray-500">
             Select a provider to view and manage template overrides
           </div>
-        ) : loading ? (
+        ) : isLoading ? (
           <div className="py-8 text-center text-gray-500">Loading overrides...</div>
         ) : overrides.length === 0 ? (
           <div className="py-8 text-center text-gray-500">
-            No overrides for {PROVIDER_LABELS[selectedProvider] || selectedProvider}.{` `}
+            No overrides for {PROVIDER_LABELS[selectedProvider] || selectedProvider}.{' '}
             <button
               type="button"
               onClick={() => setShowCreateDialog(true)}
@@ -226,7 +217,7 @@ export function TemplateOverridesPanel() {
                 override={override}
                 disabled={writeControlsDisabled}
                 onEdit={() => setEditingOverride(override)}
-                onDelete={() => handleDeleteOverride(override.id)}
+                onDelete={() => deleteMutation.mutate(override.id)}
               />
             ))}
           </div>
@@ -367,7 +358,7 @@ interface OverrideDialogProps {
   writeBlocked: boolean;
   onWriteBlocked: () => void;
   onClose: () => void;
-  onSave: () => Promise<void>;
+  onSave: () => void;
 }
 
 function OverrideDialog({
@@ -452,7 +443,7 @@ function OverrideDialog({
         throw new Error(errorData.error || 'Failed to save override');
       }
 
-      await onSave();
+      onSave();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save override');
     } finally {

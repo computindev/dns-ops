@@ -34,7 +34,6 @@ import { providerTemplateRoutes } from './provider-templates.js';
 import { rulesetVersionRoutes } from './ruleset-versions.js';
 import { selectorRoutes } from './selectors.js';
 import { shadowComparisonRoutes } from './shadow-comparison.js';
-import authRoutes from './signup.js';
 import { simulationRoutes } from './simulation.js';
 import { snapshotRoutes } from './snapshots.js';
 import { suggestionsRoutes } from './suggestions.js';
@@ -161,7 +160,6 @@ apiRoutes.get('/health/detailed', requireAdminAccess, async (c) => {
   });
 });
 
-apiRoutes.route('/auth', authRoutes);
 apiRoutes.route('/', findingsRoutes);
 apiRoutes.route('/', legacyToolsRoutes);
 apiRoutes.route('/', selectorRoutes);
@@ -180,9 +178,7 @@ apiRoutes.route('/fleet-report', fleetReportRoutes);
 apiRoutes.route('/simulate', simulationRoutes);
 apiRoutes.route('/suggestions', suggestionsRoutes);
 
-// NOTE: This route intentionally does NOT use requireAuth.
-// Unscoped domains (tenantId=NULL) are public-readable. Tenant-owned
-// domains return 404 to unauthenticated callers (no existence leak).
+// Domain read — tenant-scoped via resolveAccessibleSnapshot
 apiRoutes.get('/domain/:domain/latest', async (c) => {
   const tenantId = c.get('tenantId');
   const db = c.get('db');

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
+import { AuthPending } from '../components/AuthPending.js';
 import { AlertsPanel } from '../components/AlertsPanel.js';
 import { AuditLogPanel } from '../components/AuditLogPanel.js';
 import { FleetReportsPanel } from '../components/FleetReportsPanel.js';
@@ -8,9 +9,14 @@ import { PortfolioSearchPanel } from '../components/PortfolioSearchPanel.js';
 import { SavedFiltersPanel } from '../components/SavedFiltersPanel.js';
 import { SharedReportsPanel } from '../components/SharedReportsPanel.js';
 import { TemplateOverridesPanel } from '../components/TemplateOverridesPanel.js';
+import { requireAuthGuard } from '../lib/auth-guard.js';
 import { type CurrentFilters, EMPTY_CURRENT_FILTERS } from '../lib/portfolio-filters.js';
 
 export const Route = createFileRoute('/portfolio')({
+  beforeLoad: async () => {
+    await requireAuthGuard();
+  },
+  pendingComponent: AuthPending,
   component: PortfolioWorkspace,
 });
 

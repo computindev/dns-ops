@@ -1,5 +1,6 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import {
   type CurrentFilters,
   currentFiltersToSearchBody,
@@ -36,94 +37,65 @@ export function PortfolioSearchPanel({
   currentFilters,
   onFiltersChange,
 }: PortfolioSearchPanelProps) {
+  const queryClient = useQueryClient();
   const idPrefix = useId();
   const queryId = `${idPrefix}-portfolio-search-query`;
   const tagsId = `${idPrefix}-portfolio-search-tags`;
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
-  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
-  const [hasSearched, setHasSearched] = useState(false);
-  const requestIdRef = useRef(0);
 
   const normalizedFilters = useMemo(
     () => normalizeCurrentFilters(currentFilters),
     [currentFilters]
   );
 
-  useEffect(() => {
-    async function fetchTagSuggestions() {
-      try {
-        const response = await fetch('/api/portfolio/tags');
-        if (!response.ok) {
-          return;
+  // Tag suggestions — reference data, rarely changes
+  const { data: tagSuggestionsData } = useQuery({
+    queryKey: ['portfolio-tags'],
+    queryFn: async () => {
+      const response = await fetch('/api/portfolio/tags', { credentials: 'include' });
+      if (!response.ok) return { tags: [] as string[] };
+      return (await response.json()) as { tags?: string[] };
+    },
+    staleTime: Infinity,
+  });
+
+  const tagSuggestions = tagSuggestionsData?.tags ?? [];
+
+  // Portfolio search — reactive to filters
+  const {
+    data: searchData,
+    isLoading,
+    error,
+    isError,
+  } = useQuery({
+    queryKey: ['portfolio-search', normalizedFilters],
+    queryFn: async ({ signal }) => {
+      const response = await fetch('/api/portfolio/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentFiltersToSearchBody(normalizedFilters)),
+        signal,
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          const err = new Error('auth');
+          (err as Error & { status: number }).status = response.status;
+          throw err;
         }
-        const data = (await response.json()) as { tags?: string[] };
-        setTagSuggestions(data.tags || []);
-      } catch {
-        // Suggestions are optional.
+        const errorData = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errorData.error || 'Failed to search portfolio');
       }
-    }
 
-    void fetchTagSuggestions();
-  }, []);
+      return (await response.json()) as { domains?: SearchResult[] };
+    },
+  });
 
-  useEffect(() => {
-    const requestId = ++requestIdRef.current;
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch('/api/portfolio/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(currentFiltersToSearchBody(normalizedFilters)),
-          signal: controller.signal,
-        });
-
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-
-        if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            setAuthRequired(true);
-            setResults([]);
-            setHasSearched(true);
-            return;
-          }
-
-          const errorData = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(errorData.error || 'Failed to search portfolio');
-        }
-
-        setAuthRequired(false);
-        const data = (await response.json()) as { domains?: SearchResult[] };
-        setResults(data.domains || []);
-        setHasSearched(true);
-      } catch (err) {
-        if (controller.signal.aborted || requestId !== requestIdRef.current) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : 'Failed to search portfolio');
-        setResults([]);
-        setHasSearched(true);
-      } finally {
-        if (requestId === requestIdRef.current) {
-          setLoading(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeoutId);
-    };
-  }, [normalizedFilters]);
+  const results = searchData?.domains ?? [];
+  const authRequired = isError && (error as Error & { status?: number })?.status === 401;
+  const searchError = isError && !authRequired ? error.message : null;
+  const hasSearched = true; // useQuery runs immediately; empty result set is valid
 
   const filteredSuggestions = tagSuggestions.filter((tag) => !normalizedFilters.tags.includes(tag));
 
@@ -187,15 +159,15 @@ export function PortfolioSearchPanel({
           </div>
         )}
 
-        {error && (
+        {searchError && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-            {error}
+            {searchError}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['portfolio-search'] })}
               className="ml-2 text-red-600 hover:text-red-800"
             >
-              Dismiss
+              Retry
             </button>
           </div>
         )}
@@ -324,7 +296,7 @@ export function PortfolioSearchPanel({
         <div className="border-t border-gray-200 pt-4">
           <div className="mb-3 flex items-center justify-between">
             <h4 className="font-medium text-gray-900">Results</h4>
-            {!loading && hasSearched && !authRequired && (
+            {!isLoading && hasSearched && !authRequired && (
               <span className="text-sm text-gray-500">
                 {results.length === 20
                   ? 'Showing first 20 matching domains. Refine filters to narrow results.'
@@ -333,14 +305,12 @@ export function PortfolioSearchPanel({
             )}
           </div>
 
-          {loading ? (
+          {isLoading ? (
             <div className="py-8 text-center text-gray-500">Searching portfolio...</div>
           ) : authRequired ? (
             <div className="py-8 text-center text-gray-500">Sign in to search tenant domains.</div>
-          ) : error ? (
+          ) : searchError ? (
             <div className="py-8 text-center text-gray-500">Search is unavailable right now.</div>
-          ) : !hasSearched ? (
-            <div className="py-8 text-center text-gray-500">Search results will appear here.</div>
           ) : results.length === 0 ? (
             <div className="py-8 text-center text-gray-500">
               No tenant domains matched the current filters.

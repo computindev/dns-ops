@@ -5,7 +5,7 @@
  * with their provenance and confidence levels.
  */
 
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface DiscoveredSelector {
@@ -30,33 +30,26 @@ interface DiscoveredSelectorsProps {
 }
 
 export function DiscoveredSelectors({ snapshotId }: DiscoveredSelectorsProps) {
-  const [selectors, setSelectors] = useState<DiscoveredSelector[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: selectors = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ['selectors', snapshotId],
+    queryFn: async () => {
+      const res = await fetch(`/api/snapshot/${snapshotId}/selectors`);
+      const data = (await res.json()) as SelectorResponse;
+      return data.selectors ?? [];
+    },
+    enabled: !!snapshotId,
+  });
 
-  useEffect(() => {
-    if (!snapshotId) return;
-
-    setLoading(true);
-    fetch(`/api/snapshot/${snapshotId}/selectors`)
-      .then((res) => res.json())
-      .then((data) => {
-        const payload = data as SelectorResponse;
-        setSelectors(payload.selectors || []);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, [snapshotId]);
-
-  if (loading) {
+  if (isLoading) {
     return <LoadingState message="Discovering DKIM selectors..." size="sm" />;
   }
 
   if (error) {
-    return <ErrorState message={error} size="sm" />;
+    return <ErrorState message={error.message} size="sm" />;
   }
 
   if (selectors.length === 0) {

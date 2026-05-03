@@ -10,7 +10,8 @@
  *   POST /api/snapshots/:domain/compare-latest → compare latest two
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 // ---------------------------------------------------------------------------
@@ -111,102 +112,78 @@ interface SnapshotHistoryPanelProps {
   domain: string;
 }
 
-export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
-  const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+async function fetchSnapshots(domain: string): Promise<SnapshotListItem[]> {
+  const res = await fetch(`/api/snapshots/${encodeURIComponent(domain)}?limit=50`, {
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    if (res.status === 404) return [];
+    throw new Error(`Failed to load snapshots: ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as { snapshots: SnapshotListItem[] };
+  return data.snapshots ?? [];
+}
 
+export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
   const [selectedA, setSelectedA] = useState<string | null>(null);
   const [selectedB, setSelectedB] = useState<string | null>(null);
-
   const [diffResult, setDiffResult] = useState<DiffResponse | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
 
-  // -- Fetch snapshot list --------------------------------------------------
+  const {
+    data: snapshots = [],
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['snapshots', domain],
+    queryFn: () => fetchSnapshots(domain),
+    enabled: !!domain,
+  });
 
-  const fetchSnapshots = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch(`/api/snapshots/${encodeURIComponent(domain)}?limit=50`);
+  const compareMutation = useMutation({
+    mutationFn: async ({ snapshotA, snapshotB }: { snapshotA?: string; snapshotB?: string }) => {
+      const url = snapshotA
+        ? `/api/snapshots/${encodeURIComponent(domain)}/diff`
+        : `/api/snapshots/${encodeURIComponent(domain)}/compare-latest`;
+      const body = snapshotA ? JSON.stringify({ snapshotA, snapshotB }) : undefined;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
       if (!res.ok) {
-        if (res.status === 404) {
-          setSnapshots([]);
-          return;
-        }
-        throw new Error(`Failed to load snapshots: ${res.status} ${res.statusText}`);
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(
+          body.error ?? `${snapshotA ? 'Diff' : 'Compare latest'} failed: ${res.status}`
+        );
       }
-      const data = (await res.json()) as { snapshots: SnapshotListItem[] };
-      setSnapshots(data.snapshots ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  }, [domain]);
+      return (await res.json()) as DiffResponse;
+    },
+    onSuccess: (data) => {
+      setDiffResult(data);
+      setDiffError(null);
+    },
+    onError: (err) => {
+      setDiffError(err instanceof Error ? err.message : 'Unknown error');
+    },
+  });
 
-  useEffect(() => {
-    fetchSnapshots();
-  }, [fetchSnapshots]);
-
-  // -- Diff actions ---------------------------------------------------------
-
-  const compareSelected = useCallback(async () => {
+  const compareSelected = () => {
     if (!selectedA || !selectedB) return;
-    setDiffLoading(true);
-    setDiffError(null);
-    setDiffResult(null);
+    compareMutation.mutate({ snapshotA: selectedA, snapshotB: selectedB });
+  };
 
-    try {
-      const res = await fetch(`/api/snapshots/${encodeURIComponent(domain)}/diff`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ snapshotA: selectedA, snapshotB: selectedB }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Diff failed: ${res.status}`);
-      }
-      setDiffResult((await res.json()) as DiffResponse);
-    } catch (err) {
-      setDiffError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setDiffLoading(false);
-    }
-  }, [domain, selectedA, selectedB]);
+  const compareLatest = () => {
+    compareMutation.mutate({});
+  };
 
-  const compareLatest = useCallback(async () => {
-    setDiffLoading(true);
-    setDiffError(null);
-    setDiffResult(null);
-
-    try {
-      const res = await fetch(`/api/snapshots/${encodeURIComponent(domain)}/compare-latest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Compare latest failed: ${res.status}`);
-      }
-      setDiffResult((await res.json()) as DiffResponse);
-    } catch (err) {
-      setDiffError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setDiffLoading(false);
-    }
-  }, [domain]);
-
-  const clearDiff = useCallback(() => {
+  const clearDiff = () => {
     setDiffResult(null);
     setDiffError(null);
-  }, []);
+  };
 
-  // -- Loading / empty / error states ---------------------------------------
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div data-testid="snapshot-history-loading">
         <LoadingState message="Loading snapshot history…" />
@@ -217,7 +194,7 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
   if (error) {
     return (
       <div data-testid="snapshot-history-error">
-        <ErrorState message={error} onRetry={fetchSnapshots} />
+        <ErrorState message={error.message} onRetry={refetch} />
       </div>
     );
   }
@@ -235,11 +212,10 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
     );
   }
 
-  // -- Render ---------------------------------------------------------------
+  const diffLoading = compareMutation.isPending;
 
   return (
     <div className="space-y-6" data-testid="snapshot-history-panel">
-      {/* Header + quick actions */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="font-semibold text-gray-900">Snapshot History</h3>
@@ -256,7 +232,7 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
               className="focus-ring px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
               data-testid="compare-latest-btn"
             >
-              {diffLoading ? 'Comparing…' : 'Compare Latest'}
+              {diffLoading && !selectedA ? 'Comparing…' : 'Compare Latest'}
             </button>
           )}
           <button
@@ -271,7 +247,6 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
         </div>
       </div>
 
-      {/* Snapshot list table */}
       <div className="overflow-x-auto border border-gray-200 rounded-lg">
         <table className="min-w-full text-sm" data-testid="snapshot-list-table">
           <thead className="bg-gray-50 text-gray-600">
@@ -338,7 +313,6 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
         </table>
       </div>
 
-      {/* Diff error */}
       {diffError && (
         <div
           className="p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700"
@@ -349,14 +323,12 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
         </div>
       )}
 
-      {/* Diff loading */}
       {diffLoading && (
         <div data-testid="diff-loading">
           <LoadingState message="Computing snapshot diff…" size="sm" />
         </div>
       )}
 
-      {/* Diff result */}
       {diffResult && <DiffResultView result={diffResult} onClose={clearDiff} />}
     </div>
   );
@@ -370,8 +342,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
   const { diff, warnings } = result;
   const { findingsSummary, comparison } = diff;
 
-  // Compute record-only stats from the actual array — the API's `summary`
-  // field aggregates both records AND findings, which double-counts.
   const nonUnchangedRecords = comparison.recordChanges.filter((r) => r.type !== 'unchanged');
   const recordStats = {
     added: comparison.recordChanges.filter((r) => r.type === 'added').length,
@@ -382,7 +352,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
 
   return (
     <div className="space-y-4" data-testid="diff-result">
-      {/* Close / header */}
       <div className="flex items-center justify-between">
         <h4 className="font-semibold text-gray-900">Comparison Result</h4>
         <button
@@ -395,7 +364,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </button>
       </div>
 
-      {/* Snapshot metadata */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <div className="rounded-lg bg-gray-50 p-3">
           <p className="font-medium text-gray-700">Snapshot A (older)</p>
@@ -417,7 +385,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </div>
       </div>
 
-      {/* Warnings */}
       {warnings && warnings.length > 0 && (
         <div
           className="p-3 rounded-lg border border-yellow-200 bg-yellow-50 text-sm text-yellow-800"
@@ -432,7 +399,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </div>
       )}
 
-      {/* Record summary cards — uses record-only counts, not the combined summary */}
       <div>
         <h5 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
           DNS Records
@@ -445,7 +411,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </div>
       </div>
 
-      {/* Scope changes */}
       {comparison.scopeChanges && (
         <div
           className="p-3 rounded-lg border border-orange-200 bg-orange-50 text-sm"
@@ -456,7 +421,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </div>
       )}
 
-      {/* Ruleset changes */}
       {comparison.rulesetChange && (
         <div
           className="p-3 rounded-lg border border-purple-200 bg-purple-50 text-sm"
@@ -467,7 +431,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </div>
       )}
 
-      {/* Record changes — only show if there are non-unchanged changes */}
       {nonUnchangedRecords.length > 0 && (
         <ChangeSection title="Record Changes" testId="record-changes">
           <div className="overflow-x-auto">
@@ -510,7 +473,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </ChangeSection>
       )}
 
-      {/* TTL changes */}
       {comparison.ttlChanges.length > 0 && (
         <ChangeSection title="TTL Changes" testId="ttl-changes">
           <div className="overflow-x-auto">
@@ -545,7 +507,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </ChangeSection>
       )}
 
-      {/* Finding changes */}
       {findingsSummary.totalChanges > 0 && (
         <ChangeSection title="Finding Changes" testId="finding-changes">
           <div className="space-y-2">
@@ -582,7 +543,6 @@ function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: ()
         </ChangeSection>
       )}
 
-      {/* No changes */}
       {nonUnchangedRecords.length === 0 &&
         comparison.ttlChanges.length === 0 &&
         findingsSummary.totalChanges === 0 && (

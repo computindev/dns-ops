@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types.js';
 import { apiRoutes } from './api.js';
+import authRoutes from './signup.js';
 
 // =============================================================================
 // AUTH POLICY MATRIX - Single Source of Truth
@@ -51,8 +52,8 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   {
     path: '/api/auth/signup',
     method: 'POST',
-    policy: 'public',
-    notes: 'Public auth endpoint, does not use requireAuth',
+    policy: 'auth-read',
+    notes: 'Registration disabled — returns 403 for all requests',
   },
   {
     path: '/api/auth/login',
@@ -536,6 +537,7 @@ describe('Auth Policy Matrix - AUTH-006', () => {
       return next();
     });
 
+    app.route('/api/auth', authRoutes);
     app.route('/api', apiRoutes);
   });
 
@@ -599,6 +601,7 @@ describe('Auth Policy Matrix - AUTH-006', () => {
       for (const route of publicRoutes) {
         // Create fresh app without auth context
         const publicApp = new Hono<Env>();
+        publicApp.route('/api/auth', authRoutes);
         publicApp.route('/api', apiRoutes);
 
         const res = await publicApp.request(route.path, { method: route.method });
@@ -749,7 +752,10 @@ describe('Auth Policy Matrix - AUTH-006', () => {
       // Or if they use requireAuth (not requireWritePermission) for mutating ops
       // This test documents them but doesn't fail
       const undocumented = violatingRoutes.filter(
-        (r) => !r.notes?.includes('tenant isolation') && !r.notes?.includes('requireAuth')
+        (r) =>
+          !r.notes?.includes('tenant isolation') &&
+          !r.notes?.includes('requireAuth') &&
+          !r.notes?.includes('Registration disabled')
       );
 
       expect(undocumented, 'Undocumented mutating routes without write/admin policy').toEqual([]);

@@ -1,6 +1,8 @@
 import type { Observation, Snapshot } from '@dns-ops/db/schema';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { type KeyboardEvent, useCallback, useEffect, useId, useState } from 'react';
+import { type KeyboardEvent, useCallback, useId, useState } from 'react';
+import { AuthPending } from '../../components/AuthPending.js';
 import { DelegationPanel } from '../../components/DelegationPanel.js';
 import { DiscoveredSelectors } from '../../components/DiscoveredSelectors.js';
 import { DNSViews } from '../../components/DNSViews.js';
@@ -43,8 +45,14 @@ const BASE_TABS: DomainTabId[] = ['overview', 'dns', 'mail', 'history'];
 const ALL_TABS: DomainTabId[] = DELEGATION_ENABLED ? [...BASE_TABS, 'delegation'] : BASE_TABS;
 const VALID_TABS: DomainTabId[] = ALL_TABS;
 
+import { requireAuthGuard } from '../../lib/auth-guard.js';
+
 export const Route = createFileRoute('/domain/$domain')({
   component: Domain360Page,
+  beforeLoad: async () => {
+    await requireAuthGuard();
+  },
+  pendingComponent: AuthPending,
   validateSearch: (search: Record<string, unknown>): DomainSearchParams => {
     const tab = search.tab as string | undefined;
     return {
@@ -53,8 +61,8 @@ export const Route = createFileRoute('/domain/$domain')({
   },
   loader: ({ params }): DomainLoaderData => {
     // Loader only provides the domain name from route params.
-    // Data fetching happens client-side via useEffect to remain
-    // interceptable by Playwright and avoid server-side fetch issues.
+    // Data fetching is handled by TanStack Query (useQuery) in the
+    // component so it remains interceptable by Playwright E2E mocks.
     return { domain: params.domain, snapshot: null, observations: [] };
   },
 });
@@ -68,72 +76,99 @@ const DOMAIN_TABS: { id: DomainTabId; label: string }[] = [
   ...(DELEGATION_ENABLED ? [{ id: 'delegation' as const, label: 'Delegation' }] : []),
 ];
 
+interface DomainData {
+  snapshot: Snapshot | null;
+  observations: Observation[];
+}
+
+async function fetchDomainData(domain: string): Promise<DomainData> {
+  const snapshotResponse = await fetch(`/api/domain/${domain}/latest`, { credentials: 'include' });
+
+  if (!snapshotResponse.ok) {
+    if (snapshotResponse.status === 404) {
+      return { snapshot: null, observations: [] };
+    }
+    throw new Error(
+      `Failed to load domain data: ${snapshotResponse.status} ${snapshotResponse.statusText}`
+    );
+  }
+
+  const snap = (await snapshotResponse.json()) as { id: string } & Snapshot;
+
+  let observations: Observation[] = [];
+  try {
+    const obsResponse = await fetch(`/api/snapshot/${snap.id}/observations`, {
+      credentials: 'include',
+    });
+    if (obsResponse.ok) {
+      observations = (await obsResponse.json()) as Observation[];
+    }
+  } catch {
+    // Observation fetch failed but we still have snapshot - not critical
+  }
+
+  return { snapshot: snap, observations };
+}
+
 function Domain360Page() {
+  const queryClient = useQueryClient();
   const loaderData = Route.useLoaderData() as DomainLoaderData;
   const { domain } = loaderData;
   const { tab: urlTab } = Route.useSearch();
-  // Local state for immediate tab switch; URL search initializes.
   const [activeTab, setActiveTab] = useState<DomainTabId>(urlTab ?? 'overview');
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [observations, setObservations] = useState<Observation[]>([]);
-  const [loaderError, setLoaderError] = useState<LoaderError | undefined>(undefined);
-  const [dataLoaded, setDataLoaded] = useState(false);
   const tabDomIdPrefix = useId();
 
-  // Client-side data fetching (interceptable by Playwright E2E mocks)
-  useEffect(() => {
-    if (typeof window === 'undefined' || dataLoaded) return;
+  const {
+    data: domainData,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ['domain-data', domain],
+    queryFn: () => fetchDomainData(domain),
+    enabled: !!domain,
+  });
 
-    let cancelled = false;
-    async function loadData() {
-      try {
-        const snapshotResponse = await fetch(`/api/domain/${domain}/latest`);
+  const snapshot = domainData?.snapshot ?? null;
+  const observations = domainData?.observations ?? [];
 
-        if (cancelled) return;
-
-        if (!snapshotResponse.ok) {
-          if (snapshotResponse.status === 404) {
-            setDataLoaded(true);
-            return;
-          }
-          setLoaderError({
-            type: 'fetch_error',
-            message: `Failed to load domain data: ${snapshotResponse.status} ${snapshotResponse.statusText}`,
-          });
-          setDataLoaded(true);
-          return;
-        }
-
-        const snap = (await snapshotResponse.json()) as { id: string } & Snapshot;
-        if (cancelled) return;
-        setSnapshot(snap);
-
-        try {
-          const obsResponse = await fetch(`/api/snapshot/${snap.id}/observations`);
-          if (!cancelled && obsResponse.ok) {
-            setObservations((await obsResponse.json()) as Observation[]);
-          }
-        } catch {
-          // Observation fetch failed but we still have snapshot - not critical
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setLoaderError({
-          type: 'api_unreachable',
-          message: err instanceof Error ? err.message : 'Unable to reach the API server',
-        });
-      } finally {
-        if (!cancelled) setDataLoaded(true);
+  const loaderError: LoaderError | undefined = error
+    ? {
+        type:
+          error instanceof Error && error.message.startsWith('Failed to load')
+            ? 'fetch_error'
+            : 'api_unreachable',
+        message: error instanceof Error ? error.message : 'Unable to reach the API server',
       }
-    }
+    : undefined;
 
-    loadData();
-    return () => {
-      cancelled = true;
-    };
-  }, [domain, dataLoaded]);
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/collect/domain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, zoneManagement: 'unmanaged' }),
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({ error: 'Refresh failed' }))) as {
+          error?: string;
+          message?: string;
+        };
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Operator sign-in is required to refresh DNS evidence.');
+        }
+        throw new Error(errorData.message || errorData.error || 'Refresh failed');
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domain-data', domain] });
+    },
+    onError: (err) => {
+      setRefreshError(err instanceof Error ? err.message : 'Refresh failed');
+    },
+  });
 
   const handleTabChange = useCallback((newTab: DomainTabId) => {
     // Immediate local state update for responsive UI
@@ -191,50 +226,24 @@ function Domain360Page() {
     }
   };
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
+  const handleRefresh = () => {
     setRefreshError(null);
-
-    try {
-      const response = await fetch('/api/collect/domain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, zoneManagement: 'unmanaged' }),
-      });
-
-      if (!response.ok) {
-        const error = (await response.json().catch(() => ({ error: 'Refresh failed' }))) as {
-          error?: string;
-          message?: string;
-        };
-        if (response.status === 401 || response.status === 403) {
-          setRefreshError('Operator sign-in is required to refresh DNS evidence.');
-          return;
-        }
-        setRefreshError(error.message || error.error || 'Refresh failed');
-        return;
-      }
-
-      // Re-trigger client-side data loading
-      setDataLoaded(false);
-    } finally {
-      setIsRefreshing(false);
-    }
+    refreshMutation.mutate();
   };
 
   return (
-    <div data-loaded={dataLoaded || undefined}>
+    <div data-loaded={!isLoading || undefined}>
       <div className="mb-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-3xl font-bold text-gray-900 break-all">{domain}</h1>
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={isRefreshing}
-            aria-busy={isRefreshing}
+            disabled={refreshMutation.isPending}
+            aria-busy={refreshMutation.isPending}
             className="focus-ring min-h-10 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
           >
-            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+            {refreshMutation.isPending ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
 

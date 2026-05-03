@@ -86,16 +86,16 @@ describe('Auth E2E — full lifecycle', () => {
     app.get('/api/optional', (c) => c.json({ tenantId: c.get('tenantId') || null }));
   });
 
-  it('signup creates a user and returns success', async () => {
+  it('signup is disabled and returns 403', async () => {
     const res = await app.request('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'test@example.com', password: 'password123' }),
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.success).toBe(true);
+    expect(body.error).toBe('Registration is disabled.');
   });
 
   it('login with invalid credentials returns 401', async () => {

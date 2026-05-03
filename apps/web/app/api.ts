@@ -2,11 +2,11 @@ import { createStartAPIHandler } from '@tanstack/react-start/api';
 import { getEvent } from '@tanstack/react-start/server';
 import { Hono } from 'hono';
 import { assertEnvValid } from '../hono/config/env.js';
-import { authMiddleware, dbMiddleware } from '../hono/middleware/index.js';
+import { authMiddleware, dbMiddleware, requireAuthMiddleware } from '../hono/middleware/index.js';
 import { apiRoutes } from '../hono/routes/api.js';
+import authRoutes from '../hono/routes/signup.js';
 import type { Env } from '../hono/types.js';
 
-// Validate environment at module load time (fail fast)
 if (typeof process !== 'undefined' && process.env) {
   try {
     assertEnvValid();
@@ -20,17 +20,23 @@ if (typeof process !== 'undefined' && process.env) {
 
 const app = new Hono<Env>();
 
-// Global middleware - order matters
-// 1. DB middleware first to ensure database is available
 app.use('*', dbMiddleware);
-// 2. Auth middleware to populate tenant/actor context
 app.use('*', authMiddleware);
+
+// Public API routes (no auth required)
+app.route('/api/auth', authRoutes);
+
+// All other API routes require authentication
+app.use('/api/*', async (c, next) => {
+  if (c.req.path === '/api/health' || c.req.path.startsWith('/api/auth/')) {
+    return next();
+  }
+  return requireAuthMiddleware(c, next);
+});
 
 app.route('/api', apiRoutes);
 
 export default createStartAPIHandler(({ request }) => {
-  // Railway node-server preset: env comes from process.env
-  // dbMiddleware reads DATABASE_URL directly; no runtime bindings needed.
   const event = getEvent();
   const runtimeEnv = (event?.context as Record<string, unknown>) ?? {};
   return app.fetch(request, runtimeEnv);

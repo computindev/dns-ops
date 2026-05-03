@@ -5,7 +5,8 @@
  * Allows adding and removing tags for a domain.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
 interface TagsPanelProps {
   /** Domain UUID (preferred) or domain name */
@@ -16,219 +17,174 @@ interface TagsPanelProps {
   onTagsChange?: (tags: string[]) => void;
 }
 
+async function resolveDomain(domainId: string) {
+  const response = await fetch(`/api/portfolio/domains/by-name/${encodeURIComponent(domainId)}`, {
+    credentials: 'include',
+  });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (response.status === 404) {
+    const err = new Error('Not found');
+    (err as Error & { status: number }).status = 404;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to resolve domain');
+  const data = (await response.json()) as { domain?: { id?: string } };
+  return data.domain?.id ?? null;
+}
+
+async function fetchTags(resolvedDomainId: string): Promise<string[]> {
+  const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, {
+    credentials: 'include',
+  });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch tags');
+  const data = (await response.json()) as { tags?: Array<string | { tag: string }> };
+  return (data.tags || []).map((tag) => (typeof tag === 'string' ? tag : tag.tag));
+}
+
+async function fetchAllTags(): Promise<string[]> {
+  const response = await fetch('/api/portfolio/tags', { credentials: 'include' });
+  if (!response.ok) return [];
+  const data = (await response.json()) as { tags?: string[] };
+  return data.tags || [];
+}
+
 export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: TagsPanelProps) {
-  const [tags, setTags] = useState<string[]>([]);
-  const [allTags, setAllTags] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
-  const [writeBlocked, setWriteBlocked] = useState(false);
+  const queryClient = useQueryClient();
   const [newTag, setNewTag] = useState('');
   const [isAdding, setIsAdding] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [resolvedDomainId, setResolvedDomainId] = useState<string | null>(
-    isDomainName ? null : domainId
-  );
-  const [resolutionAttempted, setResolutionAttempted] = useState(!isDomainName);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  // If using domain name, resolve to ID first
-  useEffect(() => {
-    if (!isDomainName) {
-      setResolvedDomainId(domainId);
-      return;
-    }
+  const {
+    data: resolvedDomainId,
+    isLoading: resolving,
+    error: resolveError,
+  } = useQuery({
+    queryKey: ['domain-resolve', domainId, isDomainName],
+    queryFn: () => (isDomainName ? resolveDomain(domainId) : Promise.resolve(domainId)),
+    enabled: !!domainId,
+    staleTime: Infinity,
+  });
 
-    async function resolveDomainId() {
-      setResolutionAttempted(false);
-      setError(null);
-      try {
-        const response = await fetch(
-          `/api/portfolio/domains/by-name/${encodeURIComponent(domainId)}`,
-          { credentials: 'include' }
-        );
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setResolvedDomainId(null);
-          setLoading(false);
-          setResolutionAttempted(true);
-          return;
-        }
-        if (response.status === 403) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('You do not have permission to view tenant tags for this domain.');
-          setResolutionAttempted(true);
-          return;
-        }
-        if (response.status === 404) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('This domain must exist in the tenant portfolio before tags can be attached.');
-          setResolutionAttempted(true);
-          return;
-        }
-        if (!response.ok) {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('Failed to resolve domain context for tags');
-          setResolutionAttempted(true);
-          return;
-        }
+  const resolveStatus = resolveError
+    ? (resolveError as Error & { status?: number }).status
+    : undefined;
 
-        const data = (await response.json()) as { domain?: { id?: string } };
-        if (data.domain?.id) {
-          setAuthRequired(false);
-          setResolvedDomainId(data.domain.id);
-          setLoading(true);
-        } else {
-          setResolvedDomainId(null);
-          setLoading(false);
-          setError('Resolved domain response did not include a domain ID.');
-        }
-      } catch {
-        setResolvedDomainId(null);
-        setLoading(false);
-        setError('Failed to resolve domain context for tags');
-      } finally {
-        setResolutionAttempted(true);
-      }
-    }
-    void resolveDomainId();
-  }, [domainId, isDomainName]);
+  const {
+    data: tags = [],
+    isLoading: tagsLoading,
+    error: tagsError,
+  } = useQuery({
+    queryKey: ['tags', resolvedDomainId],
+    queryFn: () => fetchTags(resolvedDomainId!),
+    enabled: !!resolvedDomainId,
+  });
 
-  // Fetch all available tags for suggestions
-  useEffect(() => {
-    async function fetchAllTags() {
-      try {
-        const response = await fetch('/api/portfolio/tags', { credentials: 'include' });
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setAllTags([]);
-          return;
-        }
-        if (response.status === 403) {
-          setAllTags([]);
-          return;
-        }
-        if (response.ok) {
-          setAuthRequired(false);
-          const data = (await response.json()) as { tags?: string[] };
-          setAllTags(data.tags || []);
-        }
-      } catch {
-        // Silently fail - suggestions are optional
-      }
-    }
-    fetchAllTags();
-  }, []);
+  const { data: allTags = [] } = useQuery({
+    queryKey: ['portfolio-tags'],
+    queryFn: fetchAllTags,
+    staleTime: Infinity,
+  });
 
-  const fetchTags = useCallback(async () => {
-    if (!resolvedDomainId) {
-      setLoading(false);
-      return;
-    }
+  const tagsStatus = tagsError ? (tagsError as Error & { status?: number }).status : undefined;
 
-    setLoading(true);
-    setError(null);
+  const authRequired = resolveStatus === 401 || tagsStatus === 401;
+  const writeBlocked = resolveStatus === 403 || tagsStatus === 403;
+  const notFound = resolveStatus === 404;
+  const error =
+    localError ??
+    (resolveError && resolveStatus !== 401 && resolveStatus !== 403 && resolveStatus !== 404
+      ? resolveError.message
+      : null) ??
+    (tagsError && tagsStatus !== 401 && tagsStatus !== 403 ? tagsError.message : null);
 
-    try {
-      const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, {
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setTags([]);
-          return;
-        }
-        if (response.status === 403) {
-          setTags([]);
-          throw new Error('You do not have permission to view tenant tags.');
-        }
-        throw new Error('Failed to fetch tags');
-      }
-      setAuthRequired(false);
-      const data = (await response.json()) as { tags?: Array<string | { tag: string }> };
-      const fetchedTags = (data.tags || []).map((tag) => (typeof tag === 'string' ? tag : tag.tag));
-      setTags(fetchedTags);
-      onTagsChange?.(fetchedTags);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tags');
-    } finally {
-      setLoading(false);
-    }
-  }, [resolvedDomainId, onTagsChange]);
-
-  useEffect(() => {
-    if (resolvedDomainId) {
-      fetchTags();
-    }
-  }, [resolvedDomainId, fetchTags]);
-
-  const handleAddTag = async (tagToAdd: string = newTag) => {
-    const trimmedTag = tagToAdd.trim().toLowerCase();
-    if (!trimmedTag || !resolvedDomainId || tags.includes(trimmedTag)) return;
-
-    setIsSaving(true);
-    try {
+  const addMutation = useMutation({
+    mutationFn: async (tag: string) => {
       const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag: trimmedTag }),
+        body: JSON.stringify({ tag }),
         credentials: 'include',
       });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to add tags.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to add tenant tags.');
-        }
-        throw new Error('Failed to add tag');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
-      setAuthRequired(false);
-
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to add tag');
+    },
+    onSuccess: (_data, tag) => {
       setNewTag('');
       setIsAdding(false);
-      await fetchTags();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add tag');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['tags', resolvedDomainId] });
+      const currentTags = queryClient.getQueryData<string[]>(['tags', resolvedDomainId]) ?? [];
+      onTagsChange?.([...currentTags, tag]);
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to add tag');
+    },
+  });
 
-  const handleRemoveTag = async (tag: string) => {
-    if (!resolvedDomainId) return;
-
-    try {
+  const removeMutation = useMutation({
+    mutationFn: async (tag: string) => {
       const response = await fetch(
         `/api/portfolio/domains/${resolvedDomainId}/tags/${encodeURIComponent(tag)}`,
         { method: 'DELETE', credentials: 'include' }
       );
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          throw new Error('Operator sign-in is required to remove tags.');
-        }
-        if (response.status === 403) {
-          setWriteBlocked(true);
-          throw new Error('You do not have permission to remove tenant tags.');
-        }
-        throw new Error('Failed to remove tag');
+      if (response.status === 401) {
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
+      if (response.status === 403) {
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
+      }
+      if (!response.ok) throw new Error('Failed to remove tag');
+    },
+    onSuccess: (_data, tag) => {
+      queryClient.invalidateQueries({ queryKey: ['tags', resolvedDomainId] });
+      const currentTags = queryClient.getQueryData<string[]>(['tags', resolvedDomainId]) ?? [];
+      onTagsChange?.(currentTags.filter((t) => t !== tag));
+    },
+    onError: (err) => {
+      setLocalError(err instanceof Error ? err.message : 'Failed to remove tag');
+    },
+  });
 
-      setAuthRequired(false);
+  const handleAddTag = (tagToAdd: string = newTag) => {
+    const trimmedTag = tagToAdd.trim().toLowerCase();
+    if (!trimmedTag || !resolvedDomainId || tags.includes(trimmedTag)) return;
+    addMutation.mutate(trimmedTag);
+  };
 
-      await fetchTags();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove tag');
-    }
+  const handleRemoveTag = (tag: string) => {
+    if (!resolvedDomainId) return;
+    removeMutation.mutate(tag);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -241,8 +197,9 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
     }
   };
 
-  // Get suggested tags (all tags not already applied)
   const suggestedTags = allTags.filter((t) => !tags.includes(t));
+  const loading = resolving || tagsLoading;
+  const isSaving = addMutation.isPending || removeMutation.isPending;
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -273,13 +230,12 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
           </div>
         )}
 
-        {/* Error message */}
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
             {error}
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => setLocalError(null)}
               className="ml-2 text-red-600 hover:text-red-800"
             >
               Dismiss
@@ -287,7 +243,6 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
           </div>
         )}
 
-        {/* Add new tag */}
         {isAdding && (
           <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
             <div className="flex gap-2">
@@ -321,7 +276,6 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
               </button>
             </div>
 
-            {/* Tag suggestions */}
             {suggestedTags.length > 0 && (
               <div className="mt-3">
                 <span className="text-sm text-gray-500">Suggestions:</span>
@@ -343,16 +297,19 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
           </div>
         )}
 
-        {/* Loading state */}
         {loading ? (
           <div className="text-center text-gray-500 py-4">Loading tags...</div>
         ) : authRequired ? (
           <div className="text-center text-gray-500 py-4">
             Sign in to view and manage tenant tags.
           </div>
-        ) : !resolvedDomainId && resolutionAttempted ? (
+        ) : notFound ? (
           <div className="text-center text-gray-500 py-4">
-            {error || 'Tags are unavailable until domain context can be resolved.'}
+            This domain must exist in the tenant portfolio before tags can be attached.
+          </div>
+        ) : !resolvedDomainId ? (
+          <div className="text-center text-gray-500 py-4">
+            Tags are unavailable until domain context can be resolved.
           </div>
         ) : tags.length === 0 ? (
           <div className="text-center text-gray-500 py-4">

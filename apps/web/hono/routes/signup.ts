@@ -2,9 +2,8 @@
  * Auth Routes - Signup & Login with passwords
  */
 
-import { getTenantUUID } from '@dns-ops/contracts';
 import { sessions, users } from '@dns-ops/db/schema';
-import { hash, verify } from '@node-rs/argon2';
+import { verify } from '@node-rs/argon2';
 import { and, eq, gt } from 'drizzle-orm';
 import { Hono } from 'hono';
 import type { Env } from '../types.js';
@@ -39,77 +38,10 @@ function parseCookies(cookieHeader: string | undefined): Record<string, string> 
 
 /**
  * POST /api/auth/signup
- * Create a new user account
+ * Registration is disabled for this internal deployment.
  */
-authRoutes.post('/signup', async (c) => {
-  const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
-
-  const { email, password } = await c.req.json<{ email: string; password: string }>();
-
-  if (!email || !password) {
-    return c.json({ error: 'Email and password are required' }, 400);
-  }
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return c.json({ error: 'Invalid email format' }, 400);
-  }
-
-  // Validate password strength
-  if (password.length < 8) {
-    return c.json({ error: 'Password must be at least 8 characters' }, 400);
-  }
-
-  // Check if user already exists
-  const existingUser = await (db.getDrizzle() as any).query.users.findFirst({
-    where: eq(users.email, email.toLowerCase()),
-  });
-
-  if (existingUser) {
-    return c.json({ error: 'An account with this email already exists' }, 409);
-  }
-
-  // Hash password
-  const passwordHash = await hash(password, {
-    memoryCost: 65536,
-    timeCost: 3,
-    outputLen: 32,
-    parallelism: 4,
-  });
-
-  // Create user
-  const tenantId = email.split('@')[1];
-  const tenantUUID = await getTenantUUID(tenantId);
-
-  await (db.getDrizzle() as any).insert(users).values({
-    email: email.toLowerCase(),
-    passwordHash,
-    tenantId: tenantUUID,
-    name: email.split('@')[0],
-  });
-
-  // Create session
-  const token = generateToken();
-  const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
-
-  await (db.getDrizzle() as any).insert(sessions).values({
-    token,
-    userEmail: email.toLowerCase(),
-    tenantId: tenantUUID,
-    expiresAt,
-  });
-
-  // Set session cookie
-  c.header(
-    'Set-Cookie',
-    `dns_ops_session=${token}; Path=/; Max-Age=${SESSION_EXPIRY_DAYS * 24 * 60 * 60}; HttpOnly; SameSite=Lax`
-  );
-
-  return c.json({ success: true, email, tenant: tenantId });
+authRoutes.post('/signup', (c) => {
+  return c.json({ error: 'Registration is disabled.' }, 403);
 });
 
 /**
@@ -182,9 +114,23 @@ authRoutes.post('/logout', async (c) => {
 
 /**
  * GET /api/auth/me
- * Get current user info
+ * Get current user info. Checks auth context (CF Access, API key, dev bypass)
+ * then falls back to database session cookie.
  */
 authRoutes.get('/me', async (c) => {
+  // Check auth context set by authMiddleware (CF Access, API key, dev bypass)
+  const tenantId = c.get('tenantId');
+  const actorId = c.get('actorId');
+  const actorEmail = c.get('actorEmail');
+
+  if (tenantId && actorId) {
+    return c.json({
+      authenticated: true,
+      email: actorEmail || `${actorId}@dns-ops.local`,
+      tenant: tenantId,
+    });
+  }
+
   const db = c.get('db');
   if (!db) {
     return c.json({ authenticated: false }, 401);

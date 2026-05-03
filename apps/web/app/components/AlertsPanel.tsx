@@ -1,5 +1,13 @@
+/**
+ * Alerts Panel
+ *
+ * Displays and manages tenant alerts with filtering and actions.
+ * Uses TanStack Query for data fetching and mutations.
+ */
+
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 type AlertStatus = 'pending' | 'sent' | 'suppressed' | 'acknowledged' | 'resolved';
@@ -79,182 +87,167 @@ function formatTimestamp(timestamp?: string | null): string {
   return new Date(timestamp).toLocaleString();
 }
 
+const LIMIT = 25;
+
+interface AlertsPage {
+  alerts: AlertListItem[];
+  nextOffset: number;
+  hasMore: boolean;
+  total: number;
+}
+
+async function fetchAlertsPage(
+  statusFilter: 'all' | AlertStatus,
+  severityFilter: 'all' | AlertSeverity,
+  offset: number
+): Promise<AlertsPage> {
+  const search = new URLSearchParams({ limit: String(LIMIT), offset: String(offset) });
+  if (statusFilter !== 'all') search.set('status', statusFilter);
+  if (severityFilter !== 'all') search.set('severity', severityFilter);
+
+  const alertsResponse = await fetch(`/api/alerts?${search.toString()}`, {
+    credentials: 'include',
+  });
+
+  if (alertsResponse.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (alertsResponse.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!alertsResponse.ok) {
+    const body = (await alertsResponse.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || 'Failed to load alerts');
+  }
+
+  const alertsBody = (await alertsResponse.json()) as {
+    alerts: AlertRecord[];
+    pagination: { total: number; offset: number; hasMore: boolean };
+  };
+
+  let domainNamesById: Record<string, string> = {};
+  try {
+    const monitoringResponse = await fetch('/api/monitoring/domains', { credentials: 'include' });
+    if (monitoringResponse.ok) {
+      const monitoringBody = (await monitoringResponse.json()) as {
+        monitoredDomains: MonitoredDomainSummary[];
+      };
+      domainNamesById = Object.fromEntries(
+        (monitoringBody.monitoredDomains || []).map((domain) => [domain.id, domain.domainName])
+      );
+    }
+  } catch {
+    // Render alerts without domain enrichment when the monitoring lookup fails.
+  }
+
+  const mapped = (alertsBody.alerts || []).map((alert) => ({
+    ...alert,
+    domainName: domainNamesById[alert.monitoredDomainId] ?? null,
+  }));
+
+  return {
+    alerts: mapped,
+    nextOffset: offset + mapped.length,
+    hasMore: alertsBody.pagination?.hasMore ?? false,
+    total: alertsBody.pagination?.total ?? mapped.length,
+  };
+}
+
 export function AlertsPanel() {
-  const [alerts, setAlerts] = useState<AlertListItem[]>([]);
+  const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<'all' | AlertStatus>('all');
   const [severityFilter, setSeverityFilter] = useState<'all' | AlertSeverity>('all');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
   const [activeActionByAlertId, setActiveActionByAlertId] = useState<
     Record<string, 'acknowledge' | 'resolve' | 'suppress' | null>
   >({});
   const [resolveDraftByAlertId, setResolveDraftByAlertId] = useState<Record<string, string>>({});
   const [expandedResolveAlertId, setExpandedResolveAlertId] = useState<string | null>(null);
-  const requestSeq = useRef(0);
-  const limit = 25;
 
-  const monitoringQuery = useMemo(() => '/api/monitoring/domains', []);
+  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, error } =
+    useInfiniteQuery({
+      queryKey: ['alerts', statusFilter, severityFilter],
+      queryFn: ({ pageParam = 0 }) => fetchAlertsPage(statusFilter, severityFilter, pageParam),
+      getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextOffset : undefined),
+      initialPageParam: 0,
+    });
 
-  const buildAlertsUrl = useCallback(
-    (nextOffset: number) => {
-      const search = new URLSearchParams({ limit: String(limit), offset: String(nextOffset) });
-      if (statusFilter !== 'all') {
-        search.set('status', statusFilter);
-      }
-      if (severityFilter !== 'all') {
-        search.set('severity', severityFilter);
-      }
-      return `/api/alerts?${search.toString()}`;
-    },
-    [severityFilter, statusFilter]
-  );
+  const alerts = useMemo(() => data?.pages.flatMap((page) => page.alerts) ?? [], [data]);
+  const total = data?.pages[0]?.total ?? 0;
 
-  const loadAlerts = useCallback(
-    async (reset: boolean, requestedOffset = 0) => {
-      const nextOffset = reset ? 0 : requestedOffset;
-      const requestId = ++requestSeq.current;
-      if (reset) {
-        setIsLoading(true);
-      } else {
-        setIsLoadingMore(true);
-      }
-      setError(null);
+  const status = error ? (error as Error & { status?: number }).status : undefined;
+  const authRequired = status === 401;
+  const loadError = error && status !== 401 && status !== 403 ? (error as Error).message : null;
 
-      try {
-        const alertsResponse = await fetch(buildAlertsUrl(nextOffset));
-
-        if (requestId !== requestSeq.current) {
-          return;
-        }
-
-        if (alertsResponse.status === 401) {
-          setAuthRequired(true);
-          setAlerts([]);
-          setHasMore(false);
-          setTotal(0);
-          return;
-        }
-
-        if (alertsResponse.status === 403) {
-          throw new Error('You do not have permission to view tenant alerts.');
-        }
-
-        if (!alertsResponse.ok) {
-          const body = (await alertsResponse.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error || 'Failed to load alerts');
-        }
-
-        const alertsBody = (await alertsResponse.json()) as {
-          alerts: AlertRecord[];
-          pagination: { total: number; offset: number; hasMore: boolean };
-        };
-
-        let domainNamesById: Record<string, string> = {};
-        try {
-          const monitoringResponse = await fetch(monitoringQuery);
-          if (monitoringResponse.ok) {
-            const monitoringBody = (await monitoringResponse.json()) as {
-              monitoredDomains: MonitoredDomainSummary[];
-            };
-            domainNamesById = Object.fromEntries(
-              (monitoringBody.monitoredDomains || []).map((domain) => [
-                domain.id,
-                domain.domainName,
-              ])
-            );
-          }
-        } catch {
-          // Render alerts without domain enrichment when the monitoring lookup fails.
-        }
-
-        const mapped = (alertsBody.alerts || []).map((alert) => ({
-          ...alert,
-          domainName: domainNamesById[alert.monitoredDomainId] ?? null,
-        }));
-
-        setAuthRequired(false);
-        setAlerts((current) => (reset ? mapped : [...current, ...mapped]));
-        setOffset(nextOffset + mapped.length);
-        setHasMore(alertsBody.pagination?.hasMore ?? false);
-        setTotal(alertsBody.pagination?.total ?? mapped.length);
-      } catch (err) {
-        if (requestId !== requestSeq.current) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : 'Failed to load alerts');
-      } finally {
-        if (requestId === requestSeq.current) {
-          setIsLoading(false);
-          setIsLoadingMore(false);
-        }
-      }
-    },
-    [buildAlertsUrl, monitoringQuery]
-  );
-
-  useEffect(() => {
+  const handleStatusChange = (value: 'all' | AlertStatus) => {
     setExpandedResolveAlertId(null);
     setResolveDraftByAlertId({});
     setActionError(null);
-    setOffset(0);
-    void loadAlerts(true, 0);
-  }, [loadAlerts]);
+    setStatusFilter(value);
+  };
 
-  const runAlertAction = async (
-    alertId: string,
-    action: 'acknowledge' | 'resolve' | 'suppress',
-    resolutionNote?: string
-  ) => {
-    setActiveActionByAlertId((current) => ({ ...current, [alertId]: action }));
-    setError(null);
+  const handleSeverityChange = (value: 'all' | AlertSeverity) => {
+    setExpandedResolveAlertId(null);
+    setResolveDraftByAlertId({});
     setActionError(null);
+    setSeverityFilter(value);
+  };
 
-    try {
+  const actionMutation = useMutation({
+    mutationFn: async ({
+      alertId,
+      action,
+      resolutionNote,
+    }: {
+      alertId: string;
+      action: 'acknowledge' | 'resolve' | 'suppress';
+      resolutionNote?: string;
+    }) => {
       const response = await fetch(`/api/alerts/${alertId}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: action === 'resolve' ? JSON.stringify({ resolutionNote }) : undefined,
       });
-
       if (response.status === 401) {
-        setAuthRequired(true);
-        setAlerts([]);
-        setHasMore(false);
-        setTotal(0);
-        setExpandedResolveAlertId(null);
-        setResolveDraftByAlertId({});
-        setActionError('Operator sign-in is required to update alerts.');
-        return;
+        const err = new Error('Unauthorized');
+        (err as Error & { status: number }).status = 401;
+        throw err;
       }
-
       if (response.status === 403) {
-        setExpandedResolveAlertId(null);
-        setResolveDraftByAlertId({});
-        setActionError('You do not have permission to update this alert.');
-        return;
+        const err = new Error('Forbidden');
+        (err as Error & { status: number }).status = 403;
+        throw err;
       }
-
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `Failed to ${action} alert`);
       }
-
+    },
+    onSuccess: () => {
       setExpandedResolveAlertId(null);
       setResolveDraftByAlertId({});
-      setOffset(0);
-      await loadAlerts(true, 0);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : `Failed to ${action} alert`);
-      await loadAlerts(true, 0);
-    } finally {
-      setActiveActionByAlertId((current) => ({ ...current, [alertId]: null }));
-    }
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : 'Action failed');
+    },
+    onSettled: (_data, _err, variables) => {
+      setActiveActionByAlertId((current) => ({ ...current, [variables.alertId]: null }));
+    },
+  });
+
+  const runAlertAction = (
+    alertId: string,
+    action: 'acknowledge' | 'resolve' | 'suppress',
+    resolutionNote?: string
+  ) => {
+    setActiveActionByAlertId((current) => ({ ...current, [alertId]: action }));
+    setActionError(null);
+    actionMutation.mutate({ alertId, action, resolutionNote });
   };
 
   return (
@@ -272,7 +265,7 @@ export function AlertsPanel() {
             <span className="sr-only">Filter by status</span>
             <select
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as 'all' | AlertStatus)}
+              onChange={(event) => handleStatusChange(event.target.value as 'all' | AlertStatus)}
               disabled={authRequired}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
             >
@@ -288,7 +281,9 @@ export function AlertsPanel() {
             <span className="sr-only">Filter by severity</span>
             <select
               value={severityFilter}
-              onChange={(event) => setSeverityFilter(event.target.value as 'all' | AlertSeverity)}
+              onChange={(event) =>
+                handleSeverityChange(event.target.value as 'all' | AlertSeverity)
+              }
               disabled={authRequired}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
             >
@@ -309,11 +304,11 @@ export function AlertsPanel() {
           </div>
         ) : null}
 
-        {error ? (
+        {loadError ? (
           <ErrorState
             title="Alerts unavailable"
-            message={error}
-            onRetry={() => void loadAlerts(true, 0)}
+            message={loadError}
+            onRetry={() => queryClient.invalidateQueries({ queryKey: ['alerts'] })}
             size="sm"
           />
         ) : null}
@@ -408,7 +403,7 @@ export function AlertsPanel() {
                       <button
                         type="button"
                         disabled={!!actionInFlight || authRequired}
-                        onClick={() => void runAlertAction(alert.id, 'acknowledge')}
+                        onClick={() => runAlertAction(alert.id, 'acknowledge')}
                         className="focus-ring rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
                       >
                         {actionInFlight === 'acknowledge' ? 'Acknowledging...' : 'Acknowledge'}
@@ -419,7 +414,7 @@ export function AlertsPanel() {
                       <button
                         type="button"
                         disabled={!!actionInFlight || authRequired}
-                        onClick={() => void runAlertAction(alert.id, 'suppress')}
+                        onClick={() => runAlertAction(alert.id, 'suppress')}
                         className="focus-ring rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
                       >
                         {actionInFlight === 'suppress' ? 'Suppressing...' : 'Suppress'}
@@ -467,11 +462,7 @@ export function AlertsPanel() {
                           type="button"
                           disabled={!!actionInFlight || authRequired}
                           onClick={() =>
-                            void runAlertAction(
-                              alert.id,
-                              'resolve',
-                              resolveDraft.trim() || undefined
-                            )
+                            runAlertAction(alert.id, 'resolve', resolveDraft.trim() || undefined)
                           }
                           className="focus-ring rounded-lg bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:bg-gray-400"
                         >
@@ -492,14 +483,14 @@ export function AlertsPanel() {
               );
             })}
 
-            {hasMore ? (
+            {hasNextPage ? (
               <button
                 type="button"
-                disabled={isLoadingMore || authRequired}
-                onClick={() => void loadAlerts(false, offset)}
+                disabled={isFetchingNextPage || authRequired}
+                onClick={() => fetchNextPage()}
                 className="focus-ring rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
               >
-                {isLoadingMore ? 'Loading more...' : 'Load more alerts'}
+                {isFetchingNextPage ? 'Loading more...' : 'Load more alerts'}
               </button>
             ) : null}
           </div>

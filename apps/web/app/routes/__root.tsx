@@ -1,3 +1,4 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
   HeadContent,
@@ -6,6 +7,7 @@ import {
   Scripts,
   useLocation,
   useNavigate,
+  useRouter,
 } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -63,7 +65,7 @@ function AuthNav() {
       setIsAuthenticated(false);
       setUserEmail(null);
     });
-    navigate({ to: '/' });
+    navigate({ to: '/login' });
   };
 
   // During SSR and hydration, render a stable placeholder
@@ -104,44 +106,49 @@ function AuthNav() {
 }
 
 function RootComponent() {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <div className="min-h-screen bg-gray-50">
-          <header className="bg-white border-b border-gray-200">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between h-16 items-center">
-                <Link to="/" className="focus-ring text-xl font-bold text-gray-900 rounded">
-                  DNS Ops Workbench
-                </Link>
-                <nav className="flex gap-6 items-center">
-                  <Link
-                    to="/"
-                    className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-                  >
-                    Home
-                  </Link>
-                  <Link
-                    to="/portfolio"
-                    className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-                  >
-                    Portfolio
-                  </Link>
-                  <AuthNav />
-                </nav>
-              </div>
-            </div>
-          </header>
+  const router = useRouter();
+  const queryClient = router.options.context.queryClient;
 
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <Outlet />
-          </main>
-        </div>
-        <Scripts />
-      </body>
-    </html>
+  return (
+    <QueryClientProvider client={queryClient}>
+      <html lang="en">
+        <head>
+          <HeadContent />
+        </head>
+        <body>
+          <div className="min-h-screen bg-gray-50">
+            <header className="bg-white border-b border-gray-200">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between h-16 items-center">
+                  <Link to="/" className="focus-ring text-xl font-bold text-gray-900 rounded">
+                    DNS Ops Workbench
+                  </Link>
+                  <nav className="flex gap-6 items-center">
+                    <Link
+                      to="/"
+                      className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
+                    >
+                      Home
+                    </Link>
+                    <Link
+                      to="/portfolio"
+                      className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
+                    >
+                      Portfolio
+                    </Link>
+                    <AuthNav />
+                  </nav>
+                </div>
+              </div>
+            </header>
+
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <Outlet />
+            </main>
+          </div>
+          <Scripts />
+        </body>
+      </html>
+    </QueryClientProvider>
   );
 }

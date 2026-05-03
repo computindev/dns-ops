@@ -5,7 +5,8 @@
  * Shows recent changes to notes, tags, filters, template overrides, monitoring, alerts, and shared reports.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 
 type AuditAction =
   | 'domain_note_created'
@@ -95,44 +96,40 @@ const ACTION_COLORS: Record<string, string> = {
   removed: 'text-red-600 bg-red-50',
 };
 
+async function fetchAuditLog(limit: number): Promise<AuditEvent[]> {
+  const response = await fetch(`/api/portfolio/audit?limit=${limit}`, { credentials: 'include' });
+  if (response.status === 401) {
+    const err = new Error('Unauthorized');
+    (err as Error & { status: number }).status = 401;
+    throw err;
+  }
+  if (response.status === 403) {
+    const err = new Error('Forbidden');
+    (err as Error & { status: number }).status = 403;
+    throw err;
+  }
+  if (!response.ok) throw new Error('Failed to fetch audit log');
+  const data = (await response.json()) as { events: AuditEvent[] };
+  return data.events || [];
+}
+
 export function AuditLogPanel() {
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
   const [limit, setLimit] = useState(20);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const {
+    data: events = [],
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['audit-log', limit],
+    queryFn: () => fetchAuditLog(limit),
+  });
 
-    try {
-      const response = await fetch(`/api/portfolio/audit?limit=${limit}`);
-      if (!response.ok) {
-        if (response.status === 401) {
-          setAuthRequired(true);
-          setEvents([]);
-          return;
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to view the tenant audit log.');
-        }
-        throw new Error('Failed to fetch audit log');
-      }
-      setAuthRequired(false);
-      const data = (await response.json()) as { events: AuditEvent[] };
-      setEvents(data.events || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load audit log');
-    } finally {
-      setLoading(false);
-    }
-  }, [limit]);
-
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+  const status = error ? (error as Error & { status?: number }).status : undefined;
+  const authRequired = status === 401;
+  const loadError = error && status !== 401 && status !== 403 ? error.message : null;
 
   const getActionCategory = (action: AuditAction): string => {
     if (action.includes('note')) return 'note';
@@ -165,8 +162,8 @@ export function AuditLogPanel() {
         <h3 className="text-lg font-medium text-gray-900">Audit Log</h3>
         <button
           type="button"
-          onClick={fetchEvents}
-          disabled={loading || authRequired}
+          onClick={() => refetch()}
+          disabled={isLoading || authRequired}
           className="text-sm text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
         >
           Refresh
@@ -180,22 +177,13 @@ export function AuditLogPanel() {
           </div>
         )}
 
-        {/* Error message */}
-        {error && (
+        {loadError && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
-            {error}
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="ml-2 text-red-600 hover:text-red-800"
-            >
-              Dismiss
-            </button>
+            {loadError}
           </div>
         )}
 
-        {/* Loading state */}
-        {loading ? (
+        {isLoading ? (
           <div className="text-center text-gray-500 py-8">Loading audit log...</div>
         ) : authRequired ? (
           <div className="text-center text-gray-500 py-8">
@@ -216,7 +204,6 @@ export function AuditLogPanel() {
               />
             ))}
 
-            {/* Load more */}
             {events.length >= limit && (
               <div className="text-center pt-2">
                 <button
@@ -268,7 +255,6 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
 
   return (
     <div className="flex gap-3">
-      {/* Icon */}
       <div
         className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${colorClass}`}
       >
@@ -283,7 +269,6 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
         </svg>
       </div>
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between">
           <div>
@@ -302,7 +287,6 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
           <span className="font-mono text-xs">{event.entityId.slice(0, 8)}...</span>
         </p>
 
-        {/* Expand button */}
         {(event.previousValue || event.newValue) && (
           <button
             type="button"
@@ -313,7 +297,6 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
           </button>
         )}
 
-        {/* Expanded details */}
         {isExpanded && (
           <div className="mt-2 space-y-2">
             {event.previousValue && (
