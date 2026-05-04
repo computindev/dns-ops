@@ -43,12 +43,10 @@ RUN apt-get update && apt-get install -y curl ca-certificates && \
 
 WORKDIR /app
 
-# Copy built artifacts and preserve workspace structure
-# Bun workspace symlinks in node_modules point to ../../packages/*,
-# so we must preserve the same relative paths.
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps/collector/dist ./apps/collector/dist
+# Copy entire app from builder — preserves workspace symlinks, compiled dist,
+# and node_modules. Bun workspace packages live in packages/ and are symlinked
+# from node_modules/@dns-ops/*; splitting the copy breaks those symlinks.
+COPY --from=builder /app .
 
 # Runtime environment variables (provided by Railway)
 ENV NODE_ENV=production
