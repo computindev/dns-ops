@@ -2,8 +2,7 @@
 # Uses railway.app.config.ts which targets node-server preset
 
 [build]
-# Build all workspace packages first, then build web
-buildCommand = "bun install && bun run build --filter=@dns-ops/web"
+# Use pre-built .output/ from git — Railpack skips build
 
 [deploy]
 # Node-server preset outputs to .output/server/index.mjs
