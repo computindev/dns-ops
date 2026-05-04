@@ -3,7 +3,7 @@
 
 [build]
 # Build all workspace packages first, then build web
-buildCommand = "bun install && bun run build --filter=@dns-ops/web"
+buildCommand = "bun install && echo 'Building web app' && bun run build --filter=@dns-ops/web"
 
 [deploy]
 # Node-server preset outputs to .output/server/index.mjs
