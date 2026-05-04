@@ -16,7 +16,8 @@
     "dev": "turbo run dev",
     "test": "vitest run",
     "test:live-dns": "bun run --filter @dns-ops/collector test:live-dns",
-    "smoke-test": "npx tsx scripts/deploy/smoke-test.ts"
+    "smoke-test": "npx tsx scripts/deploy/smoke-test.ts",
+    "start": "node apps/web/.output/server/index.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.8",
