@@ -1,0 +1,9 @@
+{
+  "providers": ["node"],
+  "node": {
+    "packageManager": "bun",
+    "runtime": "node"
+  },
+  "buildCommand": "echo 'Using pre-built .output/'",
+  "startCommand": "node apps/web/.output/server/index.mjs"
+}
