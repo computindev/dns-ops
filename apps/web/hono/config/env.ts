@@ -10,7 +10,8 @@ interface EnvVarDef {
     | 'HYPERDRIVE_URL'
     | 'COLLECTOR_URL'
     | 'INTERNAL_SECRET'
-    | 'API_KEY_SECRET';
+    | 'API_KEY_SECRET'
+    | 'ADMIN_EMAILS';
   required: boolean | 'development' | 'production';
   description: string;
   validate?: (value: string) => string | null;
@@ -94,6 +95,19 @@ const ENV_VARS: EnvVarDef[] = [
     validate: (value) =>
       value.length >= 16 ? null : 'Must be at least 16 characters for security',
   },
+  {
+    name: 'ADMIN_EMAILS',
+    required: false,
+    description: 'Comma-separated admin email allowlist for privileged web routes',
+    validate: (value) => {
+      const invalid = value
+        .split(',')
+        .map((email) => email.trim())
+        .filter(Boolean)
+        .find((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+      return invalid ? `Invalid admin email: ${invalid}` : null;
+    },
+  },
 ];
 
 function isRequired(def: EnvVarDef, env: 'development' | 'production' | 'test'): boolean {
@@ -123,6 +137,8 @@ function readEnvValue(
       return bindings?.INTERNAL_SECRET ?? processEnv.INTERNAL_SECRET;
     case 'API_KEY_SECRET':
       return bindings?.API_KEY_SECRET ?? processEnv.API_KEY_SECRET;
+    case 'ADMIN_EMAILS':
+      return bindings?.ADMIN_EMAILS ?? processEnv.ADMIN_EMAILS;
     case 'NODE_ENV':
       return bindings?.NODE_ENV ?? processEnv.NODE_ENV;
   }

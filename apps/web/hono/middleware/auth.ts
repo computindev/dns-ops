@@ -13,10 +13,22 @@ import type { Env } from '../types.js';
 
 function getRuntimeSecret(
   c: Context<Env>,
-  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET'
+  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET' | 'ADMIN_EMAILS'
 ): string | undefined {
   const bindingValue = c.env?.[name];
-  return typeof bindingValue === 'string' ? bindingValue : process.env[name];
+  return typeof bindingValue === 'string' && bindingValue.trim() ? bindingValue : process.env[name];
+}
+
+function isAdminEmail(c: Context<Env>, actorEmail: string): boolean {
+  const adminEmails = getRuntimeSecret(c, 'ADMIN_EMAILS');
+  if (!adminEmails) return false;
+
+  const normalizedActorEmail = actorEmail.trim().toLowerCase();
+  return adminEmails
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(normalizedActorEmail);
 }
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -59,7 +71,7 @@ async function extractDatabaseSession(
   if (!db) return null;
 
   const cookies = parseCookies(c.req.header('Cookie'));
-  const token = cookies['dns_ops_session'];
+  const token = cookies.dns_ops_session;
 
   if (!token) return null;
 
@@ -107,37 +119,6 @@ function extractCloudflareAccess(
 }
 
 /**
- * Extract auth from session cookie (legacy format: email:tenant)
- */
-function extractLegacyCookieSession(
-  c: Context<Env>
-): { tenantId: string; actorId: string; actorEmail?: string } | null {
-  const cookies = parseCookies(c.req.header('Cookie'));
-  const session = cookies['dns_ops_session'];
-
-  if (!session) return null;
-
-  // Cookie value is URL encoded
-  const decodedSession = decodeURIComponent(session);
-
-  // Format: email:tenantDomain
-  const colonIndex = decodedSession.indexOf(':');
-  if (colonIndex === -1) return null;
-
-  const email = decodedSession.slice(0, colonIndex);
-  const tenantDomain = decodedSession.slice(colonIndex + 1);
-
-  if (!email || !tenantDomain) return null;
-  if (!isValidIdentifier(tenantDomain)) return null;
-
-  return {
-    tenantId: tenantDomain,
-    actorId: email,
-    actorEmail: email,
-  };
-}
-
-/**
  * Extract auth from API key header
  */
 function extractApiKey(c: Context<Env>): { tenantId: string; actorId: string } | null {
@@ -176,15 +157,11 @@ function extractDevBypass(c: Context<Env>): { tenantId: string; actorId: string 
  * Auth middleware - populates auth context
  */
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {
-  // Priority: database session > CF Access > legacy cookie > API key > dev bypass
+  // Priority: database session > CF Access > API key > dev bypass
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext =
-      extractCloudflareAccess(c) ||
-      extractLegacyCookieSession(c) ||
-      extractApiKey(c) ||
-      extractDevBypass(c);
+    authContext = extractCloudflareAccess(c) || extractApiKey(c) || extractDevBypass(c);
   }
 
   if (authContext) {
@@ -213,15 +190,11 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
  * Require auth middleware - rejects requests without authentication
  */
 export const requireAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  // Priority: database session > CF Access > legacy cookie > API key > dev bypass
+  // Priority: database session > CF Access > API key > dev bypass
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext =
-      extractCloudflareAccess(c) ||
-      extractLegacyCookieSession(c) ||
-      extractApiKey(c) ||
-      extractDevBypass(c);
+    authContext = extractCloudflareAccess(c) || extractApiKey(c) || extractDevBypass(c);
   }
 
   if (!authContext) {
@@ -261,13 +234,13 @@ export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
     return;
   }
 
-  // Allow Cloudflare Access as alternative for internal routes
+  // Allow explicitly allowlisted Cloudflare Access users as an alternative for internal routes.
   const cfEmail = c.req.header('CF-Access-Authenticated-User-Email');
   const cfUserId = c.req.header('CF-Access-Authenticated-User-Id');
 
   if (cfEmail && cfUserId) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (emailRegex.test(cfEmail)) {
+    if (emailRegex.test(cfEmail) && isAdminEmail(c, cfEmail)) {
       const domain = cfEmail.split('@')[1];
       if (domain) {
         const tenantUUID = await getTenantUUID(domain);

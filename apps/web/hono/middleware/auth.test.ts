@@ -320,7 +320,8 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(403);
     });
 
-    it('should allow requests with Cloudflare Access', async () => {
+    it('should allow requests with allowlisted Cloudflare Access identity', async () => {
+      process.env.ADMIN_EMAILS = 'user@internal.com';
       app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
 
       const res = await app.request('/internal', {
@@ -331,6 +332,32 @@ describe('Auth Middleware', () => {
       });
 
       expect(res.status).toBe(200);
+    });
+
+    it('should reject Cloudflare Access users that are not allowlisted for internal routes', async () => {
+      app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user@internal.com',
+          'CF-Access-Authenticated-User-Id': 'internal-user',
+        },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('should not treat empty runtime secret bindings as valid API key secrets', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request(
+        '/protected',
+        { headers: { 'X-API-Key': 'tenant:actor:' } },
+        { API_KEY_SECRET: '' }
+      );
+
+      expect(res.status).toBe(401);
     });
 
     it('should not allow API key access (internal only)', async () => {
@@ -479,6 +506,19 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(401);
       const body = (await res.json()) as JsonBody;
       expect(body.message).toContain('Invalid tenant context');
+    });
+
+    it('should reject forged legacy email tenant cookies', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          Cookie: `dns_ops_session=${encodeURIComponent('attacker@example.com:example.com')}`,
+        },
+      });
+
+      expect(res.status).toBe(401);
     });
 
     it('should fall through to CF Access when database session lookup throws', async () => {

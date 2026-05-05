@@ -171,14 +171,8 @@ describe('Authorization Middleware', () => {
       expect(body.error).toBe('Unauthorized');
     });
 
-    it('should allow requests with valid internal secret', async () => {
+    it('should allow requests with valid internal secret without user context', async () => {
       process.env.INTERNAL_SECRET = 'test-secret-123';
-
-      app.use('*', (c, next) => {
-        c.set('tenantId', 'tenant-123');
-        c.set('actorId', 'service-user');
-        return next();
-      });
       app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
 
       const res = await app.request('/admin', {
@@ -205,7 +199,9 @@ describe('Authorization Middleware', () => {
       expect(res.status).toBe(403);
     });
 
-    it('should allow requests with Cloudflare Access headers', async () => {
+    it('should allow requests with allowlisted Cloudflare Access headers', async () => {
+      process.env.ADMIN_EMAILS = 'user@example.com';
+
       app.use('*', (c, next) => {
         c.set('tenantId', 'tenant-123');
         c.set('actorId', 'cf-user-id');
@@ -217,10 +213,118 @@ describe('Authorization Middleware', () => {
       const res = await app.request('/admin', {
         headers: {
           'CF-Access-Authenticated-User-Email': 'user@example.com',
+          'CF-Access-Authenticated-User-Id': 'cf-user-id',
         },
       });
 
       expect(res.status).toBe(200);
+    });
+
+    it('should reject Cloudflare Access identity when email is not allowlisted', async () => {
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'user-123');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/admin', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'user@example.com',
+          'CF-Access-Authenticated-User-Id': 'cf-user-id',
+        },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('should reject incomplete or malformed Cloudflare Access identity headers', async () => {
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'user-123');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const missingId = await app.request('/admin', {
+        headers: { 'CF-Access-Authenticated-User-Email': 'user@example.com' },
+      });
+      expect(missingId.status).toBe(403);
+
+      const invalidEmail = await app.request('/admin', {
+        headers: {
+          'CF-Access-Authenticated-User-Email': 'not-an-email',
+          'CF-Access-Authenticated-User-Id': 'cf-user-id',
+        },
+      });
+      expect(invalidEmail.status).toBe(403);
+    });
+
+    it('should reject actorEmail when not in admin allowlist', async () => {
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'user-123');
+        c.set('actorEmail', 'user@example.com');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/admin');
+
+      expect(res.status).toBe(403);
+    });
+
+    it('should allow actorEmail when present in admin allowlist', async () => {
+      process.env.ADMIN_EMAILS = 'admin@example.com, other@example.com';
+
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'admin-123');
+        c.set('actorEmail', 'Admin@Example.com');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/admin');
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should read admin allowlist and internal secret from runtime bindings', async () => {
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'admin-123');
+        c.set('actorEmail', 'admin@example.com');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const allowlistRes = await app.request('/admin', {}, { ADMIN_EMAILS: 'admin@example.com' });
+      expect(allowlistRes.status).toBe(200);
+
+      const secretRes = await app.request(
+        '/admin',
+        { headers: { 'X-Internal-Secret': 'binding-secret' } },
+        { INTERNAL_SECRET: 'binding-secret' }
+      );
+      expect(secretRes.status).toBe(200);
+    });
+
+    it('should not treat empty runtime secret bindings as valid secrets', async () => {
+      app.use('*', (c, next) => {
+        c.set('tenantId', 'tenant-123');
+        c.set('actorId', 'user-123');
+        return next();
+      });
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const res = await app.request(
+        '/admin',
+        { headers: { 'X-Internal-Secret': '' } },
+        { INTERNAL_SECRET: '' }
+      );
+
+      expect(res.status).toBe(403);
     });
 
     it('should allow dev access in development mode', async () => {

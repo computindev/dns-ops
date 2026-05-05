@@ -2,7 +2,7 @@
  * Authorization E2E Integration Tests
  *
  * Comprehensive tests covering:
- * 1. requireAdminAccess OR logic (CF header | actorEmail | internal secret | dev actor)
+ * 1. requireAdminAccess OR logic (CF header | ADMIN_EMAILS allowlist | internal secret | dev actor)
  * 2. Findings routes auth enforcement (requireAuth on all read paths)
  * 3. Backfill cross-tenant isolation (skip, don't return-early from loop)
  * 4. Domain normalization consistency (isValidDomain ↔ normalizeDomain)
@@ -10,18 +10,29 @@
  * These tests would have caught the bugs found in this review:
  * - Missing requireAuth on 3 findings GET routes
  * - return vs continue in backfill loop (exit-early vs skip)
- * - requireAdminAccess AND→OR logic bug
+ * - requireAdminAccess admin credential logic bug
  * - isValidDomain whitespace inconsistency
  */
 
 import type { IDatabaseAdapter } from '@dns-ops/db';
 import { Hono } from 'hono';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { authMiddleware, requireAuthMiddleware } from '../middleware/auth.js';
 import type { Env } from '../types.js';
 import { alertRoutes } from './alerts.js';
 import { apiRoutes } from './api.js';
 import { delegationRoutes } from './delegation.js';
 import { findingsRoutes } from './findings.js';
+
+const originalEnv = process.env;
+
+beforeEach(() => {
+  process.env = { ...originalEnv };
+});
+
+afterEach(() => {
+  process.env = originalEnv;
+});
 
 // =============================================================================
 // HELPERS
@@ -144,6 +155,36 @@ function createMockDb(
  * Extract the parameter value from a Drizzle eq() condition.
  * Works for both ID lookups (UUID) and field lookups (e.g., version strings).
  */
+function createSessionDb(userEmail: string, tenantId: string): IDatabaseAdapter {
+  const db = createMockDb();
+  return {
+    ...db,
+    getDrizzle: vi.fn().mockReturnValue({
+      query: {
+        sessions: {
+          findFirst: vi.fn().mockResolvedValue({
+            tenantId,
+            userEmail,
+            expiresAt: new Date(Date.now() + 60_000),
+          }),
+        },
+      },
+    }),
+  } as unknown as IDatabaseAdapter;
+}
+
+function createAuthedApiApp(db: IDatabaseAdapter): Hono<Env> {
+  const app = new Hono<Env>();
+  app.use('*', async (c, next) => {
+    c.set('db', db as Env['Variables']['db']);
+    await next();
+  });
+  app.use('*', authMiddleware);
+  app.use('/api/*', async (c, next) => requireAuthMiddleware(c, next));
+  app.route('/api', apiRoutes);
+  return app;
+}
+
 function extractParam(condition: unknown, fieldName?: string): unknown {
   if (!condition) return undefined;
   try {
@@ -188,9 +229,10 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
     { path: '/api/mail/providers/google/selectors', method: 'POST' },
   ];
 
-  describe('CF-Access-Authenticated-User-Email alone is sufficient', () => {
+  describe('Allowlisted Cloudflare Access identity is sufficient', () => {
     for (const route of ADMIN_ROUTES) {
-      it(`${route.method} ${route.path} - passes with CF header alone`, async () => {
+      it(`${route.method} ${route.path} - passes with allowlisted CF identity`, async () => {
+        process.env.ADMIN_EMAILS = 'internal@cloudflare.com';
         const app = new Hono<Env>();
         app.use('*', async (c, next) => {
           c.set('db', createMockDb() as Env['Variables']['db']);
@@ -203,37 +245,57 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
 
         const res = await app.request(route.path, {
           method: route.method,
-          headers: { 'CF-Access-Authenticated-User-Email': 'internal@cloudflare.com' },
+          headers: {
+            'CF-Access-Authenticated-User-Email': 'internal@cloudflare.com',
+            'CF-Access-Authenticated-User-Id': 'cf-admin-id',
+          },
         });
 
-        // Should NOT be 403 - CF header alone grants access
+        // Should NOT be auth-blocked — allowlisted CF Access identity grants access.
+        expect(res.status).not.toBe(401);
         expect(res.status).not.toBe(403);
       });
     }
   });
 
-  describe('actorEmail alone is sufficient (no CF header)', () => {
+  describe('actorEmail requires ADMIN_EMAILS allowlist (no CF header)', () => {
     for (const route of ADMIN_ROUTES) {
-      it(`${route.method} ${route.path} - passes with actorEmail alone`, async () => {
+      it(`${route.method} ${route.path} - blocks non-admin actorEmail`, async () => {
         const app = new Hono<Env>();
         app.use('*', async (c, next) => {
           c.set('db', createMockDb() as Env['Variables']['db']);
           c.set('tenantId', 'tenant-1');
           c.set('actorId', 'user-1');
-          c.set('actorEmail', 'admin@company.com'); // Only actorEmail, no CF header
+          c.set('actorEmail', 'user@company.com');
           await next();
         });
         app.route('/api', apiRoutes);
 
         const res = await app.request(route.path, { method: route.method });
 
-        // Should NOT be 403 - actorEmail alone grants access
+        expect(res.status).toBe(403);
+      });
+
+      it(`${route.method} ${route.path} - passes with ADMIN_EMAILS allowlist`, async () => {
+        process.env.ADMIN_EMAILS = 'admin@company.com';
+        const app = new Hono<Env>();
+        app.use('*', async (c, next) => {
+          c.set('db', createMockDb() as Env['Variables']['db']);
+          c.set('tenantId', 'tenant-1');
+          c.set('actorId', 'user-1');
+          c.set('actorEmail', 'admin@company.com');
+          await next();
+        });
+        app.route('/api', apiRoutes);
+
+        const res = await app.request(route.path, { method: route.method });
+
         expect(res.status).not.toBe(403);
       });
     }
   });
 
-  describe('Neither CF header nor actorEmail requires other credentials', () => {
+  describe('Neither CF header nor admin allowlist requires other credentials', () => {
     for (const route of ADMIN_ROUTES) {
       it(`${route.method} ${route.path} - blocked without CF header and without actorEmail`, async () => {
         const app = new Hono<Env>();
@@ -248,13 +310,13 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
 
         const res = await app.request(route.path, { method: route.method });
 
-        // Should be 403 - requires one of CF header, actorEmail, INTERNAL_SECRET, or X-Dev-Actor
+        // Should be 403 - requires one of CF header, ADMIN_EMAILS match, INTERNAL_SECRET, or X-Dev-Actor
         expect(res.status).toBe(403);
       });
     }
   });
 
-  describe('X-Internal-Secret overrides all other checks', () => {
+  describe('X-Internal-Secret satisfies admin access after route auth context exists', () => {
     for (const route of ADMIN_ROUTES) {
       it(`${route.method} ${route.path} - passes with internal secret`, async () => {
         process.env.INTERNAL_SECRET = 'super-secret-123';
@@ -262,7 +324,8 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
         app.use('*', async (c, next) => {
           c.set('db', createMockDb() as Env['Variables']['db']);
           c.set('tenantId', 'tenant-1');
-          // No actorId, no actorEmail, no CF header
+          c.set('actorId', 'internal-service');
+          // No actorEmail, no CF header
           await next();
         });
         app.route('/api', apiRoutes);
@@ -272,10 +335,28 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
           headers: { 'X-Internal-Secret': 'super-secret-123' },
         });
 
+        expect(res.status).not.toBe(401);
         expect(res.status).not.toBe(403);
         process.env.INTERNAL_SECRET = undefined;
       });
     }
+
+    it('GET /api/health/detailed accepts internal secret without user context', async () => {
+      process.env.INTERNAL_SECRET = 'super-secret-123';
+      const app = new Hono<Env>();
+      app.use('*', async (c, next) => {
+        c.set('db', createMockDb() as Env['Variables']['db']);
+        await next();
+      });
+      app.route('/api', apiRoutes);
+
+      const res = await app.request('/api/health/detailed', {
+        headers: { 'X-Internal-Secret': 'super-secret-123' },
+      });
+
+      expect(res.status).toBe(200);
+      process.env.INTERNAL_SECRET = undefined;
+    });
   });
 
   describe('X-Dev-Actor header in development grants admin', () => {
@@ -326,6 +407,54 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
       expect(res.status).not.toBe(403);
       process.env.NODE_ENV = originalEnv;
     });
+  });
+});
+
+// =============================================================================
+// TEST SUITE: Full auth chain hardening regressions
+// =============================================================================
+
+describe('Full API auth chain hardening regressions', () => {
+  const TENANT_UUID = '00000000-0000-4000-8000-000000000001';
+
+  it('rejects forged legacy email:tenant cookies before admin routes', async () => {
+    const app = createAuthedApiApp(createMockDb());
+
+    const res = await app.request('/api/health/detailed', {
+      headers: {
+        Cookie: `dns_ops_session=${encodeURIComponent('attacker@example.com:example.com')}`,
+      },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects database-session users who spoof only the CF Access email header', async () => {
+    const app = createAuthedApiApp(createSessionDb('user@example.com', TENANT_UUID));
+
+    const res = await app.request('/api/health/detailed', {
+      headers: {
+        Cookie: 'dns_ops_session=valid-db-token',
+        'CF-Access-Authenticated-User-Email': 'admin@example.com',
+      },
+    });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('allows database-session admins from runtime ADMIN_EMAILS bindings', async () => {
+    const app = createAuthedApiApp(createSessionDb('admin@example.com', TENANT_UUID));
+
+    const res = await app.request(
+      '/api/health/detailed',
+      { headers: { Cookie: 'dns_ops_session=valid-db-token' } },
+      { ADMIN_EMAILS: 'admin@example.com' }
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status?: string; checks?: unknown };
+    expect(body.status).toBe('healthy');
+    expect(body.checks).toBeDefined();
   });
 });
 

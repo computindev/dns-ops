@@ -16,6 +16,8 @@ vi.mock('@dns-ops/contracts', () => ({
   getTenantUUID: vi.fn().mockImplementation(async (id: string) => `uuid-for-${id}`),
 }));
 
+type DrizzleCondition = { queryChunks?: unknown[] };
+
 describe('Auth E2E — full lifecycle', () => {
   let app: Hono<Env>;
 
@@ -43,14 +45,14 @@ describe('Auth E2E — full lifecycle', () => {
       getDrizzle: () => ({
         query: {
           users: {
-            findFirst: vi.fn(async ({ where: _where }: any) => {
+            findFirst: vi.fn(async ({ where: _where }: { where?: DrizzleCondition }) => {
               // Simple eq matcher for email
               const email = _where?.queryChunks?.[2] ?? '';
               return memory.users.find((u) => u.email === email) || null;
             }),
           },
           sessions: {
-            findFirst: vi.fn(async ({ where: _where }: any) => {
+            findFirst: vi.fn(async ({ where: _where }: { where?: DrizzleCondition }) => {
               // Rough matcher for token + expiresAt > now
               return memory.sessions.find((s) => s.expiresAt > new Date()) || null;
             }),

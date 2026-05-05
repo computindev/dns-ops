@@ -14,6 +14,29 @@ const authRoutes = new Hono<Env>();
 const SESSION_EXPIRY_DAYS = 7;
 const SESSION_EXPIRY_MS = SESSION_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 
+type AuthUser = {
+  email: string;
+  passwordHash: string;
+  tenantId: string;
+};
+
+type AuthSession = {
+  userEmail: string;
+};
+
+type AuthDrizzle = {
+  query: {
+    users: { findFirst(args: unknown): Promise<AuthUser | null> };
+    sessions: { findFirst(args: unknown): Promise<AuthSession | null> };
+  };
+  insert(table: unknown): { values(data: unknown): Promise<unknown> };
+  delete(table: unknown): { where(condition: unknown): Promise<unknown> };
+};
+
+function getAuthDrizzle(db: NonNullable<Env['Variables']['db']>): AuthDrizzle {
+  return db.getDrizzle() as unknown as AuthDrizzle;
+}
+
 /**
  * Generate a secure session token
  */
@@ -61,7 +84,8 @@ authRoutes.post('/login', async (c) => {
   }
 
   // Find user
-  const user = await (db.getDrizzle() as any).query.users.findFirst({
+  const drizzle = getAuthDrizzle(db);
+  const user = await drizzle.query.users.findFirst({
     where: eq(users.email, email.toLowerCase()),
   });
 
@@ -79,7 +103,7 @@ authRoutes.post('/login', async (c) => {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + SESSION_EXPIRY_MS);
 
-  await (db.getDrizzle() as any).insert(sessions).values({
+  await drizzle.insert(sessions).values({
     token,
     userEmail: user.email,
     tenantId: user.tenantId,
@@ -101,11 +125,11 @@ authRoutes.post('/login', async (c) => {
 authRoutes.post('/logout', async (c) => {
   const db = c.get('db');
   const cookies = parseCookies(c.req.header('Cookie'));
-  const token = cookies['dns_ops_session'];
+  const token = cookies.dns_ops_session;
 
   if (token && db) {
     // Delete session from database
-    await (db.getDrizzle() as any).delete(sessions).where(eq(sessions.token, token));
+    await getAuthDrizzle(db).delete(sessions).where(eq(sessions.token, token));
   }
 
   c.header('Set-Cookie', 'dns_ops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
@@ -137,14 +161,14 @@ authRoutes.get('/me', async (c) => {
   }
 
   const cookies = parseCookies(c.req.header('Cookie'));
-  const token = cookies['dns_ops_session'];
+  const token = cookies.dns_ops_session;
 
   if (!token) {
     return c.json({ authenticated: false }, 401);
   }
 
   // Find valid session in database
-  const session = await (db.getDrizzle() as any).query.sessions.findFirst({
+  const session = await getAuthDrizzle(db).query.sessions.findFirst({
     where: and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())),
   });
 
