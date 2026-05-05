@@ -28,6 +28,7 @@ node_modules/
 *.swp
 
 # Test artifacts
+.audit/
 playwright-report/
 test-results/
 coverage/

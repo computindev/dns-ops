@@ -10,7 +10,7 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check app hono e2e app.config.ts playwright.config.mjs postcss.config.js tailwind.config.js",
-    "test": "echo 'Use bun e2e for browser tests'",
+    "test": "vitest run",
     "e2e": "bunx playwright test",
     "e2e:headed": "bunx playwright test --headed",
     "e2e:ui": "bunx playwright test --ui"
