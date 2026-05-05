@@ -9,7 +9,7 @@
  * Requires Redis connection via REDIS_URL environment variable.
  */
 import { Queue, type QueueOptions } from 'bullmq';
-import type { Redis } from 'ioredis';
+import { Redis } from 'ioredis';
 export type CollectDomainJobData = {
     tenantId: string;
     domain: string;

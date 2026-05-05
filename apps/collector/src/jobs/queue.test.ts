@@ -10,7 +10,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CollectDomainJobData,
+  closeQueues,
+  createQueue,
   type FleetReportJobData,
+  getRedisConnection,
   type MonitoringRefreshJobData,
   QUEUE_NAMES,
 } from './queue.js';
@@ -18,6 +21,11 @@ import {
 // =============================================================================
 // MOCK SETUP
 // =============================================================================
+
+const { mockQueueConstructor, mockRedisConstructor } = vi.hoisted(() => ({
+  mockQueueConstructor: vi.fn(),
+  mockRedisConstructor: vi.fn(),
+}));
 
 // Mock BullMQ Queue class
 const mockAdd = vi.fn();
@@ -27,29 +35,48 @@ const mockGetJob = vi.fn();
 const mockGetJobs = vi.fn();
 const mockRemoveRepeatable = vi.fn();
 
-vi.mock('bullmq', () => ({
-  Queue: vi.fn().mockImplementation(() => ({
-    add: mockAdd,
-    getJobCounts: mockGetJobCounts,
-    close: mockClose,
-    getJob: mockGetJob,
-    getJobs: mockGetJobs,
-    removeRepeatable: mockRemoveRepeatable,
-  })),
-  Worker: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  })),
-}));
+vi.mock('bullmq', () => {
+  class QueueMock {
+    add = mockAdd;
+    getJobCounts = mockGetJobCounts;
+    close = mockClose;
+    getJob = mockGetJob;
+    getJobs = mockGetJobs;
+    removeRepeatable = mockRemoveRepeatable;
 
-// Mock ioredis
-vi.mock('ioredis', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
-    disconnect: vi.fn(),
-    status: 'ready',
-  })),
-}));
+    constructor(...args: unknown[]) {
+      mockQueueConstructor(...args);
+    }
+  }
+
+  class WorkerMock {
+    on = vi.fn();
+    close = vi.fn();
+  }
+
+  return {
+    Queue: QueueMock,
+    Worker: WorkerMock,
+  };
+});
+
+// Mock ioredis with a constructable class because queue.ts calls `new Redis(...)`.
+vi.mock('ioredis', () => {
+  class RedisMock {
+    status = 'ready';
+    on = vi.fn();
+    disconnect = vi.fn();
+
+    constructor(...args: unknown[]) {
+      mockRedisConstructor(...args);
+    }
+  }
+
+  return {
+    default: RedisMock,
+    Redis: RedisMock,
+  };
+});
 
 describe('Job Queue Infrastructure', () => {
   beforeEach(() => {
@@ -58,8 +85,41 @@ describe('Job Queue Infrastructure', () => {
     process.env.REDIS_URL = 'redis://localhost:6379';
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeQueues();
     delete process.env.REDIS_URL;
+  });
+
+  // ===========================================================================
+  // REDIS CONNECTION REGRESSION TESTS
+  // ===========================================================================
+
+  describe('Redis Connection', () => {
+    it('should return null and not construct Redis when REDIS_URL is absent', () => {
+      delete process.env.REDIS_URL;
+
+      const connection = getRedisConnection();
+
+      expect(connection).toBeNull();
+      expect(mockRedisConstructor).not.toHaveBeenCalled();
+    });
+
+    it('should construct Redis through the ESM export when REDIS_URL is present', () => {
+      const connection = getRedisConnection();
+
+      expect(connection).not.toBeNull();
+      expect(mockRedisConstructor).toHaveBeenCalledWith('redis://localhost:6379', {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      });
+    });
+
+    it('should create BullMQ queues with the shared Redis connection', () => {
+      const queue = createQueue(QUEUE_NAMES.COLLECTION);
+
+      expect(queue).not.toBeNull();
+      expect(mockRedisConstructor).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ===========================================================================

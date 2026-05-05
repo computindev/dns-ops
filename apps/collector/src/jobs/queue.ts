@@ -10,7 +10,7 @@
  */
 
 import { Queue, type QueueOptions } from 'bullmq';
-import type { Redis } from 'ioredis';
+import { Redis } from 'ioredis';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 
 const logger = getCollectorLogger();
@@ -79,9 +79,6 @@ export function getRedisConnection(): Redis | null {
     return null;
   }
 
-  // Dynamic import to avoid requiring ioredis if not using queues
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const Redis = require('ioredis').default;
   redisConnection = new Redis(redisUrl, {
     maxRetriesPerRequest: null, // Required by BullMQ
     enableReadyCheck: false,
