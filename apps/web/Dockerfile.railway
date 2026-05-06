@@ -11,6 +11,7 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/logging/package.json ./packages/logging/
 COPY packages/parsing/package.json ./packages/parsing/
 COPY packages/rules/package.json ./packages/rules/
+COPY packages/testkit/package.json ./packages/testkit/
 
 RUN bun install
 
