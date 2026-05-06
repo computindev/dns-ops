@@ -139,14 +139,19 @@ selectorRoutes.get('/snapshot/:snapshotId/selectors', requireAuth, async (c) => 
 selectorRoutes.get('/domain/:domain/selectors/suggest', requireAuth, async (c) => {
   const domain = c.req.param('domain');
   const db = c.get('db');
+  const tenantId = c.get('tenantId');
 
   try {
     const domainRepo = new DomainRepository(db);
     const snapshotRepo = new SnapshotRepository(db);
     const observationRepo = new ObservationRepository(db);
 
+    if (!tenantId) {
+      return c.json({ error: 'No data for domain' }, 404);
+    }
+
     // Look up domain and latest snapshot via repos (not self-fetch)
-    const domainRecord = await domainRepo.findByName(domain);
+    const domainRecord = await domainRepo.findByNameForTenant(domain, tenantId);
     if (!domainRecord) {
       return c.json({ error: 'No data for domain' }, 404);
     }

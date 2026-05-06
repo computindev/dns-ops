@@ -15,14 +15,6 @@ import { DNSResolver } from './resolver.js';
 const CURRENT_RULESET_VERSION = '1.2.0';
 const CURRENT_RULESET_NAME = 'DNS and Mail Rules';
 const logger = getCollectorLogger();
-class DomainOwnershipError extends Error {
-    code;
-    constructor(message, code) {
-        super(message);
-        this.code = code;
-        this.name = 'DomainOwnershipError';
-    }
-}
 /**
  * Create the combined ruleset with DNS and Mail rules
  */
@@ -267,9 +259,9 @@ export class DNSCollector {
      */
     async storeResults(results, resultState, delegationData) {
         const { tenantId, domain, zoneManagement, triggeredBy } = this.config;
-        const isProduction = process.env.NODE_ENV === 'production';
-        // Find or create domain
-        let domainRecord = await this.domainRepo.findByName(domain);
+        // Find or create domain within the current tenant scope.
+        // The same normalized domain may legitimately exist in multiple tenant portfolios.
+        let domainRecord = await this.domainRepo.findByNameForTenant(domain, tenantId);
         if (!domainRecord) {
             domainRecord = await this.domainRepo.create({
                 name: domain,
@@ -277,17 +269,6 @@ export class DNSCollector {
                 zoneManagement,
                 tenantId,
             });
-        }
-        else if (!domainRecord.tenantId) {
-            if (isProduction) {
-                throw new DomainOwnershipError(`Existing domain ${domain} has no tenant owner. Backfill tenant_id before collecting in production.`, 'LEGACY_UNSCOPED_DOMAIN');
-            }
-            domainRecord =
-                (await this.domainRepo.update(domainRecord.id, { tenantId, zoneManagement })) ??
-                    domainRecord;
-        }
-        else if (domainRecord.tenantId !== tenantId) {
-            throw new DomainOwnershipError(`Domain ${domain} is already owned by another tenant and cannot be collected in this context.`, 'DOMAIN_TENANT_CONFLICT');
         }
         // Create snapshot
         const snapshot = await this.snapshotRepo.create({

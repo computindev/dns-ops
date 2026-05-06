@@ -40,10 +40,19 @@ export class DomainRepository {
    * This is the preferred method for multi-tenant lookups.
    */
   async findByNameAndTenant(normalizedName: string, tenantId: string): Promise<Domain | undefined> {
-    const all = await this.db.select(domains);
-    return all.find(
-      (d) => d.normalizedName === normalizedName.toLowerCase() && d.tenantId === tenantId
+    const matches = await this.db.selectWhere(
+      domains,
+      eq(domains.normalizedName, normalizedName.toLowerCase())
     );
+    const normalized = normalizedName.toLowerCase();
+    const match = matches.find(
+      (domain) => domain.normalizedName === normalized && domain.tenantId === tenantId
+    );
+    if (match) return match;
+
+    // Compatibility for older/mock adapters that only implement selectOne for domain name lookup.
+    const fallback = await this.findByName(normalized);
+    return fallback?.tenantId === tenantId ? fallback : undefined;
   }
 
   /**
@@ -58,13 +67,7 @@ export class DomainRepository {
    * Returns undefined for unscoped or foreign-tenant rows.
    */
   async findByNameForTenant(normalizedName: string, tenantId: string): Promise<Domain | undefined> {
-    const domain = await this.findByName(normalizedName);
-
-    if (!domain || !domain.tenantId) {
-      return undefined;
-    }
-
-    return domain.tenantId === tenantId ? domain : undefined;
+    return this.findByNameAndTenant(normalizedName, tenantId);
   }
 
   /**

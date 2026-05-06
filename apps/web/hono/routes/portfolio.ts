@@ -115,7 +115,10 @@ portfolioRoutes.post('/search', async (c) => {
     // Instead of N queries for snapshots (one per domain), we do 1 query with IN clause
     // Same for findings - batch by snapshot IDs
 
-    const resultDomainIds = results.map((d) => d.id);
+    const portfolioResults = results.filter(
+      (domain) => (domain.metadata as { portfolio?: boolean } | null)?.portfolio !== false
+    );
+    const resultDomainIds = portfolioResults.map((d) => d.id);
 
     // Batch fetch all snapshots for these domains
     const allSnapshots =
@@ -164,7 +167,7 @@ portfolioRoutes.post('/search', async (c) => {
     }
 
     // Process results using the batched data
-    const filteredDomains = results.map((domain) => {
+    const filteredDomains = portfolioResults.map((domain) => {
       const latestSnapshot = latestSnapshotByDomain.get(domain.id);
 
       if (!latestSnapshot) {
@@ -235,7 +238,7 @@ portfolioRoutes.get('/domains/by-name/:domain', async (c) => {
     const domainRepo = new DomainRepository(db);
     const domain = await domainRepo.findByNameForTenant(domainName, tenantId);
 
-    if (!domain) {
+    if (!domain || (domain.metadata as { portfolio?: boolean } | null)?.portfolio === false) {
       return c.json({ error: 'Domain not found' }, 404);
     }
 

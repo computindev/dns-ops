@@ -149,13 +149,13 @@ delegationRoutes.get('/domain/:domain/delegation/latest', requireAuth, async (c)
     const domainRepo = new DomainRepository(db);
     const snapshotRepo = new SnapshotRepository(db);
 
-    // Tenant isolation: check domain ownership
-    const domainRecord = await domainRepo.findByName(domain);
-    if (!domainRecord) {
+    if (!tenantId) {
       return c.json({ error: 'Domain not found' }, 404);
     }
-    // Cross-tenant access returns 404 (not 403, to avoid leaking existence)
-    if (tenantId && domainRecord.tenantId && domainRecord.tenantId !== tenantId) {
+
+    // Tenant isolation: check domain ownership without global-domain first-match leakage.
+    const domainRecord = await domainRepo.findByNameForTenant(domain, tenantId);
+    if (!domainRecord) {
       return c.json({ error: 'Domain not found' }, 404);
     }
 

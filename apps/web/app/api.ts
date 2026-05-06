@@ -2,7 +2,13 @@ import { createStartAPIHandler } from '@tanstack/react-start/api';
 import { getEvent } from '@tanstack/react-start/server';
 import { Hono } from 'hono';
 import { assertEnvValid } from '../hono/config/env.js';
-import { authMiddleware, dbMiddleware, requireAuthMiddleware } from '../hono/middleware/index.js';
+import {
+  authMiddleware,
+  createErrorHandler,
+  createNotFoundHandler,
+  dbMiddleware,
+  requireAuthMiddleware,
+} from '../hono/middleware/index.js';
 import { apiRoutes } from '../hono/routes/api.js';
 import authRoutes from '../hono/routes/signup.js';
 import type { Env } from '../hono/types.js';
@@ -19,6 +25,9 @@ if (typeof process !== 'undefined' && process.env) {
 }
 
 const app = new Hono<Env>();
+
+app.onError(createErrorHandler());
+app.notFound(createNotFoundHandler());
 
 app.use('*', dbMiddleware);
 app.use('*', authMiddleware);

@@ -39,6 +39,7 @@ async function runMigrations() {
       '0007_tenant_domain_uniqueness.sql',
       '0008_moaning_mojo.sql',
       '0009_drop_vantage_points.sql',
+      '0010_drop_global_domain_uniqueness.sql',
     ];
     
     for (const file of migrationFiles) {

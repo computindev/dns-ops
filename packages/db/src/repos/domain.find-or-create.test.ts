@@ -156,7 +156,7 @@ describe('DomainRepository.findOrCreate atomic upsert', () => {
       const result = await repo.findOrCreate(newDomainData);
 
       expect(result.id).toBe(mockDomain.id);
-      expect(mockAdapter.select).toHaveBeenCalled(); // fallback query was called
+      expect(mockAdapter.selectWhere).toHaveBeenCalled(); // fallback query was called
     });
 
     it('finds existing domain using normalizedName in fallback (not data.name)', async () => {
@@ -176,7 +176,7 @@ describe('DomainRepository.findOrCreate atomic upsert', () => {
       // If bug existed (using data.name), select() wouldn't return domain → result would be undefined
       expect(result.id).toBe(mockDomain.id);
       // select() was called as part of the fallback query
-      expect(mockAdapter.select).toHaveBeenCalled();
+      expect(mockAdapter.selectWhere).toHaveBeenCalled();
     });
   });
 

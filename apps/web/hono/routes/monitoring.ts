@@ -133,10 +133,7 @@ monitoringRoutes.post('/domains', requireWritePermission, async (c) => {
   }
 
   if (!domainId && body.domainName) {
-    domain = await domainRepo.findByName(body.domainName);
-    if (domain?.tenantId && domain.tenantId !== tenantId) {
-      return c.json({ error: 'Domain not found' }, 404);
-    }
+    domain = await domainRepo.findByNameForTenant(body.domainName, tenantId);
     if (!domain) {
       domain = await domainRepo.create({
         name: body.domainName,

@@ -36,6 +36,7 @@ export interface DomainLoaderData {
 
 interface DomainSearchParams {
   tab?: DomainTabId;
+  addToPortfolio?: boolean;
 }
 
 // Delegation tab is controlled by feature flag (shipped by default)
@@ -57,6 +58,7 @@ export const Route = createFileRoute('/domain/$domain')({
     const tab = search.tab as string | undefined;
     return {
       tab: tab && VALID_TABS.includes(tab as DomainTabId) ? (tab as DomainTabId) : undefined,
+      addToPortfolio: search.addToPortfolio === 'true' || search.addToPortfolio === true,
     };
   },
   loader: ({ params }): DomainLoaderData => {
@@ -114,7 +116,7 @@ function Domain360Page() {
   const queryClient = useQueryClient();
   const loaderData = Route.useLoaderData() as DomainLoaderData;
   const { domain } = loaderData;
-  const { tab: urlTab } = Route.useSearch();
+  const { tab: urlTab, addToPortfolio = false } = Route.useSearch();
   const [activeTab, setActiveTab] = useState<DomainTabId>(urlTab ?? 'overview');
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const tabDomIdPrefix = useId();
@@ -147,7 +149,7 @@ function Domain360Page() {
       const response = await fetch('/api/collect/domain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, zoneManagement: 'unmanaged' }),
+        body: JSON.stringify({ domain, zoneManagement: 'unmanaged', addToPortfolio }),
         credentials: 'include',
       });
 
@@ -241,7 +243,12 @@ function Domain360Page() {
   // Auto-trigger collection on first load when no snapshot exists
   useEffect(() => {
     const shouldAutoCollect =
-      !isLoading && !snapshot && !error && !refreshMutation.isPending && !refreshMutation.isSuccess;
+      !isLoading &&
+      !snapshot &&
+      !error &&
+      !refreshMutation.isPending &&
+      !refreshMutation.isSuccess &&
+      !refreshMutation.isError;
     if (shouldAutoCollect) {
       setRefreshError(null);
       refreshMutation.mutate();
@@ -252,7 +259,8 @@ function Domain360Page() {
     error,
     refreshMutation.isPending,
     refreshMutation.isSuccess,
-    refreshMutation,
+    refreshMutation.isError,
+    refreshMutation.mutate,
   ]);
 
   const handleRefresh = useCallback(() => {
@@ -310,6 +318,7 @@ function Domain360Page() {
               <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
               <p className="text-blue-800">
                 Collecting DNS data for <strong>{domain}</strong>... This takes about 5 seconds.
+                {addToPortfolio ? ' This domain will be added to your portfolio.' : ''}
               </p>
             </div>
           </div>
@@ -331,6 +340,14 @@ function Domain360Page() {
             role="alert"
           >
             {refreshError}
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="ml-3 font-medium underline"
+              disabled={refreshMutation.isPending}
+            >
+              Retry
+            </button>
           </div>
         ) : null}
       </div>

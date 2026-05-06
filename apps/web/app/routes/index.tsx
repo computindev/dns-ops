@@ -5,12 +5,14 @@ import { requireAuthGuard } from '../lib/auth-guard.js';
 
 interface HomeSearchParams {
   domain?: string;
+  addToPortfolio?: boolean;
 }
 
 export const Route = createFileRoute('/')({
   validateSearch: (search: Record<string, unknown>): HomeSearchParams => ({
     domain:
       typeof search.domain === 'string' && search.domain.length > 0 ? search.domain : undefined,
+    addToPortfolio: search.addToPortfolio === 'true' || search.addToPortfolio === true,
   }),
   beforeLoad: async ({ search }) => {
     await requireAuthGuard();
@@ -18,6 +20,7 @@ export const Route = createFileRoute('/')({
       throw redirect({
         to: '/domain/$domain',
         params: { domain: search.domain },
+        search: { addToPortfolio: search.addToPortfolio || undefined },
       });
     }
   },
@@ -28,8 +31,12 @@ export const Route = createFileRoute('/')({
 function HomeComponent() {
   const navigate = useNavigate();
 
-  const handleDomainSubmit = (domain: string) => {
-    navigate({ to: '/domain/$domain', params: { domain } });
+  const handleDomainSubmit = (domain: string, options?: { addToPortfolio: boolean }) => {
+    navigate({
+      to: '/domain/$domain',
+      params: { domain },
+      search: { addToPortfolio: options?.addToPortfolio || undefined },
+    });
   };
 
   return (

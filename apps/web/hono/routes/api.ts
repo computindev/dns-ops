@@ -5,7 +5,7 @@ import {
   RecordSetRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
-import { domains } from '@dns-ops/db/schema';
+import { type Domain, domains } from '@dns-ops/db/schema';
 import { Hono } from 'hono';
 import { collectorCircuit, proxyToCollector } from '../lib/collector-proxy.js';
 import {
@@ -13,8 +13,9 @@ import {
   requireAuth,
   requireWritePermission,
 } from '../middleware/authorization.js';
-import { getWebLogger } from '../middleware/error-tracking.js';
+import { ErrorCode, errorResponse, getWebLogger } from '../middleware/error-tracking.js';
 import {
+  boolean,
   domainName,
   enumValue,
   validateBody,
@@ -192,16 +193,10 @@ apiRoutes.get('/domain/:domain/latest', async (c) => {
   const snapshotRepo = new SnapshotRepository(db);
 
   try {
-    const domain = await domainRepo.findByName(domainName);
-    if (!domain) {
-      return c.json({ error: 'Domain not found' }, 404);
-    }
-
-    if (domain.tenantId && domain.tenantId !== tenantId) {
-      return c.json({ error: 'Domain not found' }, 404);
-    }
-
-    if (!tenantId && domain.tenantId) {
+    const domain = tenantId
+      ? await domainRepo.findByNameForTenant(domainName, tenantId)
+      : await domainRepo.findByName(domainName);
+    if (!domain || (!tenantId && domain.tenantId)) {
       return c.json({ error: 'Domain not found' }, 404);
     }
 
@@ -303,6 +298,7 @@ apiRoutes.post('/collect/domain', requireAuth, requireWritePermission, async (c)
       ['managed', 'unmanaged', 'unknown'] as const,
       false
     ),
+    addToPortfolio: boolean('addToPortfolio', false),
   });
 
   if (!validation.success) {
@@ -311,6 +307,7 @@ apiRoutes.post('/collect/domain', requireAuth, requireWritePermission, async (c)
 
   const validatedDomain = validation.data.domain;
   const zoneManagement = validation.data.zoneManagement ?? 'unmanaged';
+  const addToPortfolio = validation.data.addToPortfolio === true;
   const actorId = c.get('actorId');
   const tenantId = c.get('tenantId');
   const db = c.get('db');
@@ -325,15 +322,48 @@ apiRoutes.post('/collect/domain', requireAuth, requireWritePermission, async (c)
 
   const normalizedDomain = validatedDomain.toLowerCase();
 
-  // Ensure domain exists in portfolio before collecting
-  // This prevents 404 on /domain/:domain after collection triggers
+  // Ensure a tenant-scoped domain row exists before collecting.
+  // `metadata.portfolio=false` supports ad-hoc inspection without adding the domain to Portfolio.
   const domainRepo = new DomainRepository(db);
-  const domainRecord = await domainRepo.findOrCreate({
-    name: normalizedDomain,
-    normalizedName: normalizedDomain,
-    tenantId,
-    zoneManagement,
-  });
+  let domainRecord: Domain;
+  try {
+    domainRecord = await domainRepo.findOrCreate({
+      name: normalizedDomain,
+      normalizedName: normalizedDomain,
+      tenantId,
+      zoneManagement,
+      metadata: { portfolio: addToPortfolio },
+    });
+
+    if (
+      addToPortfolio &&
+      (domainRecord.metadata as { portfolio?: boolean } | null)?.portfolio === false
+    ) {
+      domainRecord =
+        (await domainRepo.update(domainRecord.id, {
+          metadata: {
+            ...(domainRecord.metadata as Record<string, unknown> | null),
+            portfolio: true,
+          },
+        })) ?? domainRecord;
+    }
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    getWebLogger().error('[collect/domain] domain registration failed', err, {
+      domain: normalizedDomain,
+      tenantId,
+      requestId: c.req.header('X-Request-ID'),
+    });
+    return errorResponse(
+      c,
+      ErrorCode.RESOURCE_CONFLICT,
+      'Failed to register domain for this tenant',
+      409,
+      {
+        domain: normalizedDomain,
+      }
+    );
+  }
 
   const result = await proxyToCollector(c, {
     path: '/api/collect/domain',

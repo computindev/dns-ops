@@ -2,13 +2,14 @@ import { type FormEvent, useMemo, useState } from 'react';
 import { normalizeDomain } from '../lib/domain.js';
 
 interface DomainInputProps {
-  onSubmit: (domain: string) => void;
+  onSubmit: (domain: string, options?: { addToPortfolio: boolean }) => void;
   initialValue?: string;
 }
 
 export function DomainInput({ onSubmit, initialValue = '' }: DomainInputProps) {
   const [input, setInput] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
+  const [addToPortfolio, setAddToPortfolio] = useState(false);
 
   const normalizedDomain = useMemo(() => {
     if (!input.trim()) return '';
@@ -26,7 +27,7 @@ export function DomainInput({ onSubmit, initialValue = '' }: DomainInputProps) {
 
     try {
       const result = normalizeDomain(input);
-      onSubmit(result.normalized);
+      onSubmit(result.normalized, { addToPortfolio });
     } catch (err: unknown) {
       if (err instanceof Error && err.message) {
         setError(err.message);
@@ -56,6 +57,16 @@ export function DomainInput({ onSubmit, initialValue = '' }: DomainInputProps) {
             Analyze
           </button>
         </div>
+
+        <label className="flex items-start gap-2 text-sm text-gray-600">
+          <input
+            type="checkbox"
+            checked={addToPortfolio}
+            onChange={(e) => setAddToPortfolio(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600"
+          />
+          <span>Add this domain to my portfolio for notes, tags, monitoring, and reports.</span>
+        </label>
 
         {normalizedDomain && normalizedDomain !== input.trim().toLowerCase() && (
           <p className="text-sm text-gray-600">

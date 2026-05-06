@@ -20,7 +20,7 @@ vi.mock('./resolver.js', () => ({
 
 vi.mock('@dns-ops/db', () => ({
   DomainRepository: vi.fn().mockImplementation(function () {
-    this.findByName = vi.fn().mockResolvedValue(null);
+    this.findByNameForTenant = vi.fn().mockResolvedValue(null);
     this.create = vi
       .fn()
       .mockResolvedValue({ id: 'domain-1', name: 'example.com', tenantId: 'tenant-1' });
