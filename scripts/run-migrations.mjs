@@ -1,32 +1,36 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import pg from 'pg';
 
 const { Client } = pg;
 
+const IDEMPOTENT_ERROR_CODES = new Set(['42P07', '42710', '42P06', '42701']);
+
+function isIdempotentMigrationError(err) {
+  const message = String(err?.message ?? '').toLowerCase();
+  return IDEMPOTENT_ERROR_CODES.has(err?.code) || message.includes('already exists');
+}
+
 async function runMigrations() {
   const dbUrl = process.env.DATABASE_URL;
   console.log('=== Migration Runner Starting ===');
-  
+
   if (!dbUrl) {
-    console.log('ERROR: No DATABASE_URL environment variable');
-    console.log('Available env vars:', Object.keys(process.env).filter(k => k.includes('DATABASE')));
-    return;
+    throw new Error('DATABASE_URL environment variable is required to run migrations');
   }
 
-  console.log('DATABASE_URL found:', dbUrl.substring(0, 40) + '...');
-  
-  const client = new Client({ 
+  console.log(`DATABASE_URL found: ${dbUrl.substring(0, 40)}...`);
+
+  const client = new Client({
     connectionString: dbUrl,
-    ssl: dbUrl.includes('sslmode=no-verify') ? { rejectUnauthorized: false } : undefined
+    ssl: dbUrl.includes('sslmode=no-verify') ? { rejectUnauthorized: false } : undefined,
   });
-  
+
   try {
     console.log('Connecting to database...');
     await client.connect();
     console.log('Connected successfully');
-    
-    // Run each migration file in order
+
     const migrationsDir = join(process.cwd(), 'packages/db/src/migrations');
     const migrationFiles = [
       '0000_nebulous_steve_rogers.sql',
@@ -41,7 +45,7 @@ async function runMigrations() {
       '0009_drop_vantage_points.sql',
       '0010_drop_global_domain_uniqueness.sql',
     ];
-    
+
     for (const file of migrationFiles) {
       try {
         const sql = readFileSync(join(migrationsDir, file), 'utf8');
@@ -49,32 +53,28 @@ async function runMigrations() {
         await client.query(sql);
         console.log(`Completed: ${file}`);
       } catch (err) {
-        // Ignore "already exists" errors
-        if (err.code === '42P07' || err.code === '42710' || 
-            err.message.includes('already exists') || 
-            err.message.includes('duplicate')) {
-          console.log(`Skipping ${file} (already exists)`);
-        } else {
-          console.error(`Error in ${file}:`, err.code, err.message);
+        if (isIdempotentMigrationError(err)) {
+          console.log(
+            `Skipping ${file} (idempotent object already exists): ${err.code ?? ''} ${err.message}`
+          );
+          continue;
         }
+        console.error(`Error in ${file}:`, err.code, err.message);
+        throw err;
       }
     }
-    
+
     console.log('=== Migrations Complete ===');
-  } catch (err) {
-    console.error('Migration connection error:', err.code, err.message);
-    console.error(err.stack);
   } finally {
-    try {
-      await client.end();
-    } catch (e) {
-      // Ignore
-    }
+    await client.end().catch(() => undefined);
   }
 }
 
-runMigrations().then(() => {
-  console.log('Migration runner finished');
-}).catch((err) => {
-  console.error('Migration runner failed:', err);
-});
+runMigrations()
+  .then(() => {
+    console.log('Migration runner finished');
+  })
+  .catch((err) => {
+    console.error('Migration runner failed:', err);
+    process.exit(1);
+  });

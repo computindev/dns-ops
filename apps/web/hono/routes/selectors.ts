@@ -31,11 +31,22 @@ selectorRoutes.get('/snapshot/:snapshotId/selectors', requireAuth, async (c) => 
 
   try {
     const snapshotRepo = new SnapshotRepository(db);
+    const domainRepo = new DomainRepository(db);
     const selectorRepo = new DkimSelectorRepository(db);
 
-    // Fetch snapshot
+    // Fetch snapshot and verify tenant ownership through its domain.
     const snapshot = await snapshotRepo.findById(snapshotId);
     if (!snapshot) {
+      return c.json({ error: 'Snapshot not found' }, 404);
+    }
+
+    const domain = await domainRepo.findById(snapshot.domainId);
+    const tenantId = c.get('tenantId');
+    if (
+      !domain ||
+      (!tenantId && domain.tenantId) ||
+      (tenantId && domain.tenantId && domain.tenantId !== tenantId)
+    ) {
       return c.json({ error: 'Snapshot not found' }, 404);
     }
 

@@ -28,6 +28,7 @@ async function enforceSnapshotTenantIsolation(
   if (!domain) return null;
 
   // Tenant isolation: cross-tenant access returns 404 (not 403, to avoid leaking existence)
+  if (!tenantId && domain.tenantId) return null;
   if (tenantId && domain.tenantId && domain.tenantId !== tenantId) return null;
 
   return { snapshot, domain };

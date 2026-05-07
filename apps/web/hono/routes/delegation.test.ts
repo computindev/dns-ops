@@ -67,6 +67,7 @@ interface MockObservation {
 interface MockDomain {
   id: string;
   name: string;
+  normalizedName: string;
   tenantId: string;
   createdAt: Date;
 }
@@ -208,18 +209,21 @@ function createMockData(): MockData {
       {
         id: 'domain-1',
         name: 'example.com',
+        normalizedName: 'example.com',
         tenantId: 'test-tenant',
         createdAt: now,
       },
       {
         id: 'domain-2',
         name: 'divergent.com',
+        normalizedName: 'divergent.com',
         tenantId: 'test-tenant',
         createdAt: now,
       },
       {
         id: 'domain-3',
         name: 'nodelegation.com',
+        normalizedName: 'nodelegation.com',
         tenantId: 'test-tenant',
         createdAt: now,
       },
@@ -227,6 +231,7 @@ function createMockData(): MockData {
       {
         id: 'domain-other',
         name: 'other-tenant.com',
+        normalizedName: 'other-tenant.com',
         tenantId: 'other-tenant',
         createdAt: now,
       },
@@ -284,6 +289,9 @@ function createMockDb(data: MockData) {
       if (tableName === 'snapshots') {
         return data.snapshots;
       }
+      if (tableName === 'domains') {
+        return data.domains;
+      }
       return [];
     }),
     select: vi.fn(async (table: unknown) => {
@@ -293,6 +301,9 @@ function createMockDb(data: MockData) {
       }
       if (tableName === 'observations') {
         return data.observations;
+      }
+      if (tableName === 'domains') {
+        return data.domains;
       }
       return [];
     }),
@@ -472,8 +483,13 @@ describe('Delegation Routes', () => {
 
   describe('GET /api/domain/:domain/delegation/latest', () => {
     it('should redirect to snapshot-specific endpoint when delegation data exists', async () => {
-      // findByDomain returns snapshots with delegation
-      mockDb.selectWhere = vi.fn(async () => [mockData.snapshots[0]]);
+      // findByDomain returns snapshots with delegation after domain lookup succeeds.
+      mockDb.selectWhere = vi.fn(async (table: unknown) => {
+        const tableName = getTableName(table);
+        if (tableName === 'domains') return [mockData.domains[0]];
+        if (tableName === 'snapshots') return [mockData.snapshots[0]];
+        return [];
+      });
 
       const res = await app.request('/api/domain/example.com/delegation/latest', {
         redirect: 'manual',
@@ -484,8 +500,13 @@ describe('Delegation Routes', () => {
     });
 
     it('should return 404 when no delegation data for domain', async () => {
-      // Return snapshots without delegation
-      mockDb.selectWhere = vi.fn(async () => [mockData.snapshots[2]]);
+      // Return snapshots without delegation after domain lookup succeeds.
+      mockDb.selectWhere = vi.fn(async (table: unknown) => {
+        const tableName = getTableName(table);
+        if (tableName === 'domains') return [mockData.domains[2]];
+        if (tableName === 'snapshots') return [mockData.snapshots[2]];
+        return [];
+      });
 
       const res = await app.request('/api/domain/nodelegation.com/delegation/latest');
 
@@ -502,7 +523,7 @@ describe('Delegation Routes', () => {
 
       expect(res.status).toBe(404);
       const body = (await res.json()) as JsonBody;
-      expect(body.message).toContain('No delegation data');
+      expect(body.error).toBe('Domain not found');
     });
   });
 

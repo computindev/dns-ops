@@ -351,3 +351,28 @@ describe('findOrCreate normalizedName derivation', () => {
     expect(capturedValues[0].normalizedName).toBe('example.com');
   });
 });
+
+// =============================================================================
+// TESTS: tenant-scoped lookup isolation
+// =============================================================================
+
+describe('DomainRepository tenant-scoped lookup isolation', () => {
+  it('does not fall back to a global first-match lookup for tenant lookups', async () => {
+    const foreignDomain: Domain = {
+      ...mockDomain,
+      id: 'domain-foreign-id',
+      tenantId: 'tenant-2',
+    };
+    const mockAdapter = createMockAdapter({
+      selectResult: [],
+      findByNameResult: foreignDomain,
+    });
+
+    const repo = new DomainRepository(mockAdapter as never);
+    const result = await repo.findByNameAndTenant('example.com', 'test-tenant');
+
+    expect(result).toBeUndefined();
+    expect(mockAdapter.selectWhere).toHaveBeenCalled();
+    expect(mockAdapter.selectOne).not.toHaveBeenCalled();
+  });
+});

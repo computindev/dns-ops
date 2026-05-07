@@ -45,14 +45,9 @@ export class DomainRepository {
       eq(domains.normalizedName, normalizedName.toLowerCase())
     );
     const normalized = normalizedName.toLowerCase();
-    const match = matches.find(
+    return matches.find(
       (domain) => domain.normalizedName === normalized && domain.tenantId === tenantId
     );
-    if (match) return match;
-
-    // Compatibility for older/mock adapters that only implement selectOne for domain name lookup.
-    const fallback = await this.findByName(normalized);
-    return fallback?.tenantId === tenantId ? fallback : undefined;
   }
 
   /**

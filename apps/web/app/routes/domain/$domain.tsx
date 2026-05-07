@@ -177,7 +177,15 @@ function Domain360Page() {
       }
     },
     onSuccess: () => {
+      if (addToPortfolio && typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('addToPortfolio');
+        window.history.replaceState(window.history.state, '', url.toString());
+      }
       queryClient.invalidateQueries({ queryKey: ['domain-data', domain] });
+      queryClient.invalidateQueries({ queryKey: ['domain-resolve', domain, true] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
     },
     onError: (err) => {
       setRefreshError(err instanceof Error ? err.message : 'Refresh failed');
@@ -266,7 +274,7 @@ function Domain360Page() {
   const handleRefresh = useCallback(() => {
     setRefreshError(null);
     refreshMutation.mutate();
-  }, [refreshMutation]);
+  }, [refreshMutation.mutate]);
 
   return (
     <div data-loaded={!isLoading || undefined}>

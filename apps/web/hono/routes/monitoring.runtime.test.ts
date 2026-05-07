@@ -50,6 +50,11 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
       const tableName = getTableName(table);
       const param = getConditionParam(condition);
+      if (tableName === 'domains') {
+        return state.domains.filter(
+          (row) => row.id === param || row.normalizedName === param || row.name === param
+        );
+      }
       if (tableName === 'monitored_domains') {
         return state.monitoredDomains.filter(
           (row) => row.tenantId === param || row.domainId === param
@@ -182,6 +187,64 @@ describe('monitoringRoutes runtime', () => {
       isActive: true,
     });
     expect(state.auditEvents[0]?.ipAddress).toBe('203.0.113.5');
+  });
+
+  it('rejects monitoring a foreign-tenant domain by explicit domainId', async () => {
+    const state: MockState = {
+      domains: [
+        {
+          id: 'domain-foreign',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: 'tenant-2',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      monitoredDomains: [],
+      auditEvents: [],
+    };
+    const app = createApp(state);
+
+    const response = await app.request('/api/monitoring/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domainId: 'domain-foreign', schedule: 'daily' }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(state.monitoredDomains).toHaveLength(0);
+    expect(state.auditEvents).toHaveLength(0);
+  });
+
+  it('rejects monitoring an unscoped domain by explicit domainId', async () => {
+    const state: MockState = {
+      domains: [
+        {
+          id: 'domain-global',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: null,
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      monitoredDomains: [],
+      auditEvents: [],
+    };
+    const app = createApp(state);
+
+    const response = await app.request('/api/monitoring/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domainId: 'domain-global', schedule: 'daily' }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(state.monitoredDomains).toHaveLength(0);
+    expect(state.auditEvents).toHaveLength(0);
   });
 
   it('audits monitored-domain update', async () => {

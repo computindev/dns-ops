@@ -4,6 +4,7 @@ dockerfilePath = "apps/web/Dockerfile.railway"
 watchPatterns = ["apps/web/**", "packages/**", "package.json", "bun.lock"]
 
 [deploy]
+releaseCommand = "node scripts/run-migrations.mjs"
 startCommand = "node apps/web/.output/server/index.mjs"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 60

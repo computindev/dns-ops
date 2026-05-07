@@ -128,7 +128,7 @@ monitoringRoutes.post('/domains', requireWritePermission, async (c) => {
   let domainName = body.domainName;
   let domain = domainId ? await domainRepo.findById(domainId) : undefined;
 
-  if (domain?.tenantId && domain.tenantId !== tenantId) {
+  if (domainId && (!domain || domain.tenantId !== tenantId)) {
     return c.json({ error: 'Domain not found' }, 404);
   }
 

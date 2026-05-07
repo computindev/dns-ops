@@ -10,6 +10,13 @@ import { mockRefresh, waitForDomainPageReady } from './support/domain-fixtures.j
 
 const TEST_DOMAIN = 'new-untested-domain.example.com';
 
+async function mockNoSnapshot(page: import('@playwright/test').Page): Promise<void> {
+  await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+  });
+  await mockRefresh(page, { status: 401, body: { error: 'Unauthorized' } });
+}
+
 /**
  * Tests for empty DB state
  * The empty state should show a yellow warning (not an error)
@@ -17,27 +24,22 @@ const TEST_DOMAIN = 'new-untested-domain.example.com';
 test.describe('Empty DB State', () => {
   test('shows yellow warning for domain without snapshot', async ({ page }) => {
     // Mock API to return 404 (no snapshot) for this unknown domain
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
     // Should show yellow "no snapshot" warning, not an error
-    const noSnapshotWarning = page.getByText(/no dns snapshot is available for/i);
+    const noSnapshotWarning = page.getByTestId('domain-no-data-banner');
     await expect(noSnapshotWarning).toBeVisible();
+    await expect(noSnapshotWarning).toContainText(/no dns data/i);
 
     // The warning should be yellow-ish (has yellow background)
-    // We check this by verifying it doesn't have error styling
-    const warningContainer = noSnapshotWarning.locator('..');
-    await expect(warningContainer).toHaveClass(/yellow/);
+    await expect(noSnapshotWarning).toHaveClass(/yellow/);
   });
 
   test('shows notes and tags panels even without snapshot', async ({ page }) => {
     // Mock API to return 404 (no snapshot) for this unknown domain
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
@@ -53,9 +55,7 @@ test.describe('Empty DB State', () => {
  */
 test.describe('Refresh Button Behavior', () => {
   test('refresh button is visible and enabled initially', async ({ page }) => {
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
@@ -87,6 +87,21 @@ test.describe('Refresh Button Behavior', () => {
     // After refresh completes, aria-busy should be back to false
     await expect(refreshButton).toHaveAttribute('aria-busy', 'false', { timeout: 10000 });
     await expect(refreshButton).toHaveText(/refresh/i, { timeout: 5000 });
+  });
+
+  test('clears addToPortfolio from the URL after successful collection', async ({ page }) => {
+    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
+      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+    });
+    await mockRefresh(page, {
+      status: 200,
+      body: { success: true, snapshotId: 'snap-portfolio-test' },
+    });
+
+    await page.goto(`/domain/${TEST_DOMAIN}?addToPortfolio=true`);
+    await waitForDomainPageReady(page);
+
+    await expect(page).not.toHaveURL(/addToPortfolio/, { timeout: 10000 });
   });
 
   test('refresh button re-enabled after refresh completes', async ({ page }) => {
@@ -145,10 +160,7 @@ test.describe('Refresh Button Behavior', () => {
 test.describe('Loader Error States', () => {
   test('shows error banner when API is unreachable', async ({ page }) => {
     // Mock snapshot (404 = no data) and refresh (401 = auth required)
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
-    await mockRefresh(page, { status: 401, body: { error: 'Unauthorized' } });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
@@ -192,9 +204,7 @@ test.describe('Loader Error States', () => {
  */
 test.describe('Domain 360 Accessibility', () => {
   test('refresh button has proper aria attributes', async ({ page }) => {
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
@@ -205,9 +215,7 @@ test.describe('Domain 360 Accessibility', () => {
   });
 
   test('tabs are properly labeled for screen readers', async ({ page }) => {
-    await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
-      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
-    });
+    await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 

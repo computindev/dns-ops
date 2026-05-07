@@ -41,6 +41,14 @@ async function resolveDomain(domainId: string) {
   return data.domain?.id ?? null;
 }
 
+function shouldRetryDomainResolve(failureCount: number, error: Error): boolean {
+  const status = (error as Error & { status?: number }).status;
+  if (status === 401 || status === 403 || status === 404) {
+    return false;
+  }
+  return failureCount < 2;
+}
+
 async function fetchTags(resolvedDomainId: string): Promise<string[]> {
   const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/tags`, {
     credentials: 'include',
@@ -81,7 +89,7 @@ export function TagsPanel({ domainId, isDomainName = false, onTagsChange }: Tags
     queryKey: ['domain-resolve', domainId, isDomainName],
     queryFn: () => (isDomainName ? resolveDomain(domainId) : Promise.resolve(domainId)),
     enabled: !!domainId,
-    staleTime: Infinity,
+    retry: shouldRetryDomainResolve,
   });
 
   const resolveStatus = resolveError

@@ -9,6 +9,7 @@ import type { Env } from '../types.js';
 import { selectorRoutes } from './selectors.js';
 
 interface MockState {
+  domains: Array<Record<string, unknown>>;
   snapshots: Array<Record<string, unknown>>;
   observations: Array<Record<string, unknown>>;
   dkimSelectors: Array<Record<string, unknown>>;
@@ -41,6 +42,7 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     getDrizzle: vi.fn(),
     select: vi.fn(async (table: unknown) => {
       const tableName = getTableName(table);
+      if (tableName === 'domains') return [...state.domains];
       if (tableName === 'snapshots') return [...state.snapshots];
       if (tableName === 'observations') return [...state.observations];
       if (tableName === 'dkim_selectors') return [...state.dkimSelectors];
@@ -58,6 +60,11 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     selectOne: vi.fn(async (table: unknown, condition: unknown) => {
       const tableName = getTableName(table);
       const param = getConditionParam(condition);
+      if (tableName === 'domains') {
+        return state.domains.find(
+          (row) => row.id === param || row.normalizedName === param || row.name === param
+        );
+      }
       if (tableName === 'snapshots') return state.snapshots.find((row) => row.id === param);
       return undefined;
     }),
@@ -88,6 +95,17 @@ function createApp(state: MockState) {
 describe('selectorRoutes runtime', () => {
   it('returns persisted selectors when dkim_selectors exist', async () => {
     const state: MockState = {
+      domains: [
+        {
+          id: 'domain-1',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: 'tenant-1',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
       snapshots: [
         {
           id: 'snap-1',
@@ -154,6 +172,7 @@ describe('selectorRoutes runtime', () => {
 
   it('returns 404 when snapshot does not exist', async () => {
     const state: MockState = {
+      domains: [],
       snapshots: [],
       observations: [],
       dkimSelectors: [],
@@ -169,6 +188,17 @@ describe('selectorRoutes runtime', () => {
 
   it('falls back to observation-based inference when no stored selectors', async () => {
     const state: MockState = {
+      domains: [
+        {
+          id: 'domain-1',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: 'tenant-1',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
       snapshots: [
         {
           id: 'snap-1',
@@ -213,6 +243,17 @@ describe('selectorRoutes runtime', () => {
 
   it('returns empty selectors when no DKIM observations exist', async () => {
     const state: MockState = {
+      domains: [
+        {
+          id: 'domain-1',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: 'tenant-1',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
       snapshots: [
         {
           id: 'snap-1',
@@ -245,5 +286,52 @@ describe('selectorRoutes runtime', () => {
     };
     expect(json.selectors).toHaveLength(0);
     expect(json.discoveryMethod).toBe('none');
+  });
+  it('returns 404 for a snapshot owned by another tenant', async () => {
+    const state: MockState = {
+      domains: [
+        {
+          id: 'domain-1',
+          name: 'example.com',
+          normalizedName: 'example.com',
+          tenantId: 'tenant-2',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      snapshots: [
+        {
+          id: 'snap-1',
+          domainId: 'domain-1',
+          domainName: 'example.com',
+          resultState: 'complete',
+          createdAt: new Date(),
+        },
+      ],
+      observations: [],
+      dkimSelectors: [
+        {
+          id: 'sel-1',
+          snapshotId: 'snap-1',
+          selector: 'google',
+          domain: 'example.com',
+          provenance: 'provider-template',
+          confidence: 'high',
+          provider: 'google-workspace',
+          found: true,
+          recordData: 'v=DKIM1',
+          isValid: true,
+          validationError: null,
+        },
+      ],
+    };
+    const app = createApp(state);
+
+    const response = await app.request('/api/snapshot/snap-1/selectors');
+
+    expect(response.status).toBe(404);
+    const json = (await response.json()) as { error: string };
+    expect(json.error).toBe('Snapshot not found');
   });
 });

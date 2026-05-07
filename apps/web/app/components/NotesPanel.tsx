@@ -49,6 +49,14 @@ async function resolveDomain(domainId: string) {
   return data.domain?.id ?? null;
 }
 
+function shouldRetryDomainResolve(failureCount: number, error: Error): boolean {
+  const status = (error as Error & { status?: number }).status;
+  if (status === 401 || status === 403 || status === 404) {
+    return false;
+  }
+  return failureCount < 2;
+}
+
 async function fetchNotes(resolvedDomainId: string): Promise<Note[]> {
   const response = await fetch(`/api/portfolio/domains/${resolvedDomainId}/notes`, {
     credentials: 'include',
@@ -87,7 +95,7 @@ export function NotesPanel({ domainId, isDomainName = false }: NotesPanelProps) 
     queryKey: ['domain-resolve', domainId, isDomainName],
     queryFn: () => (isDomainName ? resolveDomain(domainId) : Promise.resolve(domainId)),
     enabled: !!domainId,
-    staleTime: Infinity,
+    retry: shouldRetryDomainResolve,
   });
 
   const resolveStatus = resolveError

@@ -60,6 +60,11 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
       const tableName = getTableName(table);
       const param = getConditionParam(condition);
+      if (tableName === 'domains') {
+        return state.domains.filter(
+          (row) => row.id === param || row.normalizedName === param || row.name === param
+        );
+      }
       if (tableName === 'snapshots')
         return state.snapshots
           .filter((row) => row.domainId === param)

@@ -177,10 +177,26 @@ collectDomainRoutes.post('/domain', async (c) => {
 collectDomainRoutes.get('/status/:snapshotId', async (c) => {
     const db = c.get('db');
     const snapshotId = c.req.param('snapshotId');
+    const tenantId = c.get('tenantId');
+    const actorId = c.get('actorId');
+    if (!tenantId || !actorId) {
+        return c.json({ error: 'Authenticated tenant and actor context required' }, 401);
+    }
+    if (!db) {
+        return c.json({ error: 'Database unavailable' }, 503);
+    }
     try {
         const snapshotRepo = new SnapshotRepository(db);
+        const domainRepo = new DomainRepository(db);
         const snapshot = await snapshotRepo.findById(snapshotId);
         if (!snapshot) {
+            return c.json({
+                error: 'Snapshot not found',
+                snapshotId,
+            }, 404);
+        }
+        const domain = await domainRepo.findById(snapshot.domainId);
+        if (!domain || domain.tenantId !== tenantId) {
             return c.json({
                 error: 'Snapshot not found',
                 snapshotId,
