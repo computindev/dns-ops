@@ -33,6 +33,9 @@ playwright-report/
 test-results/
 coverage/
 
+# Ephemeral artifacts
+STATUS_REPORT.md
+
 # OS
 .DS_Store
 Thumbs.db
