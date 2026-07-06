@@ -43,8 +43,10 @@ import {
   tlsRptRule,
   unmanagedZonePartialCoverageRule,
 } from '@dns-ops/rules';
+import { getDnsQueryConcurrency } from '../config/env.js';
 import { DelegationCollector } from '../delegation/collector.js';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
+import { Semaphore } from '../probes/semaphore.js';
 import { DNSResolver } from './resolver.js';
 import type {
   CollectionConfig,
@@ -91,8 +93,50 @@ function createCombinedRuleset(): Ruleset {
   };
 }
 
+/**
+ * Minimal resolver contract DNSCollector depends on. Lets tests inject a fake
+ * resolver that records in-flight concurrency without touching real DNS.
+ */
+export interface ResolverLike {
+  query(query: DNSQuery, vantage: VantageInfo): Promise<DNSQueryResult>;
+}
+
+/**
+ * Run DNS queries bounded by `semaphore`, preserving input order in the output.
+ *
+ * Errors thrown by the resolver are recorded in `errors` and yield no result
+ * entry (matching the previous sequential behaviour). Failed-but-returned
+ * results (success:false) are kept; collectFromVantage records their error.
+ */
+export async function collectQueriesConcurrently(
+  resolver: ResolverLike,
+  queries: DNSQuery[],
+  vantage: VantageInfo,
+  semaphore: Semaphore,
+  errors: CollectionError[]
+): Promise<DNSQueryResult[]> {
+  const tasks = queries.map((query) =>
+    semaphore.run(async () => {
+      try {
+        return await resolver.query(query, vantage);
+      } catch (error) {
+        errors.push({
+          queryName: query.name,
+          queryType: query.type,
+          vantage: vantage.identifier,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    })
+  );
+  const settled = await Promise.all(tasks);
+  return settled.filter((r): r is DNSQueryResult => r !== null);
+}
+
 export class DNSCollector {
-  private resolver: DNSResolver;
+  private resolver: ResolverLike;
+  private readonly semaphore: Semaphore;
   private config: CollectionConfig;
   private domainRepo: DomainRepository;
   private snapshotRepo: SnapshotRepository;
@@ -102,9 +146,14 @@ export class DNSCollector {
   private suggestionRepo: SuggestionRepository;
   private rulesetVersionRepo: RulesetVersionRepository;
 
-  constructor(config: CollectionConfig, db: IDatabaseAdapter) {
+  constructor(
+    config: CollectionConfig,
+    db: IDatabaseAdapter,
+    options?: { resolver?: ResolverLike; queryConcurrency?: number }
+  ) {
     this.config = config;
-    this.resolver = new DNSResolver();
+    this.resolver = options?.resolver ?? new DNSResolver();
+    this.semaphore = new Semaphore(options?.queryConcurrency ?? getDnsQueryConcurrency());
     this.domainRepo = new DomainRepository(db);
     this.snapshotRepo = new SnapshotRepository(db);
     this.observationRepo = new ObservationRepository(db);
@@ -289,28 +338,24 @@ export class DNSCollector {
     vantage: VantageInfo,
     errors: CollectionError[]
   ): Promise<DNSQueryResult[]> {
-    const results: DNSQueryResult[] = [];
+    // Run queries concurrently, bounded by this.semaphore (default 5,
+    // overridable via DNS_QUERY_CONCURRENCY). Order is preserved in the output.
+    const results = await collectQueriesConcurrently(
+      this.resolver,
+      queries,
+      vantage,
+      this.semaphore,
+      errors
+    );
 
-    for (const query of queries) {
-      try {
-        const result = await this.resolver.query(query, vantage);
-        results.push(result);
-
-        // Track errors for failed queries
-        if (!result.success) {
-          errors.push({
-            queryName: query.name,
-            queryType: query.type,
-            vantage: vantage.identifier,
-            error: result.error || 'Unknown error',
-          });
-        }
-      } catch (error) {
+    // Track errors for failed-but-returned queries.
+    for (const result of results) {
+      if (!result.success) {
         errors.push({
-          queryName: query.name,
-          queryType: query.type,
+          queryName: result.query.name,
+          queryType: result.query.type,
           vantage: vantage.identifier,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: result.error || 'Unknown error',
         });
       }
     }

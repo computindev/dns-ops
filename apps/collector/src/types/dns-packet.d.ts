@@ -27,11 +27,11 @@ declare module 'dns-packet' {
     id?: number;
     type?: string;
     flags?: number;
-    rcode?: number;
+    rcode?: number | string;
     questions?: Question[];
     answers?: Record[];
-    authority?: Record[];
-    additional?: Record[];
+    authorities?: Record[];
+    additionals?: Record[];
   }
 
   export interface PrepareQueryOptions {
