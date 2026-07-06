@@ -12,6 +12,10 @@ app.config.timestamp_*.js
 # Dependencies
 node_modules/
 
+# Environment files — never commit secrets (.env.example stays tracked)
+.env
+**/.env
+
 # Database files
 *.db
 *.db-shm
