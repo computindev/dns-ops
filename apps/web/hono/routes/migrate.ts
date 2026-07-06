@@ -270,7 +270,7 @@ migrateRoutes.post('/rebuild', async (c) => {
 
 /**
  * POST /api/migrate/run-init
- * Execute the full 0000_init migration directly
+ * Execute the full 0000_nebulous_steve_rogers baseline migration directly
  */
 migrateRoutes.post('/run-init', async (c) => {
   const db = c.get('db');

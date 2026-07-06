@@ -48,14 +48,14 @@
       "idx": 6,
       "version": "5",
       "when": 1774248600000,
-      "tag": "0006_de_scope_vantage_points",
+      "tag": "0006_enforce_tenant_not_null",
       "breakpoints": true
     },
     {
       "idx": 7,
       "version": "5",
       "when": 1774363354561,
-      "tag": "0007_slim_puma",
+      "tag": "0007_tenant_domain_uniqueness",
       "breakpoints": true
     },
     {
