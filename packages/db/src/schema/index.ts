@@ -330,10 +330,16 @@ export const findings = pgTable(
     ruleId: varchar('rule_id', { length: 100 }).notNull(),
     ruleVersion: varchar('rule_version', { length: 50 }).notNull(),
 
-    // Ruleset version that generated this finding (for idempotent re-evaluation)
-    rulesetVersionId: uuid('ruleset_version_id').references(() => rulesetVersions.id, {
-      onDelete: 'set null',
-    }),
+    // Ruleset version that generated this finding (for idempotent re-evaluation).
+    // NOT NULL + backfill enforced by migration 0011_findings_ruleset_version_not_null.
+    // Every findings insert site (collector + web) populates this from the active
+    // ruleset version resolved at collection time.
+    // NOTE: the FK still carries ON DELETE SET NULL (pre-existing); a future
+    // ruleset_versions delete would now violate NOT NULL. Left for TB-3 to
+    // resolve (e.g. ON DELETE RESTRICT) — out of scope for the nullability fix.
+    rulesetVersionId: uuid('ruleset_version_id')
+      .notNull()
+      .references(() => rulesetVersions.id, { onDelete: 'set null' }),
 
     // Finding state
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
