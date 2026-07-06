@@ -1,8 +1,17 @@
 /**
  * DNS Resolver
  *
- * Performs actual DNS queries using Node.js dns module.
- * Supports both recursive and authoritative resolution.
+ * Performs actual DNS queries, capturing REAL answer TTLs (never fabricated).
+ *
+ * - A/AAAA use Node.js dns with {ttl:true}; this is the only record family for
+ *   which Node exposes the real answer TTL.
+ * - MX/TXT/NS/CNAME/SOA/CAA use the dns-packet raw path (queryWithDnsPacket),
+ *   because Node's high-level dns API hides TTLs for those types and would
+ *   otherwise force a fabricated default.
+ *
+ * Flags are returned uniformly (aa/tc/...). The dns-packet path does observe
+ * real flags, but surfacing them (e.g. the AA bit for authoritative queries) is
+ * intentionally out of scope here; see docs/architecture/runtime-topology.md.
  *
  * Error mapping uses standardized DNS_RCODE constants from @dns-ops/contracts
  * for consistent status classification across the codebase.
@@ -10,242 +19,153 @@
 
 import { Resolver } from 'node:dns/promises';
 import { DNS_RCODE } from '@dns-ops/contracts';
+import { queryWithDnsPacket } from './dnssec-resolver.js';
 import type { DNSAnswer, DNSQuery, DNSQueryResult, VantageInfo } from './types.js';
+
+/**
+ * Record types resolved via the dns-packet raw path. Node's high-level dns API
+ * hides answer TTLs for these, so the wire response must be decoded directly to
+ * obtain a real (non-fabricated) TTL.
+ */
+const DNS_PACKET_TYPES = new Set(['MX', 'TXT', 'NS', 'CNAME', 'SOA', 'CAA']);
+
+/** Uniform DNS flags returned for both resolution paths. */
+const UNIFORM_FLAGS = {
+  aa: false,
+  tc: false,
+  rd: true,
+  ra: true,
+  ad: false,
+  cd: false,
+} as const;
 
 export class DNSResolver {
   /**
-   * Perform a DNS query
+   * Perform a DNS query, returning the real answer TTL for every record type.
    */
   async query(query: DNSQuery, vantage: VantageInfo): Promise<DNSQueryResult> {
     const startTime = Date.now();
 
     try {
-      // Create resolver with specific server if provided
-      const resolver = new Resolver();
-
-      if (vantage.type === 'public-recursive') {
-        resolver.setServers([vantage.identifier]);
-      } else if (vantage.type === 'authoritative') {
-        // For authoritative queries, we'd need to implement custom logic
-        // For now, use the default resolver
-        resolver.setServers([vantage.identifier]);
+      if (DNS_PACKET_TYPES.has(query.type)) {
+        return await this.queryViaDnsPacket(query, vantage, startTime);
       }
 
-      // Map query type to Node.js dns method
-      const result = await this.performQuery(resolver, query);
-      const responseTime = Date.now() - startTime;
-
+      // A/AAAA (and any future type Node resolves directly) — real TTL via
+      // {ttl:true}.
+      const nodeResolver = new Resolver();
+      nodeResolver.setServers([vantage.identifier]);
+      const performed = await this.performNodeQuery(nodeResolver, query);
       return {
         query,
         vantage,
         success: true,
         responseCode: DNS_RCODE.NOERROR,
-        flags: {
-          // NOTE: aa (Authoritative Answer) flag is always false because Node.js
-          // dns module doesn't expose the actual AA bit from the DNS response.
-          // For true authoritative queries, use dns-packet library.
-          // See docs/architecture/runtime-topology.md for details.
-          aa: false,
-          tc: false,
-          rd: true,
-          ra: true,
-          ad: false,
-          cd: false,
-        },
-        answers: result.answers,
-        authority: result.authority || [],
-        additional: result.additional || [],
-        responseTime,
+        flags: { ...UNIFORM_FLAGS },
+        answers: performed.answers,
+        authority: performed.authority ?? [],
+        additional: performed.additional ?? [],
+        responseTime: Date.now() - startTime,
       };
     } catch (error) {
-      const responseTime = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-      // Determine error type using standardized RCODE constants
-      let responseCode: number = DNS_RCODE.SERVFAIL;
-
-      if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('NXDOMAIN')) {
-        responseCode = DNS_RCODE.NXDOMAIN;
-      } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('REFUSED')) {
-        responseCode = DNS_RCODE.REFUSED;
-      } else if (
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('ETIMEDOUT') ||
-        errorMessage.includes('timed out')
-      ) {
-        responseCode = DNS_RCODE.SERVFAIL; // No specific timeout RCODE; use SERVFAIL
-      }
-
-      return {
-        query,
-        vantage,
-        success: false,
-        responseCode,
-        flags: {
-          // NOTE: aa (Authoritative Answer) flag is always false because Node.js
-          // dns module doesn't expose the actual AA bit from the DNS response.
-          // For true authoritative queries, use dns-packet library.
-          // See docs/architecture/runtime-topology.md for details.
-          aa: false,
-          tc: false,
-          rd: true,
-          ra: false,
-          ad: false,
-          cd: false,
-        },
-        answers: [],
-        authority: [],
-        additional: [],
-        responseTime,
-        error: errorMessage,
-      };
+      return this.errorResult(query, vantage, error, Date.now() - startTime);
     }
   }
 
   /**
-   * Perform the actual DNS query based on record type
+   * Resolve MX/TXT/NS/CNAME/SOA/CAA via dns-packet, capturing the real answer
+   * TTL and mapping the wire rcode to success/responseCode.
    */
-  private async performQuery(
+  private async queryViaDnsPacket(
+    query: DNSQuery,
+    vantage: VantageInfo,
+    startTime: number
+  ): Promise<DNSQueryResult> {
+    const result = await queryWithDnsPacket(query, vantage.identifier);
+    const success = result.responseCode === DNS_RCODE.NOERROR;
+    const base: DNSQueryResult = {
+      query,
+      vantage,
+      success,
+      responseCode: result.responseCode,
+      flags: { ...UNIFORM_FLAGS },
+      answers: result.answers,
+      authority: result.authority,
+      additional: result.additional,
+      responseTime: Date.now() - startTime,
+    };
+    if (!success) {
+      base.error = `DNS query failed with rcode ${result.responseCode}`;
+    }
+    return base;
+  }
+
+  /**
+   * Resolve via Node.js dns (A/AAAA). Throws for unsupported types.
+   */
+  private async performNodeQuery(
     resolver: Resolver,
     query: DNSQuery
   ): Promise<{ answers: DNSAnswer[]; authority?: DNSAnswer[]; additional?: DNSAnswer[] }> {
-    const { name, type } = query;
-
-    switch (type) {
+    switch (query.type) {
       case 'A':
-        return this.queryA(resolver, name);
+        return this.queryA(resolver, query.name);
       case 'AAAA':
-        return this.queryAAAA(resolver, name);
-      case 'MX':
-        return this.queryMX(resolver, name);
-      case 'TXT':
-        return this.queryTXT(resolver, name);
-      case 'NS':
-        return this.queryNS(resolver, name);
-      case 'CNAME':
-        return this.queryCNAME(resolver, name);
-      case 'SOA':
-        return this.querySOA(resolver, name);
-      case 'CAA':
-        return this.queryCAA(resolver, name);
+        return this.queryAAAA(resolver, query.name);
       default:
-        throw new Error(`Unsupported record type: ${type}`);
+        throw new Error(`Unsupported record type: ${query.type}`);
     }
   }
 
   private async queryA(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const addresses = await resolver.resolve4(name);
+    const records = await resolver.resolve4(name, { ttl: true });
     return {
-      answers: addresses.map((addr: string) => ({
-        name,
-        type: 'A',
-        ttl: 300, // Default TTL
-        data: addr,
-      })),
+      answers: records.map((rec) => ({ name, type: 'A', ttl: rec.ttl, data: rec.address })),
     };
   }
 
   private async queryAAAA(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const addresses = await resolver.resolve6(name);
+    const records = await resolver.resolve6(name, { ttl: true });
     return {
-      answers: addresses.map((addr: string) => ({
-        name,
-        type: 'AAAA',
-        ttl: 300,
-        data: addr,
-      })),
+      answers: records.map((rec) => ({ name, type: 'AAAA', ttl: rec.ttl, data: rec.address })),
     };
   }
 
-  private async queryMX(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const records = await resolver.resolveMx(name);
-    return {
-      answers: records.map((mx: { priority: number; exchange: string }) => ({
-        name,
-        type: 'MX',
-        ttl: 300,
-        data: `${mx.priority} ${mx.exchange}`,
-      })),
-    };
-  }
+  /**
+   * Build a failure result, mapping the Node error message to an RCODE.
+   */
+  private errorResult(
+    query: DNSQuery,
+    vantage: VantageInfo,
+    error: unknown,
+    responseTime: number
+  ): DNSQueryResult {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    let responseCode: number = DNS_RCODE.SERVFAIL;
 
-  private async queryTXT(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const records = await resolver.resolveTxt(name);
-    return {
-      answers: records.map((txt: string[]) => ({
-        name,
-        type: 'TXT',
-        ttl: 300,
-        data: txt.join(''), // Join multiple strings
-      })),
-    };
-  }
-
-  private async queryNS(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const records = await resolver.resolveNs(name);
-    return {
-      answers: records.map((ns: string) => ({
-        name,
-        type: 'NS',
-        ttl: 300,
-        data: ns,
-      })),
-    };
-  }
-
-  private async queryCNAME(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const records = await resolver.resolveCname(name);
-    return {
-      answers: records.map((cname: string) => ({
-        name,
-        type: 'CNAME',
-        ttl: 300,
-        data: cname,
-      })),
-    };
-  }
-
-  private async querySOA(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    const soa = (await resolver.resolveSoa(name)) as {
-      nsname: string;
-      hostmaster: string;
-      serial: number;
-      refresh: number;
-      retry: number;
-      expire: number;
-      minttl?: number;
-      minimumTTL?: number;
-    };
-    const minTTL = soa.minttl ?? soa.minimumTTL ?? 300;
-    return {
-      answers: [
-        {
-          name,
-          type: 'SOA',
-          ttl: minTTL,
-          data: `${soa.nsname} ${soa.hostmaster} ${soa.serial} ${soa.refresh} ${soa.retry} ${soa.expire} ${minTTL}`,
-        },
-      ],
-    };
-  }
-
-  private async queryCAA(resolver: Resolver, name: string): Promise<{ answers: DNSAnswer[] }> {
-    // Node.js doesn't have native CAA support, use resolveAny and filter
-    try {
-      const records = await resolver.resolveAny(name);
-      const caaRecords = (
-        records as Array<{ type: string; critical?: number; issue?: string; value?: string }>
-      ).filter((r) => r.type === 'CAA');
-      return {
-        answers: caaRecords.map((caa) => ({
-          name,
-          type: 'CAA',
-          ttl: 300,
-          data: `${caa.critical ?? 0} ${caa.issue ?? ''} "${caa.value ?? ''}"`,
-        })),
-      };
-    } catch {
-      return { answers: [] };
+    if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('NXDOMAIN')) {
+      responseCode = DNS_RCODE.NXDOMAIN;
+    } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('REFUSED')) {
+      responseCode = DNS_RCODE.REFUSED;
+    } else if (
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('timed out')
+    ) {
+      responseCode = DNS_RCODE.SERVFAIL; // No specific timeout RCODE; use SERVFAIL
     }
+
+    return {
+      query,
+      vantage,
+      success: false,
+      responseCode,
+      flags: { aa: false, tc: false, rd: true, ra: false, ad: false, cd: false },
+      answers: [],
+      authority: [],
+      additional: [],
+      responseTime,
+      error: errorMessage,
+    };
   }
 }
