@@ -143,7 +143,7 @@ export class SimulationEngine {
     const projectedRecordSets = this.applyChanges(context.recordSets, deduped, context.snapshotId);
 
     // Build projected observations by synthesizing for new records
-    const projectedObservations = this.synthesizeObservations(
+    const projectedObservations = synthesizeObservations(
       context.observations,
       deduped,
       context.domainName,
@@ -527,68 +527,6 @@ export class SimulationEngine {
     return result;
   }
 
-  /** Synthesize observations for newly added records so rules can see them */
-  private synthesizeObservations(
-    current: Observation[],
-    changes: ProposedChange[],
-    _domainName: string,
-    snapshotId: string
-  ): Observation[] {
-    const result = [...current];
-
-    for (const change of changes) {
-      if (change.action === 'remove') continue;
-
-      // For 'add': if a successful observation already exists with answers, skip.
-      // For 'modify': always replace the existing observation with the simulated one.
-      const existingIdx = result.findIndex(
-        (obs) =>
-          obs.queryName.toLowerCase() === change.name.toLowerCase() &&
-          obs.queryType === change.type &&
-          obs.status === 'success'
-      );
-      if (change.action === 'add') {
-        if (
-          existingIdx >= 0 &&
-          result[existingIdx].answerSection &&
-          (result[existingIdx].answerSection?.length ?? 0) > 0
-        ) {
-          continue;
-        }
-      }
-      // Remove existing observation so the simulated one takes over
-      if (existingIdx >= 0) {
-        result.splice(existingIdx, 1);
-      }
-
-      // Synthesize a successful observation
-      result.push({
-        id: crypto.randomUUID(),
-        snapshotId,
-        queryName: change.name,
-        queryType: change.type,
-        vantageId: null,
-        vantageType: 'public-recursive',
-        vantageIdentifier: 'simulation',
-        status: 'success',
-        responseCode: 0,
-        answerSection: change.proposedValues.map((v) => ({
-          name: change.name,
-          type: change.type,
-          ttl: 300,
-          data: v,
-        })),
-        authoritySection: null,
-        additionalSection: null,
-        errorMessage: null,
-        queryDurationMs: 0,
-        createdAt: new Date(),
-      } as unknown as Observation);
-    }
-
-    return result;
-  }
-
   private toSimFindings(findings: NewFinding[]): SimulationFinding[] {
     return findings.map((f) => ({
       type: f.type,
@@ -597,4 +535,78 @@ export class SimulationEngine {
       ruleId: f.ruleId,
     }));
   }
+}
+
+/**
+ * Synthesize successful DNS observations for newly added/modified records so the
+ * rules engine can evaluate projected DNS state. Pure function — no engine state.
+ *
+ * The synthesized observation mirrors the canonical `observations` row shape
+ * (`@dns-ops/db`) exactly — `vantageType`/`vantageIdentifier` (not a made-up
+ * `vantage`/`vantageId`), `queriedAt` (not `timestamp`/`createdAt`),
+ * `responseTimeMs` (not `queryDurationMs`), and `answerSection`/
+ * `authoritySection`/`additionalSection` (not `answers`/`authority`/`additional`).
+ * No cast is required because the field names match the Drizzle-inferred type.
+ */
+export function synthesizeObservations(
+  current: Observation[],
+  changes: ProposedChange[],
+  _domainName: string,
+  snapshotId: string
+): Observation[] {
+  const result = [...current];
+
+  for (const change of changes) {
+    if (change.action === 'remove') continue;
+
+    // For 'add': if a successful observation already exists with answers, skip.
+    // For 'modify': always replace the existing observation with the simulated one.
+    const existingIdx = result.findIndex(
+      (obs) =>
+        obs.queryName.toLowerCase() === change.name.toLowerCase() &&
+        obs.queryType === change.type &&
+        obs.status === 'success'
+    );
+    if (change.action === 'add') {
+      if (
+        existingIdx >= 0 &&
+        result[existingIdx].answerSection &&
+        (result[existingIdx].answerSection?.length ?? 0) > 0
+      ) {
+        continue;
+      }
+    }
+    // Remove existing observation so the simulated one takes over
+    if (existingIdx >= 0) {
+      result.splice(existingIdx, 1);
+    }
+
+    // Synthesize a successful observation using canonical schema field names.
+    result.push({
+      id: crypto.randomUUID(),
+      snapshotId,
+      queryName: change.name,
+      queryType: change.type,
+      vantageType: 'public-recursive',
+      vantageIdentifier: 'simulation',
+      status: 'success',
+      queriedAt: new Date(),
+      responseTimeMs: 0,
+      responseCode: 0,
+      flags: null,
+      answerSection: change.proposedValues.map((v) => ({
+        name: change.name,
+        type: change.type,
+        ttl: 300,
+        data: v,
+      })),
+      authoritySection: null,
+      additionalSection: null,
+      errorMessage: null,
+      errorDetails: null,
+      rawResponse: null,
+    });
+  }
+
+  return result;
 }

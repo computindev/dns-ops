@@ -1205,25 +1205,16 @@ export interface SuggestionResponse {
 // REMEDIATION RESPONSES (re-exported from requests.ts for convenience)
 // =============================================================================
 
-/**
- * Remediation status values
- */
-export type RemediationStatus = 'open' | 'in-progress' | 'resolved' | 'closed';
-
-/**
- * Remediation priority values
- */
-export type RemediationPriority = 'low' | 'medium' | 'high' | 'critical';
-
-/**
- * Shared report status values
- */
-export type SharedReportStatus = 'generating' | 'ready' | 'expired' | 'error';
-
-/**
- * Shared report visibility values
- */
-export type SharedReportVisibility = 'private' | 'tenant' | 'shared';
+// Remediation / shared-report value unions are declared ONCE in requests.ts and
+// re-exported from @dns-ops/contracts via index.ts. Re-exported here so consumers
+// importing response DTOs can pull them from the same module without a second,
+// divergent declaration.
+export type {
+  RemediationPriority,
+  RemediationStatus,
+  SharedReportStatus,
+  SharedReportVisibility,
+} from './requests.js';
 
 /**
  * GET /remediation
