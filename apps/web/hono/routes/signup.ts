@@ -113,7 +113,7 @@ authRoutes.post('/login', async (c) => {
   // Set session cookie
   c.header(
     'Set-Cookie',
-    `dns_ops_session=${token}; Path=/; Max-Age=${SESSION_EXPIRY_DAYS * 24 * 60 * 60}; HttpOnly; SameSite=Lax`
+    `dns_ops_session=${token}; Path=/; Max-Age=${SESSION_EXPIRY_DAYS * 24 * 60 * 60}; HttpOnly; SameSite=Lax; Secure`
   );
 
   return c.json({ success: true, email: user.email, tenant: email.split('@')[1] });
@@ -132,7 +132,7 @@ authRoutes.post('/logout', async (c) => {
     await getAuthDrizzle(db).delete(sessions).where(eq(sessions.token, token));
   }
 
-  c.header('Set-Cookie', 'dns_ops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
+  c.header('Set-Cookie', 'dns_ops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure');
   return c.json({ success: true });
 });
 
