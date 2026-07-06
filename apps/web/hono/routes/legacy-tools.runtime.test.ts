@@ -450,12 +450,13 @@ describe('legacyToolsRoutes runtime', () => {
     it('returns aggregate shadow comparison stats', async () => {
       const state: MockState = {
         legacyAccessLogs: [
-          { id: 'log-1', tool: 'dmarc', domain: 'example.com', action: 'view', success: true },
+          { id: 'log-1', tool: 'dmarc', domain: 'example.com', tenantId: 'tenant-1', action: 'view', success: true },
         ],
         shadowComparisons: [
           {
             id: 'sc-1',
             domain: 'example.com',
+            tenantId: 'tenant-1',
             status: 'match',
             comparisons: [],
             comparedAt: new Date(),
