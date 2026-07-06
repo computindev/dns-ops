@@ -296,8 +296,12 @@ describe('Legacy Tools /shadow-stats — Tenant Isolation', () => {
       const appA = createAppForTenant(state, TENANT_A);
       const appB = createAppForTenant(state, TENANT_B);
 
-      const jsonA = (await (await appA.request('/api/legacy-tools/shadow-stats')).json()) as ShadowStatsBody;
-      const jsonB = (await (await appB.request('/api/legacy-tools/shadow-stats')).json()) as ShadowStatsBody;
+      const jsonA = (await (
+        await appA.request('/api/legacy-tools/shadow-stats')
+      ).json()) as ShadowStatsBody;
+      const jsonB = (await (
+        await appB.request('/api/legacy-tools/shadow-stats')
+      ).json()) as ShadowStatsBody;
 
       // 3 legacy logs exist (A, B, system). Each tenant sees exactly 1, so the
       // system log is excluded from both — sum is 2, not 3.

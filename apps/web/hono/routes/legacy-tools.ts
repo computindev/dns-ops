@@ -504,10 +504,7 @@ legacyToolsRoutes.get('/shadow-stats', requireAuth, async (c) => {
   // tenant context, but every downstream query depends on this value, so we
   // fail closed if it is somehow absent.
   if (!tenantId) {
-    return c.json(
-      { error: 'Unauthorized', message: 'Tenant context required.' },
-      401
-    );
+    return c.json({ error: 'Unauthorized', message: 'Tenant context required.' }, 401);
   }
 
   try {
