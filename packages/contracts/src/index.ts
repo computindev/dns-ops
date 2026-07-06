@@ -13,106 +13,20 @@ export * from './requests.js';
 export * from './result.js';
 export * from './tenant.js';
 
-// Core entity types (will be expanded in Bead 02)
-
-export interface Domain {
-  id: string;
-  name: string;
-  normalizedName: string;
-  punycodeName?: string;
-  zoneManagement: import('./enums.js').ZoneManagement;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface Snapshot {
-  id: string;
-  domainId: string;
-  domainName: string;
-  resultState: import('./enums.js').ResultState;
-  scope: SnapshotScope;
-  rulesetVersion: string;
-  createdAt: Date;
-  createdBy: string;
-}
-
-export interface SnapshotScope {
-  queriedNames: string[];
-  queriedTypes: import('./enums.js').SupportedRecordType[];
-  vantages: import('./enums.js').VantageType[];
-  zoneManagement: import('./enums.js').ZoneManagement;
-}
-
-export interface Observation {
-  id: string;
-  snapshotId: string;
-  queryName: string;
-  queryType: string;
-  vantage: import('./enums.js').VantageType;
-  status: import('./enums.js').CollectionStatus;
-  timestamp: Date;
-  responseCode?: number;
-  ttl?: number;
-  answers: DNSAnswer[];
-  authority: DNSAnswer[];
-  additional: DNSAnswer[];
-  errorMessage?: string;
-}
-
-export interface DNSAnswer {
-  name: string;
-  type: string;
-  ttl: number;
-  data: string;
-}
-
-export interface RecordSet {
-  id: string;
-  snapshotId: string;
-  name: string;
-  type: string;
-  ttl: number;
-  values: string[];
-  sourceVantages: import('./enums.js').VantageType[];
-}
-
-export interface Finding {
-  id: string;
-  snapshotId: string;
-  type: string;
-  title: string;
-  description: string;
-  severity: import('./enums.js').Severity;
-  confidence: import('./enums.js').Confidence;
-  riskPosture: import('./enums.js').RiskPosture;
-  blastRadius: import('./enums.js').BlastRadius;
-  reviewOnly: boolean;
-  evidence: EvidenceLink[];
-  createdAt: Date;
-}
-
-export interface EvidenceLink {
-  observationId: string;
-  recordSetId?: string;
-  description: string;
-}
-
-export interface Suggestion {
-  id: string;
-  findingId: string;
-  title: string;
-  description: string;
-  action: string;
-  riskPosture: import('./enums.js').RiskPosture;
-  blastRadius: import('./enums.js').BlastRadius;
-  reviewOnly: boolean;
-}
-
-export interface RulesetVersion {
-  id: string;
-  version: string;
-  name: string;
-  description: string;
-  createdAt: Date;
-  active: boolean;
-}
+// -----------------------------------------------------------------------------
+// Persistence entity types — MOVED to @dns-ops/db
+// -----------------------------------------------------------------------------
+// The canonical shapes for Domain, Snapshot, Observation, RecordSet, Finding,
+// Suggestion, EvidenceLink, and RulesetVersion are the Drizzle-inferred types in
+// `@dns-ops/db` (`$inferSelect` / `$inferInsert`). They were previously mirrored
+// here by hand and DRIFTED (e.g. `answers` vs the schema's `answerSection`,
+// `vantage` vs `vantageType`, `timestamp` vs `queriedAt`). To guarantee a single
+// source of truth, those duplicates were removed.
+//
+// Import persistence shapes from `@dns-ops/db` (or `@dns-ops/db/schema`):
+//
+//   import type { Finding, Observation, RecordSet, Suggestion } from '@dns-ops/db';
+//
+// This package remains a leaf dependency and MUST NOT depend on `@dns-ops/db`,
+// since `@dns-ops/db` already depends on `@dns-ops/contracts` (a contracts→db
+// edge would close a package cycle).
