@@ -323,6 +323,13 @@ export const findings = pgTable(
     blastRadius: blastRadiusEnum('blast_radius').notNull(),
     reviewOnly: boolean('review_only').notNull().default(false),
 
+    // Subject discriminator: WHAT this finding is about within its (rule, type) —
+    // a lowercased DNS query name|type, a CNAME owner name, a DKIM selector, a
+    // bounded hash for CAA (NEVER the raw CAA value), or '' for domain-level
+    // singletons. Lets one rule emit multiple DISTINCT findings per snapshot
+    // and dedupe correctly via finding_unique_idx. Added by migration 0012 (TB-3).
+    subjectKey: varchar('subject_key', { length: 320 }).notNull().default(''),
+
     // Evidence links
     evidence: jsonb('evidence').notNull().$type<EvidenceLink[]>(),
 
@@ -354,11 +361,14 @@ export const findings = pgTable(
     severityIdx: index('finding_severity_idx').on(table.severity),
     reviewOnlyIdx: index('finding_review_only_idx').on(table.reviewOnly),
     rulesetVersionIdx: index('finding_ruleset_version_idx').on(table.rulesetVersionId),
-    // Prevent duplicate findings for the same (snapshot, rule, type, ruleset version)
+    // Prevent duplicate findings for the same (snapshot, rule, type, subject, ruleset version).
+    // subject_key disambiguates multiple findings from one rule (TB-3) — e.g. one
+    // rule surfacing failures for several DNS query names. Pre-0012 rows carry ''.
     uniqueFindingIdx: uniqueIndex('finding_unique_idx').on(
       table.snapshotId,
       table.ruleId,
       table.type,
+      table.subjectKey,
       table.rulesetVersionId
     ),
   })
