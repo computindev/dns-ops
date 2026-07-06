@@ -1210,8 +1210,8 @@ export interface SuggestionResponse {
 // importing response DTOs can pull them from the same module without a second,
 // divergent declaration.
 export type {
-  RemediationStatus,
   RemediationPriority,
+  RemediationStatus,
   SharedReportStatus,
   SharedReportVisibility,
 } from './requests.js';
