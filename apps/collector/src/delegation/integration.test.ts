@@ -19,10 +19,17 @@ import { DelegationCollector } from './collector.js';
 // vi.hoisted ensures mocks are available during vi.mock hoisting
 const mockQueryDNSKEY = vi.hoisted(() => vi.fn());
 const mockQueryDS = vi.hoisted(() => vi.fn());
+// TB-2 routes MX/TXT/NS/CNAME/SOA/CAA through queryWithDnsPacket inside
+// DNSResolver. DelegationCollector builds its OWN resolver, so NS queries in
+// the delegation chain reach this mock (the DNSCollector resolver patch does
+// not cover it). Default returns empty NOERROR; overridden per-test where
+// canned delegation NS data is required.
+const mockQueryWithDnsPacket = vi.hoisted(() => vi.fn());
 
 vi.mock('../dns/dnssec-resolver.js', () => ({
   queryDNSKEY: mockQueryDNSKEY,
   queryDS: mockQueryDS,
+  queryWithDnsPacket: mockQueryWithDnsPacket,
 }));
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -58,6 +65,28 @@ function buildSuccessResult(
     authority: extra?.authority ?? [],
     additional: extra?.additional ?? [],
     responseTime: 12,
+  };
+}
+
+/**
+ * Build the raw dns-packet sections shape that queryWithDnsPacket returns
+ * (and DNSResolver.queryViaDnsPacket consumes): responseCode + answer /
+ * authority / additional sections. NOERROR (responseCode 0) by default.
+ */
+function buildDnsPacketSections(
+  answers: ReturnType<typeof makeAnswer>[],
+  extra?: {
+    responseCode?: number;
+    authority?: ReturnType<typeof makeAnswer>[];
+    additional?: ReturnType<typeof makeAnswer>[];
+  }
+) {
+  return {
+    responseCode: extra?.responseCode ?? 0,
+    answers,
+    authority: extra?.authority ?? [],
+    additional: extra?.additional ?? [],
+    flags: { aa: false, tc: false, rd: true, ra: true, ad: false, cd: false },
   };
 }
 
@@ -166,6 +195,9 @@ function patchResolver(target: unknown, resultsByQuery: Map<string, DNSQueryResu
 describe('Delegation Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: well-formed empty NOERROR sections for the dns-packet raw path.
+    // Tests needing canned delegation NS data override this per-test.
+    mockQueryWithDnsPacket.mockResolvedValue(buildDnsPacketSections([]));
   });
 
   describe('DelegationCollector full chain', () => {
@@ -449,6 +481,29 @@ describe('Delegation Integration', () => {
 
       const collector = new DNSCollector(config, db);
       patchResolver(collector, queryResults);
+
+      // TB-2: DelegationCollector constructs its own DNSResolver, whose NS
+      // queries now flow through queryWithDnsPacket (dns-packet raw path).
+      // Return the canned NS set from every vantage so parentNs/nsServers are
+      // non-empty and the authoritative servers agree (no divergence). The
+      // DNSCollector-resolver patch above does not reach this fresh resolver.
+      mockQueryWithDnsPacket.mockImplementation(async (query: { type: string }) => {
+        if (query.type === 'NS') {
+          return buildDnsPacketSections(
+            [
+              makeAnswer('example.com', 'NS', 'ns1.example.com'),
+              makeAnswer('example.com', 'NS', 'ns2.example.com'),
+            ],
+            {
+              additional: [
+                makeAnswer('ns1.example.com', 'A', '192.0.2.1'),
+                makeAnswer('ns2.example.com', 'A', '192.0.2.2'),
+              ],
+            }
+          );
+        }
+        return buildDnsPacketSections([]);
+      });
 
       const result = await collector.collect();
 
