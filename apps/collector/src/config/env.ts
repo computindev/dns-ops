@@ -157,6 +157,19 @@ const ENV_VARS: EnvVarDef[] = [
     },
     default: '5',
   },
+  {
+    name: 'DNS_QUERY_CONCURRENCY',
+    required: false,
+    description: 'Maximum concurrent DNS queries per collection (default: 5)',
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n) || n < 1 || n > 50) {
+        return 'Must be between 1 and 50';
+      }
+      return null;
+    },
+    default: '5',
+  },
 ];
 
 /**
@@ -361,6 +374,28 @@ export function getEnvConfig(processEnv: Record<string, string | undefined> = pr
       concurrency: processEnv.PROBE_CONCURRENCY ? parseInt(processEnv.PROBE_CONCURRENCY, 10) : 5,
     },
   };
+}
+
+/**
+ * Default DNS query concurrency bound used when DNS_QUERY_CONCURRENCY is unset.
+ */
+const DEFAULT_DNS_QUERY_CONCURRENCY = 5;
+
+/**
+ * Read and validate the DNS query concurrency bound from the environment.
+ *
+ * Falls back to DEFAULT_DNS_QUERY_CONCURRENCY (5) when unset or invalid so the
+ * collector never runs unbounded DNS fan-out. DNSCollector accepts an explicit
+ * override for tests; production reads this.
+ */
+export function getDnsQueryConcurrency(
+  processEnv: Record<string, string | undefined> = process.env
+): number {
+  const raw = processEnv.DNS_QUERY_CONCURRENCY;
+  if (raw === undefined || raw === '') return DEFAULT_DNS_QUERY_CONCURRENCY;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 1) return DEFAULT_DNS_QUERY_CONCURRENCY;
+  return n;
 }
 
 /**
