@@ -10,6 +10,7 @@ import { and, eq, gt } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types.js';
+import { getWebLogger } from './error-tracking.js';
 
 function getRuntimeSecret(
   c: Context<Env>,
@@ -110,6 +111,12 @@ function extractCloudflareAccess(
 
   const domain = cfEmail.split('@')[1]?.toLowerCase();
   if (!domain) return null;
+
+  getWebLogger().warn('CF-Access header trust path would authenticate request', {
+    cfAccessEmail: cfEmail,
+    cfAccessUserId: cfUserId,
+    wouldAuthenticate: true,
+  });
 
   return {
     tenantId: domain,
@@ -243,6 +250,11 @@ export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
     if (emailRegex.test(cfEmail) && isAdminEmail(c, cfEmail)) {
       const domain = cfEmail.split('@')[1];
       if (domain) {
+        getWebLogger().warn('CF-Access header trust path would grant internal access', {
+          path: c.req.path,
+          cfAccessEmail: cfEmail,
+          wouldGrantInternal: true,
+        });
         const tenantUUID = await getTenantUUID(domain);
         c.set('tenantId', tenantUUID);
         c.set('actorId', cfUserId);

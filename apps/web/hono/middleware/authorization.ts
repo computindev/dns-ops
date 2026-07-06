@@ -8,6 +8,7 @@
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types.js';
+import { getWebLogger } from './error-tracking.js';
 
 function getRuntimeSecret(
   c: Context<Env>,
@@ -130,6 +131,11 @@ export const requireAdminAccess = createMiddleware<Env>(async (c, next) => {
   // Check for Cloudflare Access perimeter or explicit admin allowlist.
   const cfEmail = getCloudflareAccessEmail(c);
   if (cfEmail && isAdminEmail(c, cfEmail)) {
+    getWebLogger().warn('CF-Access header trust path would grant admin access', {
+      path: c.req.path,
+      cfAccessEmail: cfEmail,
+      wouldGrantAdmin: true,
+    });
     return next();
   }
 
