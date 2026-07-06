@@ -63,7 +63,7 @@ function createFinding(overrides: Partial<Finding>): Finding {
     evidence: overrides.evidence ?? [],
     ruleId: overrides.ruleId ?? 'rule-1',
     ruleVersion: overrides.ruleVersion ?? '1.0.0',
-    rulesetVersionId: overrides.rulesetVersionId ?? null, // For idempotent re-evaluation
+    rulesetVersionId: overrides.rulesetVersionId ?? 'ruleset-version-1', // NOT NULL since migration 0011
     acknowledgedAt: overrides.acknowledgedAt ?? null,
     acknowledgedBy: overrides.acknowledgedBy ?? null,
     falsePositive: overrides.falsePositive ?? false,

@@ -30,7 +30,12 @@ export interface RuleContext {
 }
 
 export interface RuleResult {
-  finding?: Omit<NewFinding, 'id' | 'snapshotId' | 'createdAt'>;
+  // `rulesetVersionId` is omitted alongside id/snapshotId/createdAt because it
+  // is resolved by the CALLER (collector/web) from the active ruleset version at
+  // persistence time — rules do not know it. This keeps Rule.evaluate's return
+  // shape unchanged while allowing findings.ruleset_version_id to be NOT NULL
+  // (migration 0011).
+  finding?: Omit<NewFinding, 'id' | 'snapshotId' | 'createdAt' | 'rulesetVersionId'>;
   suggestions?: Omit<NewSuggestion, 'id' | 'findingId' | 'createdAt'>[];
 }
 

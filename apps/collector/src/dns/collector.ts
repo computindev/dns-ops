@@ -655,6 +655,9 @@ export class DNSCollector {
       }
 
       // Persist findings
+      // rulesetVersionId is required (NOT NULL since migration 0011) and is
+      // resolved above from the active ruleset version — thread it through so
+      // every persisted finding is linked for idempotent re-evaluation.
       const findingsToInsert: NewFinding[] = findings.map((f) => ({
         snapshotId,
         type: f.type,
@@ -668,6 +671,7 @@ export class DNSCollector {
         evidence: f.evidence,
         ruleId: f.ruleId,
         ruleVersion: f.ruleVersion,
+        rulesetVersionId,
       }));
 
       const persistedFindings = await this.findingRepo.createMany(findingsToInsert);
