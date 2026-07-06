@@ -44,7 +44,9 @@ app.use('/api/*', async (c, next) => {
   if (c.req.path === '/api/health' || c.req.path.startsWith('/api/auth/')) {
     return next();
   }
-  return requireAuthMiddleware(c, async () => enforceTenantIsolation(c, next));
+  return requireAuthMiddleware(c, async () => {
+    await enforceTenantIsolation(c, next);
+  });
 });
 
 app.route('/api', apiRoutes);
