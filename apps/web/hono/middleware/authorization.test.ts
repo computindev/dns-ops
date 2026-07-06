@@ -199,13 +199,14 @@ describe('Authorization Middleware', () => {
       expect(res.status).toBe(403);
     });
 
-    it('should allow requests with allowlisted Cloudflare Access headers', async () => {
+    it('rejects allowlisted CF-Access headers without session-backed identity (TB-1)', async () => {
       process.env.ADMIN_EMAILS = 'user@example.com';
 
+      // Auth context present (clears the 401 gate) but actorEmail is NOT set,
+      // so only the (now-removed) CF header path could have granted admin.
       app.use('*', (c, next) => {
         c.set('tenantId', 'tenant-123');
         c.set('actorId', 'cf-user-id');
-        c.set('actorEmail', 'user@example.com');
         return next();
       });
       app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
@@ -217,7 +218,7 @@ describe('Authorization Middleware', () => {
         },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
     });
 
     it('should reject Cloudflare Access identity when email is not allowlisted', async () => {

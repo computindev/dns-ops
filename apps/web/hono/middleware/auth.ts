@@ -13,22 +13,10 @@ import type { Env } from '../types.js';
 
 function getRuntimeSecret(
   c: Context<Env>,
-  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET' | 'ADMIN_EMAILS'
+  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET'
 ): string | undefined {
   const bindingValue = c.env?.[name];
   return typeof bindingValue === 'string' && bindingValue.trim() ? bindingValue : process.env[name];
-}
-
-function isAdminEmail(c: Context<Env>, actorEmail: string): boolean {
-  const adminEmails = getRuntimeSecret(c, 'ADMIN_EMAILS');
-  if (!adminEmails) return false;
-
-  const normalizedActorEmail = actorEmail.trim().toLowerCase();
-  return adminEmails
-    .split(',')
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(normalizedActorEmail);
 }
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -94,31 +82,6 @@ async function extractDatabaseSession(
 }
 
 /**
- * Extract auth from Cloudflare Access headers
- */
-function extractCloudflareAccess(
-  c: Context<Env>
-): { tenantId: string; actorId: string; actorEmail?: string } | null {
-  const cfEmail = c.req.header('CF-Access-Authenticated-User-Email');
-  const cfUserId = c.req.header('CF-Access-Authenticated-User-Id');
-
-  if (!cfEmail || !cfUserId) return null;
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(cfEmail)) return null;
-
-  const domain = cfEmail.split('@')[1]?.toLowerCase();
-  if (!domain) return null;
-
-  return {
-    tenantId: domain,
-    actorId: cfUserId,
-    actorEmail: cfEmail,
-  };
-}
-
-/**
  * Extract auth from API key header
  */
 function extractApiKey(c: Context<Env>): { tenantId: string; actorId: string } | null {
@@ -157,11 +120,12 @@ function extractDevBypass(c: Context<Env>): { tenantId: string; actorId: string 
  * Auth middleware - populates auth context
  */
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {
-  // Priority: database session > CF Access > API key > dev bypass
+  // Priority: database session > API key > dev bypass (CF-Access headers are
+  // forgeable and no longer authenticate — TB-1).
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext = extractCloudflareAccess(c) || extractApiKey(c) || extractDevBypass(c);
+    authContext = extractApiKey(c) || extractDevBypass(c);
   }
 
   if (authContext) {
@@ -190,11 +154,12 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
  * Require auth middleware - rejects requests without authentication
  */
 export const requireAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  // Priority: database session > CF Access > API key > dev bypass
+  // Priority: database session > API key > dev bypass (CF-Access headers are
+  // forgeable and no longer authenticate — TB-1).
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext = extractCloudflareAccess(c) || extractApiKey(c) || extractDevBypass(c);
+    authContext = extractApiKey(c) || extractDevBypass(c);
   }
 
   if (!authContext) {
@@ -234,25 +199,7 @@ export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
     return;
   }
 
-  // Allow explicitly allowlisted Cloudflare Access users as an alternative for internal routes.
-  const cfEmail = c.req.header('CF-Access-Authenticated-User-Email');
-  const cfUserId = c.req.header('CF-Access-Authenticated-User-Id');
-
-  if (cfEmail && cfUserId) {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (emailRegex.test(cfEmail) && isAdminEmail(c, cfEmail)) {
-      const domain = cfEmail.split('@')[1];
-      if (domain) {
-        const tenantUUID = await getTenantUUID(domain);
-        c.set('tenantId', tenantUUID);
-        c.set('actorId', cfUserId);
-        c.set('actorEmail', cfEmail);
-        await next();
-        return;
-      }
-    }
-  }
-
+  // CF-Access headers are forgeable and no longer grant internal access (TB-1).
   return c.json({ error: 'Forbidden', message: 'Internal access only.' }, 403);
 });
 

@@ -12,7 +12,11 @@
  * - Returns HTTP 503 with INFRA_CONFIG_MISSING code for unconfigured tools
  */
 
-import { LegacyAccessLogRepository, ShadowComparisonRepository } from '@dns-ops/db';
+import {
+  DomainRepository,
+  LegacyAccessLogRepository,
+  ShadowComparisonRepository,
+} from '@dns-ops/db';
 import { findings as findingsTable, snapshots as snapshotsTable } from '@dns-ops/db/schema';
 import { isValidDomain as isValidDomainCanonical } from '@dns-ops/parsing';
 import { eq } from 'drizzle-orm';
@@ -494,16 +498,24 @@ legacyToolsRoutes.post('/bulk-deeplinks', requireAuth, async (c) => {
 legacyToolsRoutes.get('/shadow-stats', requireAuth, async (c) => {
   const db = c.get('db');
   const domain = c.req.query('domain');
+  const tenantId = c.get('tenantId');
+
+  // Defense in depth: requireAuth + enforceTenantIsolation already guarantee a
+  // tenant context, but every downstream query depends on this value, so we
+  // fail closed if it is somehow absent.
+  if (!tenantId) {
+    return c.json({ error: 'Unauthorized', message: 'Tenant context required.' }, 401);
+  }
 
   try {
     const legacyLogRepo = new LegacyAccessLogRepository(db);
     const shadowRepo = new ShadowComparisonRepository(db);
 
-    // Get legacy access statistics
-    const legacyStats = await legacyLogRepo.getStats();
+    // Get legacy access statistics (tenant-scoped)
+    const legacyStats = await legacyLogRepo.getStats(tenantId);
 
-    // Get shadow comparison statistics
-    const shadowStats = await shadowRepo.getStats();
+    // Get shadow comparison statistics (tenant-scoped)
+    const shadowStats = await shadowRepo.getStats(tenantId);
 
     // If domain is specified, get domain-specific stats
     let domainStats = null;
@@ -517,28 +529,33 @@ legacyToolsRoutes.get('/shadow-stats', requireAuth, async (c) => {
     }> = [];
 
     if (domain) {
-      // Get legacy access logs for this domain
-      const domainLogs = await legacyLogRepo.findByDomain(domain);
+      // Tenant-scoped domain rows: foreign-tenant and NULL-tenant (system)
+      // rows are excluded by the repositories.
+      const domainLogs = await legacyLogRepo.findByDomain(domain, tenantId);
+      const domainComparisons = await shadowRepo.findByDomain(domain, tenantId);
 
-      // Get shadow comparisons for this domain
-      const domainComparisons = await shadowRepo.findByDomain(domain);
-
-      // Get latest snapshot for this domain to count findings
-      const domainSnapshots = await db.selectWhere(
-        snapshotsTable,
-        eq(snapshotsTable.domainName, domain)
-      );
-      // Sort by createdAt desc and get the latest
-      domainSnapshots.sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-
-      if (domainSnapshots.length > 0) {
-        const findings = await db.selectWhere(
-          findingsTable,
-          eq(findingsTable.snapshotId, domainSnapshots[0].id)
+      // Snapshots carry no tenantId, so resolve domain ownership before
+      // counting findings. Without this gate a caller who knows another
+      // tenant's domain name could read that tenant's findings count.
+      const domainRepo = new DomainRepository(db);
+      const ownedDomain = await domainRepo.findByNameForTenant(domain.toLowerCase(), tenantId);
+      if (ownedDomain) {
+        const domainSnapshots = await db.selectWhere(
+          snapshotsTable,
+          eq(snapshotsTable.domainName, domain)
         );
-        newFindingsCount = findings.length;
+        // Sort by createdAt desc and get the latest
+        domainSnapshots.sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        if (domainSnapshots.length > 0) {
+          const findings = await db.selectWhere(
+            findingsTable,
+            eq(findingsTable.snapshotId, domainSnapshots[0].id)
+          );
+          newFindingsCount = findings.length;
+        }
       }
 
       // Extract discrepancies from mismatched comparisons

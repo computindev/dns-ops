@@ -229,16 +229,16 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
     { path: '/api/mail/providers/google/selectors', method: 'POST' },
   ];
 
-  describe('Allowlisted Cloudflare Access identity is sufficient', () => {
+  describe('Allowlisted Cloudflare Access identity is no longer sufficient (TB-1)', () => {
     for (const route of ADMIN_ROUTES) {
-      it(`${route.method} ${route.path} - passes with allowlisted CF identity`, async () => {
+      it(`${route.method} ${route.path} - rejected with only CF identity`, async () => {
         process.env.ADMIN_EMAILS = 'internal@cloudflare.com';
         const app = new Hono<Env>();
         app.use('*', async (c, next) => {
           c.set('db', createMockDb() as Env['Variables']['db']);
           c.set('tenantId', 'tenant-1');
           c.set('actorId', 'user-1');
-          // No actorEmail set — only CF header
+          // No actorEmail set — only CF header, which no longer grants admin (TB-1).
           await next();
         });
         app.route('/api', apiRoutes);
@@ -251,9 +251,8 @@ describe('requireAdminAccess OR logic (AUTH-006 bugfix)', () => {
           },
         });
 
-        // Should NOT be auth-blocked — allowlisted CF Access identity grants access.
-        expect(res.status).not.toBe(401);
-        expect(res.status).not.toBe(403);
+        // CF-Access headers are forgeable and no longer grant admin (TB-1).
+        expect(res.status).toBe(403);
       });
     }
   });
@@ -429,7 +428,7 @@ describe('Full API auth chain hardening regressions', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects database-session users who spoof only the CF Access email header', async () => {
+  it('rejects non-admin database-session users (CF email header ignored, TB-1)', async () => {
     const app = createAuthedApiApp(createSessionDb('user@example.com', TENANT_UUID));
 
     const res = await app.request('/api/health/detailed', {

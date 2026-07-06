@@ -75,8 +75,9 @@ export class ShadowComparisonRepository {
   }
 
   /**
-   * Find comparisons by domain
-   * If tenantId is provided, filters by tenant ownership
+   * Find comparisons by domain.
+   * If tenantId is provided, returns ONLY that tenant's rows. NULL-tenant
+   * rows are system-only and are never returned to a tenant caller.
    */
   async findByDomain(domain: string, tenantId?: string): Promise<ShadowComparison[]> {
     let results = await this.db.selectWhere(
@@ -84,9 +85,10 @@ export class ShadowComparisonRepository {
       eq(shadowComparisons.domain, domain)
     );
 
-    // Tenant isolation filter
+    // Tenant isolation: scope to the caller's rows. NULL-tenant (system) rows
+    // are excluded so they can never leak across tenants.
     if (tenantId) {
-      results = results.filter((c) => !c.tenantId || c.tenantId === tenantId);
+      results = results.filter((c) => c.tenantId === tenantId);
     }
 
     // Sort by comparedAt descending
@@ -202,16 +204,19 @@ export class LegacyAccessLogRepository {
   }
 
   /**
-   * Find logs by domain
+   * Find logs by domain.
+   * Returns ONLY the caller tenant's rows; NULL-tenant (system) rows are
+   * system-only and never returned to a tenant caller.
    */
-  async findByDomain(domain: string): Promise<LegacyAccessLog[]> {
+  async findByDomain(domain: string, tenantId: string): Promise<LegacyAccessLog[]> {
     const results = await this.db.selectWhere(
       legacyAccessLogs,
       eq(legacyAccessLogs.domain, domain)
     );
+    const scoped = results.filter((l) => l.tenantId === tenantId);
     // Sort by requestedAt descending
-    results.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
-    return results;
+    scoped.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+    return scoped;
   }
 
   /**

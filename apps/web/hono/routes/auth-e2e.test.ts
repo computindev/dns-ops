@@ -152,7 +152,7 @@ describe('Auth E2E — full lifecycle', () => {
     expect(body.tenantId).toBe('uuid-for-dev-tenant');
   });
 
-  it('CF Access headers populate auth context', async () => {
+  it('CF Access headers no longer populate auth context (TB-1)', async () => {
     const res = await app.request('/api/optional', {
       headers: {
         'CF-Access-Authenticated-User-Email': 'user@cf.example.com',
@@ -162,10 +162,11 @@ describe('Auth E2E — full lifecycle', () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.tenantId).toBe('uuid-for-cf.example.com');
+    // CF-Access headers are forgeable and no longer authenticate (TB-1).
+    expect(body.tenantId).toBeNull();
   });
 
-  it('protected route with CF Access returns 200', async () => {
+  it('protected route rejects CF Access headers (TB-1)', async () => {
     const res = await app.request('/api/protected', {
       headers: {
         'CF-Access-Authenticated-User-Email': 'user@cf.example.com',
@@ -173,11 +174,7 @@ describe('Auth E2E — full lifecycle', () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body.ok).toBe(true);
-    expect(body.tenantId).toBe('uuid-for-cf.example.com');
-    expect(body.actorId).toBe('cf-user-123');
+    expect(res.status).toBe(401);
   });
 
   it('API key auth populates context and allows protected access', async () => {

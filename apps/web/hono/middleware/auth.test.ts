@@ -46,7 +46,8 @@ describe('Auth Middleware', () => {
   });
 
   describe('authMiddleware', () => {
-    it('should extract auth from Cloudflare Access headers', async () => {
+    it('does NOT extract auth from Cloudflare Access headers (TB-1)', async () => {
+      // CF-Access headers are forgeable and no longer authenticate.
       app.use('*', authMiddleware);
       app.get('/test', (c) => {
         return c.json({
@@ -65,12 +66,12 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-example.com'); // Domain extracted from email
-      expect(body.actorId).toBe('cf-user-123');
-      expect(body.actorEmail).toBe('user@example.com');
+      expect(body.tenantId).toBeUndefined();
+      expect(body.actorId).toBeUndefined();
+      expect(body.actorEmail).toBeUndefined();
     });
 
-    it('should reject CF Access without proper email format', async () => {
+    it('does not extract auth from CF Access headers regardless of format (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => {
         return c.json({
@@ -88,7 +89,7 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      // Should not extract auth due to invalid email format
+      // CF-Access headers are ignored entirely (TB-1).
       expect(body.tenantId).toBeUndefined();
     });
 
@@ -182,7 +183,7 @@ describe('Auth Middleware', () => {
       expect(body.actorId).toBeUndefined();
     });
 
-    it('should prioritize CF Access over API key', async () => {
+    it('ignores CF Access headers and falls back to API key (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => {
         return c.json({
@@ -202,8 +203,8 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-priority.com');
-      expect(body.actorId).toBe('cf-priority');
+      expect(body.tenantId).toBe('uuid-for-other-tenant');
+      expect(body.actorId).toBe('other-actor');
     });
 
     it('should allow requests without auth (sets nothing)', async () => {
@@ -236,7 +237,7 @@ describe('Auth Middleware', () => {
       expect(body.error).toBe('Unauthorized');
     });
 
-    it('should allow requests with valid CF Access', async () => {
+    it('rejects requests carrying only CF Access headers (TB-1)', async () => {
       app.use('*', requireAuthMiddleware);
       app.get('/protected', (c) => c.json({ ok: true }));
 
@@ -247,7 +248,7 @@ describe('Auth Middleware', () => {
         },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     });
 
     it('should allow requests with valid API key', async () => {
@@ -320,7 +321,7 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(403);
     });
 
-    it('should allow requests with allowlisted Cloudflare Access identity', async () => {
+    it('rejects allowlisted Cloudflare Access identity on internal routes (TB-1)', async () => {
       process.env.ADMIN_EMAILS = 'user@internal.com';
       app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
 
@@ -331,7 +332,7 @@ describe('Auth Middleware', () => {
         },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
     });
 
     it('should reject Cloudflare Access users that are not allowlisted for internal routes', async () => {
@@ -438,7 +439,7 @@ describe('Auth Middleware', () => {
       expect(body.tenantId).toBe('uuid-for-my-tenant');
     });
 
-    it('should normalize domain-based tenant from CF Access', async () => {
+    it('does not derive a tenant from CF Access headers (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
 
@@ -451,12 +452,12 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-acme.com');
+      expect(body.tenantId).toBeUndefined();
     });
   });
 
   describe('Edge Cases', () => {
-    it('should lowercase CF Access email domain before tenant normalization', async () => {
+    it('ignores CF Access headers entirely (no tenant derived) (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
 
@@ -469,7 +470,7 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-example.com');
+      expect(body.tenantId).toBeUndefined();
     });
 
     it('should return 401 in authMiddleware when getTenantUUID throws', async () => {
@@ -480,8 +481,7 @@ describe('Auth Middleware', () => {
 
       const res = await app.request('/test', {
         headers: {
-          'CF-Access-Authenticated-User-Email': 'user@bad-tenant.com',
-          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+          'X-API-Key': 'bad-tenant:actor:secret',
         },
       });
 
@@ -498,8 +498,7 @@ describe('Auth Middleware', () => {
 
       const res = await app.request('/protected', {
         headers: {
-          'CF-Access-Authenticated-User-Email': 'user@bad-tenant.com',
-          'CF-Access-Authenticated-User-Id': 'cf-user-123',
+          'X-API-Key': 'bad-tenant:actor:secret',
         },
       });
 
@@ -521,7 +520,7 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(401);
     });
 
-    it('should fall through to CF Access when database session lookup throws', async () => {
+    it('does NOT fall through to CF Access when database session lookup throws (TB-1)', async () => {
       app.use('*', async (c, next) => {
         c.set('db', {
           getDrizzle: () => ({
@@ -552,11 +551,11 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-fallback.com');
-      expect(body.actorId).toBe('cf-fallback');
+      expect(body.tenantId).toBeUndefined();
+      expect(body.actorId).toBeUndefined();
     });
 
-    it('should handle CF Access email with plus sign', async () => {
+    it('ignores CF Access headers with plus-addressed email (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) =>
         c.json({ tenantId: c.get('tenantId'), actorEmail: c.get('actorEmail') })
@@ -571,8 +570,8 @@ describe('Auth Middleware', () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-example.com');
-      expect(body.actorEmail).toBe('user+tag@example.com');
+      expect(body.tenantId).toBeUndefined();
+      expect(body.actorEmail).toBeUndefined();
     });
   });
 });

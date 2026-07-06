@@ -17,16 +17,6 @@ function getRuntimeSecret(
   return typeof bindingValue === 'string' && bindingValue.trim() ? bindingValue : process.env[name];
 }
 
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function getCloudflareAccessEmail(c: Context<Env>): string | null {
-  const cfEmail = c.req.header('CF-Access-Authenticated-User-Email');
-  const cfUserId = c.req.header('CF-Access-Authenticated-User-Id');
-  return cfEmail && cfUserId && isValidEmail(cfEmail) ? cfEmail : null;
-}
-
 function isAdminEmail(c: Context<Env>, actorEmail: string): boolean {
   const adminEmails = getRuntimeSecret(c, 'ADMIN_EMAILS');
   if (!adminEmails) return false;
@@ -127,12 +117,8 @@ export const requireAdminAccess = createMiddleware<Env>(async (c, next) => {
     );
   }
 
-  // Check for Cloudflare Access perimeter or explicit admin allowlist.
-  const cfEmail = getCloudflareAccessEmail(c);
-  if (cfEmail && isAdminEmail(c, cfEmail)) {
-    return next();
-  }
-
+  // Explicit admin allowlist (session-backed actorEmail only). CF-Access
+  // headers are forgeable and no longer grant admin (TB-1).
   if (actorEmail && isAdminEmail(c, actorEmail)) {
     return next();
   }
