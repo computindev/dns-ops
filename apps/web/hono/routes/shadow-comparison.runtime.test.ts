@@ -418,6 +418,8 @@ describe('shadowComparisonRoutes runtime', () => {
   describe('GET /domain/:domain', () => {
     it('returns comparisons for a domain', async () => {
       const state = emptyState();
+      // TB-1: ShadowComparisonRepository.findByDomain is strictly tenant-scoped
+      // (c.tenantId === tenantId), so rows must carry the requesting tenant.
       state.shadowComparisons = [
         {
           id: 'sc-1',
@@ -426,6 +428,7 @@ describe('shadowComparisonRoutes runtime', () => {
           summary: 'OK',
           comparedAt: new Date(),
           adjudication: null,
+          tenantId: 'tenant-1',
         },
         {
           id: 'sc-2',
@@ -434,6 +437,7 @@ describe('shadowComparisonRoutes runtime', () => {
           summary: 'OK',
           comparedAt: new Date(),
           adjudication: null,
+          tenantId: 'tenant-1',
         },
       ];
       const app = createApp(state);
