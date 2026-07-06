@@ -8,8 +8,8 @@
  * TB-1 (AuthZ hardening).
  */
 
-import type { IDatabaseAdapter } from '../database/index.js';
 import { describe, expect, it, vi } from 'vitest';
+import type { IDatabaseAdapter } from '../database/index.js';
 import { LegacyAccessLogRepository } from './parity.js';
 
 const TENANT_A = 'tenant-aaaa-0001';
