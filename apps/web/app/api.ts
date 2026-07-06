@@ -14,14 +14,14 @@ import authRoutes from '../hono/routes/signup.js';
 import type { Env } from '../hono/types.js';
 
 if (typeof process !== 'undefined' && process.env) {
-  try {
-    assertEnvValid();
-  } catch (error) {
-    if (process.env.NODE_ENV === 'development') {
-      throw error;
-    }
-    console.warn('[ENV] Skipping env validation in production runtime');
-  }
+  // A misconfigured environment must crash the runtime on boot in every
+  // environment, so production never serves traffic with invalid config
+  // (previously this soft-skipped in production — exactly backwards).
+  //
+  // This guard runs only at server runtime: the bundler does not execute
+  // module-level side effects during `bun run build`, and no test imports
+  // this module, so there is no build-time or test-mode soft-skip to preserve.
+  assertEnvValid();
 }
 
 const app = new Hono<Env>();

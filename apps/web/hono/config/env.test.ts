@@ -165,6 +165,28 @@ describe('assertEnvValid', () => {
       })
     ).not.toThrow();
   });
+
+  // Production boundary pair (TB-0 Fix 3): a misconfigured production runtime
+  // must crash on boot, not silently serve traffic. assertEnvValid is the gate
+  // apps/web/app/api.ts invokes at module load — these guard its contract.
+  it('throws in production when INTERNAL_SECRET is unset (boot must crash)', () => {
+    expect(() =>
+      assertEnvValid({
+        NODE_ENV: 'production',
+        COLLECTOR_URL: 'https://collector.example.com',
+      })
+    ).toThrow('Environment validation failed');
+  });
+
+  it('does not throw in production with valid required env', () => {
+    expect(() =>
+      assertEnvValid({
+        NODE_ENV: 'production',
+        COLLECTOR_URL: 'https://collector.example.com',
+        INTERNAL_SECRET: 'super-secret-key-12345678',
+      })
+    ).not.toThrow();
+  });
 });
 
 describe('getEnvConfig', () => {
