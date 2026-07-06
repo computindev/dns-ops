@@ -7,6 +7,7 @@ import {
   createErrorHandler,
   createNotFoundHandler,
   dbMiddleware,
+  enforceTenantIsolation,
   requireAuthMiddleware,
 } from '../hono/middleware/index.js';
 import { apiRoutes } from '../hono/routes/api.js';
@@ -35,12 +36,15 @@ app.use('*', authMiddleware);
 // Public API routes (no auth required)
 app.route('/api/auth', authRoutes);
 
-// All other API routes require authentication
+// All other API routes require authentication. enforceTenantIsolation runs as
+// a structural chokepoint right after auth populates the tenant context, so
+// tenant scoping is guaranteed for every authenticated /api route and is not
+// left to per-handler memory (the gap that let the /shadow-stats leak slip in).
 app.use('/api/*', async (c, next) => {
   if (c.req.path === '/api/health' || c.req.path.startsWith('/api/auth/')) {
     return next();
   }
-  return requireAuthMiddleware(c, next);
+  return requireAuthMiddleware(c, async () => enforceTenantIsolation(c, next));
 });
 
 app.route('/api', apiRoutes);
