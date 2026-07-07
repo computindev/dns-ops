@@ -671,6 +671,7 @@ export class DNSCollector {
         evidence: f.evidence,
         ruleId: f.ruleId,
         ruleVersion: f.ruleVersion,
+        subjectKey: f.subjectKey,
         rulesetVersionId,
       }));
 

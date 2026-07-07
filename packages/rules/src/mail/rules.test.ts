@@ -101,7 +101,7 @@ describe('MX Presence Rule', () => {
       recordSets: [rs],
     });
 
-    const result = mxPresenceRule.evaluate(context);
+    const result = mxPresenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.mx-present');
@@ -116,7 +116,7 @@ describe('MX Presence Rule', () => {
     });
     const context = createMockContext({ observations: [mxObs] });
 
-    const result = mxPresenceRule.evaluate(context);
+    const result = mxPresenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.null-mx-configured');
@@ -133,7 +133,7 @@ describe('MX Presence Rule', () => {
     });
     const context = createMockContext({ observations: [mxObs] });
 
-    const result = mxPresenceRule.evaluate(context);
+    const result = mxPresenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-mx-record');
@@ -151,7 +151,7 @@ describe('MX Presence Rule', () => {
     });
     const context = createMockContext({ observations: [mxObs] });
 
-    const result = mxPresenceRule.evaluate(context);
+    const result = mxPresenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.mx-query-failed');
@@ -181,7 +181,7 @@ describe('MX Presence Rule', () => {
       recordSets: [rs],
     });
 
-    const result = mxPresenceRule.evaluate(context);
+    const result = mxPresenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.mx-present');
@@ -203,7 +203,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.spf-present');
@@ -221,7 +221,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-spf-record');
@@ -239,7 +239,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.spf-present');
@@ -255,7 +255,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.spf-present');
@@ -278,7 +278,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     // Note: Current parseSPF implementation is lenient and returns valid for
     // syntactically incorrect mechanisms. A stricter parser would return 'mail.spf-malformed'.
@@ -296,7 +296,7 @@ describe('SPF Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = spfRule.evaluate(context);
+    const result = spfRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.spf-query-failed');
@@ -325,7 +325,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dmarc-present');
@@ -348,7 +348,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dmarc-present');
@@ -366,7 +366,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-dmarc-record');
@@ -383,7 +383,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dmarc-malformed');
@@ -400,7 +400,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.description).toContain('No aggregate report');
@@ -421,7 +421,7 @@ describe('DMARC Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = dmarcRule.evaluate(context);
+    const result = dmarcRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.description).toContain('50%');
@@ -448,7 +448,7 @@ describe('DKIM Rule', () => {
     });
     const context = createMockContext({ observations: [dkimObs] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dkim-keys-present');
@@ -458,7 +458,7 @@ describe('DKIM Rule', () => {
   it('should handle no DKIM selectors queried', () => {
     const context = createMockContext({ observations: [] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-dkim-queried');
@@ -480,7 +480,7 @@ describe('DKIM Rule', () => {
     });
     const context = createMockContext({ observations: [dkimObs, dkimObs2] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dkim-no-valid-keys');
@@ -495,7 +495,7 @@ describe('DKIM Rule', () => {
     });
     const context = createMockContext({ observations: [dkimObs] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dkim-no-valid-keys');
@@ -511,7 +511,7 @@ describe('DKIM Rule', () => {
     });
     const context = createMockContext({ observations: [dkimObs] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dkim-no-valid-keys');
@@ -527,7 +527,7 @@ describe('DKIM Rule', () => {
     });
     const context = createMockContext({ observations: [dkimObs] });
 
-    const result = dkimRule.evaluate(context);
+    const result = dkimRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.dkim-no-valid-keys');
@@ -549,7 +549,7 @@ describe('MTA-STS Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = mtaStsRule.evaluate(context);
+    const result = mtaStsRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.mta-sts-present');
@@ -564,7 +564,7 @@ describe('MTA-STS Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = mtaStsRule.evaluate(context);
+    const result = mtaStsRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-mta-sts');
@@ -593,7 +593,7 @@ describe('TLS-RPT Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = tlsRptRule.evaluate(context);
+    const result = tlsRptRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.tls-rpt-present');
@@ -608,7 +608,7 @@ describe('TLS-RPT Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = tlsRptRule.evaluate(context);
+    const result = tlsRptRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-tls-rpt');
@@ -636,7 +636,7 @@ describe('BIMI Rule', () => {
     });
     const context = createMockContext({ observations: [txtObs] });
 
-    const result = bimiRule.evaluate(context);
+    const result = bimiRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.bimi-present');
@@ -646,7 +646,7 @@ describe('BIMI Rule', () => {
   it('should not report missing BIMI (info only)', () => {
     const context = createMockContext({ observations: [] });
 
-    const result = bimiRule.evaluate(context);
+    const result = bimiRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });

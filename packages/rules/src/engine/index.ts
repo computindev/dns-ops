@@ -30,12 +30,21 @@ export interface RuleContext {
 }
 
 export interface RuleResult {
-  // `rulesetVersionId` is omitted alongside id/snapshotId/createdAt because it
-  // is resolved by the CALLER (collector/web) from the active ruleset version at
-  // persistence time — rules do not know it. This keeps Rule.evaluate's return
-  // shape unchanged while allowing findings.ruleset_version_id to be NOT NULL
-  // (migration 0011).
-  finding?: Omit<NewFinding, 'id' | 'snapshotId' | 'createdAt' | 'rulesetVersionId'>;
+  // Discriminator for WHAT this finding is about within its (rule, type) —
+  // a lowercased DNS query name|type, a CNAME owner name, a DKIM selector, a
+  // bounded hash for CAA (never the raw value), or '' for domain-level
+  // singletons. Lets one rule emit multiple DISTINCT findings per snapshot and
+  // dedupe correctly via finding_unique_idx (migration 0012). The engine stamps
+  // this onto the persisted finding's subject_key.
+  subjectKey: string;
+  // `rulesetVersionId` is omitted alongside id/snapshotId/createdAt/subjectKey
+  // because they are resolved by the CALLER: rulesetVersionId comes from the
+  // active ruleset version at persistence time, subjectKey is carried by the
+  // RuleResult itself, and the ids/timestamps are generated at persist time.
+  // This keeps Rule.evaluate's return shape stable while allowing
+  // findings.ruleset_version_id to be NOT NULL (migration 0011) and
+  // findings.subject_key to be NOT NULL (migration 0012).
+  finding?: Omit<NewFinding, 'id' | 'snapshotId' | 'createdAt' | 'rulesetVersionId' | 'subjectKey'>;
   suggestions?: Omit<NewSuggestion, 'id' | 'findingId' | 'createdAt'>[];
 }
 
@@ -45,7 +54,10 @@ export interface Rule {
   description: string;
   version: string;
   enabled: boolean;
-  evaluate: (context: RuleContext) => RuleResult | null;
+  // Returns EVERY finding the rule surfaces for this context (TB-3). An empty
+  // array means no findings. Previously this returned a single RuleResult | null,
+  // which discarded all but the first problem a rule detected.
+  evaluate: (context: RuleContext) => RuleResult[];
 }
 
 export interface Ruleset {
@@ -78,10 +90,17 @@ export class RulesEngine {
       if (!rule.enabled) continue;
 
       try {
-        const result = rule.evaluate(context);
-        if (result?.finding) {
+        // TB-3: a rule returns EVERY finding it surfaces (one per problem
+        // instance), disambiguated by subjectKey. Flatten them all into the
+        // snapshot's findings.
+        const results = rule.evaluate(context);
+        for (const result of results) {
+          if (!result.finding) continue;
+
           const finding: NewFinding = {
             ...result.finding,
+            // Carried from the RuleResult so it lands in findings.subject_key.
+            subjectKey: result.subjectKey,
             id: crypto.randomUUID(),
             snapshotId: context.snapshotId,
             createdAt: new Date(),

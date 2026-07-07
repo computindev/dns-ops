@@ -236,6 +236,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
       evidence: f.evidence,
       ruleId: f.ruleId,
       ruleVersion: f.ruleVersion,
+      subjectKey: f.subjectKey,
       rulesetVersionId, // Link to ruleset version for idempotent re-evaluation
     }));
 
@@ -915,6 +916,7 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
           evidence: f.evidence,
           ruleId: f.ruleId,
           ruleVersion: f.ruleVersion,
+          subjectKey: f.subjectKey,
           rulesetVersionId,
         }));
 

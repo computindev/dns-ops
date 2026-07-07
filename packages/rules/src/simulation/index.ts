@@ -83,6 +83,9 @@ export interface SimulationFinding {
   title: string;
   severity: string;
   ruleId: string;
+  // TB-3: disambiguates multiple findings from one rule/type so the diff can
+  // track each subject independently (mirrors findings.subject_key).
+  subjectKey: string;
 }
 
 // =============================================================================
@@ -101,7 +104,13 @@ export class SimulationEngine {
    */
   simulate(
     context: RuleContext,
-    findings: Array<{ type: string; title: string; severity: string; ruleId: string }>,
+    findings: Array<{
+      type: string;
+      title: string;
+      severity: string;
+      ruleId: string;
+      subjectKey: string;
+    }>,
     findingTypes?: string[]
   ): SimulationResult {
     // Detect provider from current records
@@ -164,13 +173,16 @@ export class SimulationEngine {
     const currentSimFindings = this.toSimFindings(currentResult.findings);
     const projectedSimFindings = this.toSimFindings(projectedResult.findings);
 
-    // Diff findings
-    const currentTypes = new Set(currentSimFindings.map((f) => f.type));
-    const projectedTypes = new Set(projectedSimFindings.map((f) => f.type));
+    // Diff findings by composite identity (ruleId|type|subjectKey). Pre-TB-3 this
+    // was type-only, which collapsed multiple same-type findings from one rule
+    // into a single resolved/remaining decision. subjectKey disambiguates them.
+    const simKey = (f: SimulationFinding) => `${f.ruleId}|${f.type}|${f.subjectKey}`;
+    const currentKeys = new Set(currentSimFindings.map(simKey));
+    const projectedKeys = new Set(projectedSimFindings.map(simKey));
 
-    const resolved = currentSimFindings.filter((f) => !projectedTypes.has(f.type));
-    const remaining = currentSimFindings.filter((f) => projectedTypes.has(f.type));
-    const newFindings = projectedSimFindings.filter((f) => !currentTypes.has(f.type));
+    const resolved = currentSimFindings.filter((f) => !projectedKeys.has(simKey(f)));
+    const remaining = currentSimFindings.filter((f) => projectedKeys.has(simKey(f)));
+    const newFindings = projectedSimFindings.filter((f) => !currentKeys.has(simKey(f)));
 
     return {
       domain: context.domainName,
@@ -533,6 +545,10 @@ export class SimulationEngine {
       title: f.title,
       severity: f.severity,
       ruleId: f.ruleId,
+      // NewFinding.subjectKey is optional on the insert type (DB default ''), but
+      // the engine always stamps it from RuleResult.subjectKey. Coalesce to be
+      // type-safe and match the persisted default.
+      subjectKey: f.subjectKey ?? '',
     }));
   }
 }

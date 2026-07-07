@@ -24,14 +24,14 @@ export const authoritativeFailureRule: Rule = {
   version: '1.0.0',
   enabled: true,
 
-  evaluate(context: RuleContext): RuleResult | null {
+  evaluate(context: RuleContext): RuleResult[] {
     const failures = context.observations.filter(
       (obs) =>
         obs.vantageType === 'authoritative' &&
         (obs.status === 'timeout' || obs.status === 'refused' || obs.status === 'error')
     );
 
-    if (failures.length === 0) return null;
+    if (failures.length === 0) return [];
 
     // Group by query name/type to report each unique query
     const failuresByQuery = groupByQuery(failures);
@@ -46,6 +46,7 @@ export const authoritativeFailureRule: Rule = {
       const confidence = failureTypes.length === queryFailures.length ? 'certain' : 'high';
 
       findings.push({
+        subjectKey: queryKey,
         finding: {
           type: `dns.authoritative-${failureTypes[0]}`,
           title: `Authoritative ${failureTypes[0]} for ${name} ${type}`,
@@ -75,8 +76,8 @@ export const authoritativeFailureRule: Rule = {
       });
     }
 
-    // Return the first finding (or aggregate if needed)
-    return findings[0] || null;
+    // TB-3: surface EVERY failing query, not just the first.
+    return findings;
   },
 };
 
@@ -91,11 +92,11 @@ export const authoritativeMismatchRule: Rule = {
   version: '1.0.0',
   enabled: true,
 
-  evaluate(context: RuleContext): RuleResult | null {
+  evaluate(context: RuleContext): RuleResult[] {
     // Look for inconsistent record sets that came from authoritative vantages
     const inconsistentRecordSets = context.recordSets.filter((rs) => !rs.isConsistent);
 
-    if (inconsistentRecordSets.length === 0) return null;
+    if (inconsistentRecordSets.length === 0) return [];
 
     const results: RuleResult[] = [];
 
@@ -114,6 +115,7 @@ export const authoritativeMismatchRule: Rule = {
       const blastRadius = inferBlastRadius(context.zoneManagement, rs.type);
 
       results.push({
+        subjectKey: `${rs.name.toLowerCase()}|${rs.type}`,
         finding: {
           type: 'dns.authoritative-mismatch',
           title: `Authoritative mismatch for ${rs.name} ${rs.type}`,
@@ -144,7 +146,8 @@ export const authoritativeMismatchRule: Rule = {
       });
     }
 
-    return results[0] || null;
+    // TB-3: surface EVERY inconsistent record set, not just the first.
+    return results;
   },
 };
 
@@ -159,7 +162,7 @@ export const recursiveAuthoritativeMismatchRule: Rule = {
   version: '1.0.0',
   enabled: true,
 
-  evaluate(context: RuleContext): RuleResult | null {
+  evaluate(context: RuleContext): RuleResult[] {
     // Group record sets by name and type
     const recordSetsByQuery = new Map<string, RecordSet>();
     for (const rs of context.recordSets) {
@@ -214,46 +217,49 @@ export const recursiveAuthoritativeMismatchRule: Rule = {
       }
     }
 
-    if (mismatches.length === 0) return null;
+    if (mismatches.length === 0) return [];
 
-    // Report the first mismatch (or could aggregate)
-    const mismatch = mismatches[0];
-    const blastRadius = inferBlastRadius(context.zoneManagement, mismatch.type);
-
-    return {
-      finding: {
-        type: 'dns.recursive-authoritative-mismatch',
-        title: `Recursive/authoritative mismatch for ${mismatch.name} ${mismatch.type}`,
-        description: `Public recursive resolver(s) return different values than authoritative servers for ${mismatch.name} (${mismatch.type}). Recursive: ${mismatch.recursiveValues.join(', ') || 'none'}. Authoritative: ${mismatch.authoritativeValues.join(', ') || 'none'}. This may indicate stale cache or propagation in progress.`,
-        severity: 'high',
-        confidence: 'certain',
-        riskPosture: 'high',
-        blastRadius,
-        reviewOnly: true,
-        evidence: [
-          ...mismatch.recursiveObs.map((obs) => ({
-            observationId: obs.id,
-            description: `Recursive (${obs.vantageIdentifier}): ${obs.answerSection?.map((a) => a.data).join(', ') || 'no answer'}`,
-          })),
-          ...mismatch.authObs.map((obs) => ({
-            observationId: obs.id,
-            description: `Authoritative (${obs.vantageIdentifier}): ${obs.answerSection?.map((a) => a.data).join(', ') || 'no answer'}`,
-          })),
-        ],
-        ruleId: this.id,
-        ruleVersion: this.version,
-      },
-      suggestions: [
-        {
-          title: 'Check for stale cache',
-          description: `Verify if this is a cache propagation issue or configuration problem.`,
-          action: `Compare TTL on recursive vs authoritative. Consider cache flush if values are stale.`,
-          riskPosture: 'low',
+    // TB-3: surface EVERY recursive/authoritative mismatch, not just the first.
+    const results: RuleResult[] = [];
+    for (const mismatch of mismatches) {
+      const blastRadius = inferBlastRadius(context.zoneManagement, mismatch.type);
+      results.push({
+        subjectKey: `${mismatch.name}|${mismatch.type}`,
+        finding: {
+          type: 'dns.recursive-authoritative-mismatch',
+          title: `Recursive/authoritative mismatch for ${mismatch.name} ${mismatch.type}`,
+          description: `Public recursive resolver(s) return different values than authoritative servers for ${mismatch.name} (${mismatch.type}). Recursive: ${mismatch.recursiveValues.join(', ') || 'none'}. Authoritative: ${mismatch.authoritativeValues.join(', ') || 'none'}. This may indicate stale cache or propagation in progress.`,
+          severity: 'high',
+          confidence: 'certain',
+          riskPosture: 'high',
           blastRadius,
           reviewOnly: true,
+          evidence: [
+            ...mismatch.recursiveObs.map((obs) => ({
+              observationId: obs.id,
+              description: `Recursive (${obs.vantageIdentifier}): ${obs.answerSection?.map((a) => a.data).join(', ') || 'no answer'}`,
+            })),
+            ...mismatch.authObs.map((obs) => ({
+              observationId: obs.id,
+              description: `Authoritative (${obs.vantageIdentifier}): ${obs.answerSection?.map((a) => a.data).join(', ') || 'no answer'}`,
+            })),
+          ],
+          ruleId: this.id,
+          ruleVersion: this.version,
         },
-      ],
-    };
+        suggestions: [
+          {
+            title: 'Check for stale cache',
+            description: `Verify if this is a cache propagation issue or configuration problem.`,
+            action: `Compare TTL on recursive vs authoritative. Consider cache flush if values are stale.`,
+            riskPosture: 'low',
+            blastRadius,
+            reviewOnly: true,
+          },
+        ],
+      });
+    }
+    return results;
   },
 };
 
@@ -268,11 +274,11 @@ export const cnameCoexistenceRule: Rule = {
   version: '1.0.0',
   enabled: true,
 
-  evaluate(context: RuleContext): RuleResult | null {
+  evaluate(context: RuleContext): RuleResult[] {
     // Find all CNAME record sets
     const cnameRecords = context.recordSets.filter((rs) => rs.type === 'CNAME');
 
-    if (cnameRecords.length === 0) return null;
+    if (cnameRecords.length === 0) return [];
 
     const violations: Array<{
       cname: RecordSet;
@@ -294,44 +300,47 @@ export const cnameCoexistenceRule: Rule = {
       }
     }
 
-    if (violations.length === 0) return null;
+    if (violations.length === 0) return [];
 
-    // Report first violation
-    const violation = violations[0];
+    // TB-3: surface EVERY CNAME coexistence violation, not just the first.
     const blastRadius = inferBlastRadius(context.zoneManagement, 'CNAME');
-
-    return {
-      finding: {
-        type: 'dns.cname-coexistence-conflict',
-        title: `CNAME coexistence violation at ${violation.cname.name}`,
-        description: `${violation.cname.name} has a CNAME record coexisting with ${violation.conflicting.map((r) => r.type).join(', ')} records. Per RFC 1034/2181, CNAME cannot coexist with other data (except DNSSEC records). This causes undefined behavior.`,
-        severity: 'critical',
-        confidence: 'certain',
-        riskPosture: 'critical',
-        blastRadius,
-        reviewOnly: true,
-        evidence: [
-          ...context.observations
-            .filter((obs) => obs.queryName.toLowerCase() === violation.cname.name.toLowerCase())
-            .map((obs) => ({
-              observationId: obs.id,
-              description: `${obs.queryType} from ${obs.vantageIdentifier}`,
-            })),
-        ],
-        ruleId: this.id,
-        ruleVersion: this.version,
-      },
-      suggestions: [
-        {
-          title: 'Remove conflicting records',
-          description: `Either remove the CNAME or the conflicting record(s). CNAME cannot coexist with other data.`,
-          action: `Choose one: keep CNAME (${violation.cname.values.join(', ')}) OR keep ${violation.conflicting.map((r) => `${r.type} (${r.values.join(', ')})`).join(', ')}`,
-          riskPosture: 'high',
+    const results: RuleResult[] = [];
+    for (const violation of violations) {
+      results.push({
+        subjectKey: violation.cname.name.toLowerCase(),
+        finding: {
+          type: 'dns.cname-coexistence-conflict',
+          title: `CNAME coexistence violation at ${violation.cname.name}`,
+          description: `${violation.cname.name} has a CNAME record coexisting with ${violation.conflicting.map((r) => r.type).join(', ')} records. Per RFC 1034/2181, CNAME cannot coexist with other data (except DNSSEC records). This causes undefined behavior.`,
+          severity: 'critical',
+          confidence: 'certain',
+          riskPosture: 'critical',
           blastRadius,
           reviewOnly: true,
+          evidence: [
+            ...context.observations
+              .filter((obs) => obs.queryName.toLowerCase() === violation.cname.name.toLowerCase())
+              .map((obs) => ({
+                observationId: obs.id,
+                description: `${obs.queryType} from ${obs.vantageIdentifier}`,
+              })),
+          ],
+          ruleId: this.id,
+          ruleVersion: this.version,
         },
-      ],
-    };
+        suggestions: [
+          {
+            title: 'Remove conflicting records',
+            description: `Either remove the CNAME or the conflicting record(s). CNAME cannot coexist with other data.`,
+            action: `Choose one: keep CNAME (${violation.cname.values.join(', ')}) OR keep ${violation.conflicting.map((r) => `${r.type} (${r.values.join(', ')})`).join(', ')}`,
+            riskPosture: 'high',
+            blastRadius,
+            reviewOnly: true,
+          },
+        ],
+      });
+    }
+    return results;
   },
 };
 
@@ -346,50 +355,56 @@ export const unmanagedZonePartialCoverageRule: Rule = {
   version: '1.0.0',
   enabled: true,
 
-  evaluate(context: RuleContext): RuleResult | null {
+  evaluate(context: RuleContext): RuleResult[] {
     // Only applies to unmanaged zones
-    if (context.zoneManagement !== 'unmanaged') return null;
+    if (context.zoneManagement !== 'unmanaged') return [];
 
     // Get the scope of what was actually queried
     const queriedNames = [...new Set(context.observations.map((o) => o.queryName))];
     const queriedTypes = [...new Set(context.observations.map((o) => o.queryType))];
 
     if (context.observations.length === 0) {
-      return {
+      return [
+        {
+          subjectKey: '',
+          finding: {
+            type: 'dns.partial-coverage-unmanaged',
+            title: `No data collected for ${context.domainName}`,
+            description: `No observations were collected for ${context.domainName}. This is an unmanaged zone with no visibility.`,
+            severity: 'info',
+            confidence: 'certain',
+            riskPosture: 'safe',
+            blastRadius: 'none',
+            reviewOnly: false,
+            evidence: [],
+            ruleId: this.id,
+            ruleVersion: this.version,
+          },
+        },
+      ];
+    }
+
+    return [
+      {
+        subjectKey: '',
         finding: {
           type: 'dns.partial-coverage-unmanaged',
-          title: `No data collected for ${context.domainName}`,
-          description: `No observations were collected for ${context.domainName}. This is an unmanaged zone with no visibility.`,
+          title: `Partial coverage for unmanaged zone ${context.domainName}`,
+          description: `${context.domainName} is an unmanaged zone. Only targeted inspection was performed for: ${queriedNames.join(', ')} (types: ${queriedTypes.join(', ')}). Full zone enumeration was not attempted. This is limited visibility, not authoritative completeness.`,
           severity: 'info',
           confidence: 'certain',
           riskPosture: 'safe',
           blastRadius: 'none',
           reviewOnly: false,
-          evidence: [],
+          evidence: context.observations.map((obs) => ({
+            observationId: obs.id,
+            description: `Queried ${obs.queryName} ${obs.queryType}`,
+          })),
           ruleId: this.id,
           ruleVersion: this.version,
         },
-      };
-    }
-
-    return {
-      finding: {
-        type: 'dns.partial-coverage-unmanaged',
-        title: `Partial coverage for unmanaged zone ${context.domainName}`,
-        description: `${context.domainName} is an unmanaged zone. Only targeted inspection was performed for: ${queriedNames.join(', ')} (types: ${queriedTypes.join(', ')}). Full zone enumeration was not attempted. This is limited visibility, not authoritative completeness.`,
-        severity: 'info',
-        confidence: 'certain',
-        riskPosture: 'safe',
-        blastRadius: 'none',
-        reviewOnly: false,
-        evidence: context.observations.map((obs) => ({
-          observationId: obs.id,
-          description: `Queried ${obs.queryName} ${obs.queryType}`,
-        })),
-        ruleId: this.id,
-        ruleVersion: this.version,
       },
-    };
+    ];
   },
 };
 

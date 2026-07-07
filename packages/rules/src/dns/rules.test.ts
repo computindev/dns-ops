@@ -11,7 +11,7 @@
 
 import type { Observation, RecordSet } from '@dns-ops/db/schema';
 import { describe, expect, it } from 'vitest';
-import type { RuleContext } from '../engine/index.js';
+import { type RuleContext, RulesEngine, type Ruleset } from '../engine/index.js';
 import {
   authoritativeFailureRule,
   authoritativeMismatchRule,
@@ -84,7 +84,7 @@ describe('Authoritative Failure Rule', () => {
     });
     const context = createMockContext({ observations: [obs] });
 
-    const result = authoritativeFailureRule.evaluate(context);
+    const result = authoritativeFailureRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding).toBeDefined();
@@ -100,7 +100,7 @@ describe('Authoritative Failure Rule', () => {
     });
     const context = createMockContext({ observations: [obs] });
 
-    const result = authoritativeFailureRule.evaluate(context);
+    const result = authoritativeFailureRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('dns.authoritative-refused');
@@ -113,7 +113,7 @@ describe('Authoritative Failure Rule', () => {
     });
     const context = createMockContext({ observations: [obs] });
 
-    const result = authoritativeFailureRule.evaluate(context);
+    const result = authoritativeFailureRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -125,7 +125,7 @@ describe('Authoritative Failure Rule', () => {
     });
     const context = createMockContext({ observations: [obs] });
 
-    const result = authoritativeFailureRule.evaluate(context);
+    const result = authoritativeFailureRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -158,7 +158,7 @@ describe('Authoritative Mismatch Rule', () => {
       recordSets: [rs],
     });
 
-    const result = authoritativeMismatchRule.evaluate(context);
+    const result = authoritativeMismatchRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('dns.authoritative-mismatch');
@@ -172,7 +172,7 @@ describe('Authoritative Mismatch Rule', () => {
 
     const context = createMockContext({ recordSets: [rs] });
 
-    const result = authoritativeMismatchRule.evaluate(context);
+    const result = authoritativeMismatchRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -205,7 +205,7 @@ describe('Recursive vs Authoritative Mismatch Rule', () => {
       recordSets: [rs],
     });
 
-    const result = recursiveAuthoritativeMismatchRule.evaluate(context);
+    const result = recursiveAuthoritativeMismatchRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('dns.recursive-authoritative-mismatch');
@@ -235,7 +235,7 @@ describe('Recursive vs Authoritative Mismatch Rule', () => {
       recordSets: [rs],
     });
 
-    const result = recursiveAuthoritativeMismatchRule.evaluate(context);
+    const result = recursiveAuthoritativeMismatchRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -259,7 +259,7 @@ describe('CNAME Coexistence Rule', () => {
       recordSets: [cnameRs, aRs],
     });
 
-    const result = cnameCoexistenceRule.evaluate(context);
+    const result = cnameCoexistenceRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('dns.cname-coexistence-conflict');
@@ -283,7 +283,7 @@ describe('CNAME Coexistence Rule', () => {
       recordSets: [cnameRs, rrsigRs],
     });
 
-    const result = cnameCoexistenceRule.evaluate(context);
+    const result = cnameCoexistenceRule.evaluate(context)[0] ?? null;
 
     // RRSIG and NSEC are allowed with CNAME (DNSSEC records)
     expect(result).toBeNull();
@@ -300,7 +300,7 @@ describe('CNAME Coexistence Rule', () => {
       recordSets: [cnameRs],
     });
 
-    const result = cnameCoexistenceRule.evaluate(context);
+    const result = cnameCoexistenceRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -313,7 +313,7 @@ describe('Unmanaged Zone Partial Coverage Rule', () => {
       observations: [createMockObservation({ queryName: 'example.com', queryType: 'A' })],
     });
 
-    const result = unmanagedZonePartialCoverageRule.evaluate(context);
+    const result = unmanagedZonePartialCoverageRule.evaluate(context)[0] ?? null;
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('dns.partial-coverage-unmanaged');
@@ -325,7 +325,7 @@ describe('Unmanaged Zone Partial Coverage Rule', () => {
       zoneManagement: 'managed',
     });
 
-    const result = unmanagedZonePartialCoverageRule.evaluate(context);
+    const result = unmanagedZonePartialCoverageRule.evaluate(context)[0] ?? null;
 
     expect(result).toBeNull();
   });
@@ -339,9 +339,121 @@ describe('Unmanaged Zone Partial Coverage Rule', () => {
       ],
     });
 
-    const result = unmanagedZonePartialCoverageRule.evaluate(context);
+    const result = unmanagedZonePartialCoverageRule.evaluate(context)[0] ?? null;
 
     expect(result?.finding?.description).toContain('A');
     expect(result?.finding?.description).toContain('MX');
+  });
+});
+
+// =============================================================================
+// TB-3: Multi-finding rules (one rule surfaces EVERY instance of a problem)
+// =============================================================================
+//
+// Today the engine is one-finding-per-rule: each DNS rule computes the full set
+// of problems then throws away all but the first (`return findings[0] || null`).
+// TB-3 changes Rule.evaluate to return RuleResult[] so every instance is
+// surfaced, disambiguated by a rule-defined subjectKey (query name|type for DNS).
+//
+// These tests are the acceptance criteria. They FAIL on the old contract.
+
+describe('TB-3: authoritativeFailureRule surfaces every failing query', () => {
+  // Minimal ruleset wrapping the single rule under test, for engine-level checks.
+  function rulesetWith(rule: typeof authoritativeFailureRule): Ruleset {
+    return {
+      id: 'tb3-test-ruleset',
+      version: '1.0.0',
+      name: 'TB-3 test',
+      description: '',
+      rules: [rule],
+      createdAt: new Date(),
+    };
+  }
+
+  it('emits one RuleResult per failing query name, each with a distinct subjectKey', () => {
+    const wwwTimeout = createMockObservation({
+      id: 'obs-www',
+      queryName: 'www.example.com',
+      queryType: 'A',
+      status: 'timeout',
+      vantageType: 'authoritative',
+      vantageIdentifier: 'ns1.example.com',
+      errorMessage: 'Query timed out',
+    });
+    const mailTimeout = createMockObservation({
+      id: 'obs-mail',
+      queryName: 'mail.example.com',
+      queryType: 'A',
+      status: 'timeout',
+      vantageType: 'authoritative',
+      vantageIdentifier: 'ns1.example.com',
+      errorMessage: 'Query timed out',
+    });
+    const context = createMockContext({
+      domainName: 'example.com',
+      observations: [wwwTimeout, mailTimeout],
+    });
+
+    const results = authoritativeFailureRule.evaluate(context);
+
+    // OLD contract returned a single RuleResult (or null); the multi-finding
+    // contract must surface BOTH queries.
+    expect(results).toHaveLength(2);
+    // Each finding is about a distinct subject (lowercased query name|type).
+    expect(results.map((r) => r.subjectKey).sort()).toEqual([
+      'mail.example.com|A',
+      'www.example.com|A',
+    ]);
+    // Every emitted result carries a finding.
+    for (const r of results) {
+      expect(r.finding).toBeDefined();
+      expect(r.finding?.ruleId).toBe(authoritativeFailureRule.id);
+    }
+  });
+
+  it('returns [] when there are no authoritative failures (no findings)', () => {
+    const ok = createMockObservation({
+      status: 'success',
+      vantageType: 'authoritative',
+    });
+    const context = createMockContext({ observations: [ok] });
+
+    const results = authoritativeFailureRule.evaluate(context);
+
+    expect(Array.isArray(results)).toBe(true);
+    expect(results).toHaveLength(0);
+  });
+
+  it('flattens multiple results through the engine and stamps subjectKey on each finding', () => {
+    const wwwTimeout = createMockObservation({
+      id: 'obs-www',
+      queryName: 'www.example.com',
+      queryType: 'A',
+      status: 'timeout',
+      vantageType: 'authoritative',
+    });
+    const mailRefused = createMockObservation({
+      id: 'obs-mail',
+      queryName: 'mail.example.com',
+      queryType: 'A',
+      status: 'refused',
+      vantageType: 'authoritative',
+    });
+    const context = createMockContext({
+      domainName: 'example.com',
+      observations: [wwwTimeout, mailRefused],
+    });
+
+    const engine = new RulesEngine(rulesetWith(authoritativeFailureRule));
+    const { findings } = engine.evaluate(context);
+
+    // Engine flattens BOTH results — one per failing query.
+    expect(findings).toHaveLength(2);
+    // Each persisted finding carries the subjectKey from its RuleResult, landing
+    // in findings.subject_key (migration 0012).
+    expect(findings.map((f) => f.subjectKey).sort()).toEqual([
+      'mail.example.com|A',
+      'www.example.com|A',
+    ]);
   });
 });

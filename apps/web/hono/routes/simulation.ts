@@ -110,6 +110,7 @@ simulationRoutes.post('/', requireAuth, async (c) => {
         title: f.title,
         severity: f.severity,
         ruleId: f.ruleId,
+        subjectKey: f.subjectKey,
       })),
       findingTypes
     );
