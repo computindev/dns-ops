@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "14299a7be02f949c6978180e4209c5efba4c5794",
+  "currentSha": "5369aa4b8683e55b47016aa151f76b9e0f9db906",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2",
   "whatIsTrue": [
@@ -13,6 +13,8 @@
     "FIX-01 proves a throwing rule becomes persisted partial UNKNOWN coverage rather than a clean result",
     "Historical snapshots without coverage are actionable UNKNOWN",
     "API and UI surfaces no longer treat zero findings as healthy unless coverage is explicitly complete",
+    "FIX-02 preserves wire DNS flags, disables recursion for authoritative targets, and requires AA proof for managed completeness",
+    "Unavailable authoritative evidence is actionable UNKNOWN rather than authoritative absence",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
@@ -26,7 +28,7 @@
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2548 tests passed and 41 skipped after FIX-01; evidence: docs/domain-operations/evidence/gate-2/fix-01-rule-failure.json"
+      "result": "2543 tests passed and 41 skipped after FIX-02; evidence: docs/domain-operations/evidence/gate-2/fix-02-authoritative-evidence.json"
     },
     {
       "command": "bun run build",
@@ -84,10 +86,9 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Correct authoritative DNS evidence handling",
     "Implement the explicit first-level SPF contract",
     "Implement RFC 9989 DMARC discovery with stubbed fixtures",
     "Downgrade generic remediation to guidance-only"
   ],
-  "updatedAt": "2026-07-28T22:53:59Z"
+  "updatedAt": "2026-07-28T23:01:23Z"
 }
