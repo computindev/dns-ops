@@ -1,7 +1,9 @@
 # DNS Ops Phase 0–1 — Day 0 / Gate 1 Repository Truth
 
 **Recorded:** 2026-07-28  
-**Checkpoint status:** `DAY_0_INPUT_REQUIRED` — product implementation has not started
+**Checkpoint status:** `GATE_1_PASS` / `DAY_0_INPUT_REQUIRED` — product implementation has not started
+
+Gate 1 was accepted by the founder on 2026-07-28. PR #3 remains open and draft; merge and implementation remain unauthorized until Day 0 passes.
 
 ## Git authority
 

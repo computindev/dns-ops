@@ -9,7 +9,7 @@
 
 - Date: 2026-07-28
 - Authority SHA supplied to agent: `32dc8268ee8f38ce11513c3c9d2106bedf18f17a`
-- Founder/operator:
+- Founder/operator: Antonio
 - Maximum portfolio size: **30 domains**
 - Selected test DNS provider:
 - Selected non-production test zone:
