@@ -84,6 +84,7 @@ Raw command logs for this workstation run are under `/tmp/dns-ops-gate1-baseline
 - Only `zoneManagement === "managed"` triggers per-nameserver collection in `apps/collector/src/dns/collector.ts`; unmanaged and unknown zones use public recursive evidence only.
 - Nameservers are discovered through the configured recursive resolver, then used as target vantages.
 - `queryWithDnsPacket` decodes AA/TC/RD/RA/AD/CD, but `DNSResolver.queryViaDnsPacket` discards those decoded flags and substitutes constants with `aa: false` (`apps/collector/src/dns/dnssec-resolver.ts`, `apps/collector/src/dns/resolver.ts`).
+- Raw packet queries always set `RECURSION_DESIRED`, including when targeting an authoritative vantage.
 - A/AAAA use Node `Resolver.setServers`; the discovered nameserver values are hostnames, while `setServers` expects address literals. This can turn intended authoritative A/AAAA checks into errors.
 - Direct nameserver targeting is useful evidence, but current persisted observations cannot prove the AA bit and must not be presented as verified authoritative answers.
 - `calculateResultState` can still return `complete` for a managed plan when all returned query results succeed; it does not require AA proof.
@@ -114,7 +115,7 @@ Therefore a throwing rule can produce no finding while the snapshot remains comp
 
 1. `apps/collector/src/jobs/worker.ts` runs `generateAndSendFindingAlerts` after queued `collect-domain` jobs.
 2. `apps/collector/src/jobs/alert-from-findings.ts` converts every high/critical, non-review-only finding into a new alert and may deliver a webhook.
-3. Finding-derived alerts have no stable condition deduplication key; repeated scans can create repeated alerts.
+3. Finding-derived alerts have no stable condition deduplication key; repeated scans can create repeated alerts. This path also bypasses the monitoring route's suppression window and daily cap.
 4. `apps/collector/src/jobs/monitoring.ts` separately creates a `Collection Failed` legacy alert and webhook when its collector HTTP request fails.
 5. Synchronous ad-hoc collection and the monitoring-refresh worker do not share one canonical alert path.
 6. No signal path exists yet, so nothing is currently `MAPPED_TO_SIGNAL`.
@@ -149,7 +150,7 @@ Before a mail condition becomes `MAPPED_TO_SIGNAL`, its direct finding-alert eli
 
 - Implemented probes are SMTP STARTTLS and MTA-STS. Web TLS and generic HTTP probe enum values are schema-only.
 - SSRF checks block private, loopback, link-local, multicast, reserved, and mapped-private addresses; MTA-STS rejects redirects.
-- In-memory allowlists are tenant-keyed, but probe routes can build allowlist entries from caller-supplied `domain`, `hostname`, `mxRecords`, and `dnsResults`; these inputs are not proven to be registered-domain evidence.
+- In-memory allowlists are tenant-keyed, but probe routes can build allowlist entries from caller-supplied `domain`, `hostname`, `mxRecords`, and `dnsResults`; the SMTP route fabricates a successful `vantageIdentifier: "mock"` DNS result from request data, and MTA-STS directly adds a custom entry. These inputs are not proven registered-domain evidence, so the allowlist does not establish target provenance on these routes.
 - Collector `/api/*` service auth is a boundary, but Phase 1 `scan_request` must additionally accept only a registered domain ID and derive tenant/actor from the MCP principal.
 - Web authorization derives tenant/actor from request context and repositories often recheck tenant ownership. Some legacy repositories fetch broadly then filter in memory; MCP services must use explicit tenant predicates.
 - Audit events exist for portfolio, remediation, monitoring, and alert lifecycle changes. Rule failures, scan requests, suggestion apply/dismiss, and probe persistence do not yet provide the Phase 1 audit contract.
@@ -160,6 +161,7 @@ Before a mail condition becomes `MAPPED_TO_SIGNAL`, its direct finding-alert eli
 - `docs/architecture/runtime-topology.md` says raw DNS flag parsing is future work; raw parsing now exists, but `DNSResolver` discards the decoded flags. The limitation remains, for a different implementation reason.
 - `docs/rules/query-scope.md` describes conditional shallow SPF include queries and stronger managed authoritative completeness that current query planning does not implement.
 - `docs/rules/trust-boundary.md` says targets are derived from DNS only, while probe routes accept caller-supplied DNS-shaped values.
+- The repository has no typed `InternalSignalKind`, `InternalCaseStatus`, per-check UNKNOWN model, condition registry, or `/mcp` endpoint. The existing `partial` state is snapshot-level only.
 - `README.md` reports 2,212 tests/114 files; the verified baseline is 2,539 passing tests/136 passing files plus skips.
 - `README.md` links `STATUS_REPORT.md` and `REPO_STRUCTURE.md`, but neither file exists. `docs/rules/trust-boundary.md` also links missing `docs/security/probe-incident-response.md` and `docs/architecture/network-isolation.md`.
 - `README.md` advertises concrete provider-aware fixes; Phase 0–1 requires generic remediations to become non-executable guidance.
