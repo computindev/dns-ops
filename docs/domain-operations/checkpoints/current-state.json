@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "dd3edc14d70a864de5e3df3ee879de77f265e389",
+  "currentSha": "dc9eae4cc72764f9a8c1b73262b3631a2bc20b15",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2",
   "whatIsTrue": [
@@ -16,6 +16,7 @@
     "FIX-02 preserves wire DNS flags, disables recursion for authoritative targets, and requires AA proof for managed completeness",
     "Unavailable authoritative evidence is actionable UNKNOWN rather than authoritative absence",
     "FIX-03 exposes SPF as FIRST_LEVEL_ONLY with unresolved dependencies and no recursive budget claim",
+    "FIX-04 performs RFC 9989 DMARC policy discovery with an eight-query maximum and effective p/sp/np/t policy evidence",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
@@ -29,7 +30,7 @@
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2546 tests passed and 41 skipped after FIX-03; evidence: docs/domain-operations/evidence/gate-2/fix-03-spf-first-level.json"
+      "result": "2566 tests passed and 41 skipped after FIX-04; evidence: docs/domain-operations/evidence/gate-2/fix-04-rfc9989-dmarc-discovery.json"
     },
     {
       "command": "bun run build",
@@ -87,8 +88,7 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Implement RFC 9989 DMARC discovery with stubbed fixtures",
     "Downgrade generic remediation to guidance-only"
   ],
-  "updatedAt": "2026-07-28T23:08:38Z"
+  "updatedAt": "2026-07-28T23:42:19Z"
 }
