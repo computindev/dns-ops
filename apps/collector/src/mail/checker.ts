@@ -34,7 +34,14 @@
  * @see MailEvidenceRepository for persisted evidence storage
  */
 
-import { type DMARCRecord, parseDMARC, parseSPF, type SPFRecord } from '@dns-ops/parsing';
+import type { FirstLevelSpfAssessment } from '@dns-ops/contracts';
+import {
+  assessFirstLevelSpf,
+  type DMARCRecord,
+  parseDMARC,
+  parseSPF,
+  type SPFRecord,
+} from '@dns-ops/parsing';
 import { type MxRecord, resolveMX, resolveTXT } from './dns.js';
 
 export interface MailCheckResult {
@@ -53,6 +60,7 @@ export interface RecordCheckResult {
   valid: boolean;
   record?: string;
   parsed?: DMARCRecord | SPFRecord;
+  spfAssessment?: FirstLevelSpfAssessment;
   errors?: string[];
 }
 
@@ -286,12 +294,14 @@ export async function checkSPF(domain: string): Promise<RecordCheckResult> {
     }
 
     const parsed = parseSPF(spfRecord);
+    const spfAssessment = parsed ? assessFirstLevelSpf(parsed) : undefined;
     return {
       present: true,
-      valid: parsed !== null,
+      valid: spfAssessment?.status === 'DIRECT_SYNTAX_VALID',
       record: spfRecord,
       parsed: parsed || undefined,
-      errors: parsed ? undefined : ['Failed to parse SPF record'],
+      spfAssessment,
+      errors: parsed ? undefined : ['Failed to parse directly published SPF record'],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

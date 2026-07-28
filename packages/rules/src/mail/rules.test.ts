@@ -207,8 +207,11 @@ describe('SPF Rule', () => {
 
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.spf-present');
-    // SPF present is informational - severity may be 'info' or 'medium' depending on strictness
+    // SPF present is informational - severity may be 'info' or 'medium' depending on direct policy.
     expect(['info', 'medium']).toContain(result?.finding?.severity);
+    expect(result?.finding?.description).toContain('FIRST_LEVEL_ONLY');
+    expect(result?.finding?.description).toContain('completeEvaluation=false');
+    expect(result?.finding?.description).toContain('were not evaluated');
   });
 
   it('should detect missing SPF record', () => {
@@ -280,11 +283,8 @@ describe('SPF Rule', () => {
 
     const result = spfRule.evaluate(context);
 
-    // Note: Current parseSPF implementation is lenient and returns valid for
-    // syntactically incorrect mechanisms. A stricter parser would return 'mail.spf-malformed'.
-    // For now, this is accepted as 'present' with warnings.
     expect(result).not.toBeNull();
-    expect(['mail.spf-malformed', 'mail.spf-present']).toContain(result?.finding?.type);
+    expect(result?.finding?.type).toBe('mail.spf-malformed');
   });
 
   it('should detect SPF query failures', () => {

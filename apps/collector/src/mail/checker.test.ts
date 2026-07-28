@@ -190,6 +190,11 @@ describe('Mail Checker', () => {
       expect(result.present).toBe(true);
       expect(result.valid).toBe(true);
       expect(result.record).toContain('v=spf1');
+      expect(result.spfAssessment).toMatchObject({
+        scope: 'FIRST_LEVEL_ONLY',
+        includeDomains: ['_spf.google.com'],
+        completeEvaluation: false,
+      });
     });
 
     it('should handle missing SPF record', async () => {

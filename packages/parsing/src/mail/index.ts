@@ -4,6 +4,8 @@
  * Parse SPF, DMARC, and DKIM records.
  */
 
+import type { FirstLevelSpfAssessment } from '@dns-ops/contracts';
+
 // =============================================================================
 // SPF Parsing
 // =============================================================================
@@ -31,8 +33,9 @@ export interface SPFModifier {
  * Parse an SPF TXT record
  */
 export function parseSPF(txtData: string): SPFRecord | null {
-  // Check if this is an SPF record
-  if (!txtData.includes('v=spf1')) {
+  const normalized = txtData.trim();
+  // SPF version must be the first term, not an arbitrary substring.
+  if (!/^v=spf1(?:\s|$)/.test(normalized)) {
     return null;
   }
 
@@ -107,20 +110,49 @@ function parseMechanism(part: string): SPFMechanism | null {
   };
 }
 
+const DIRECT_DNS_LOOKUP_MECHANISMS = new Set(['include', 'a', 'mx', 'ptr', 'exists']);
+const VALID_SPF_MECHANISMS = new Set(['all', 'include', 'a', 'mx', 'ptr', 'ip4', 'ip6', 'exists']);
+
+/** Count only terms visible in the published record that trigger DNS lookups. */
+export function countDirectSpfLookupTerms(record: SPFRecord): number {
+  const mechanisms = record.mechanisms.filter((mechanism) =>
+    DIRECT_DNS_LOOKUP_MECHANISMS.has(mechanism.type)
+  ).length;
+  const redirects = record.modifiers.filter((modifier) => modifier.name === 'redirect').length;
+  return mechanisms + redirects;
+}
+
 /**
- * Count DNS lookups in an SPF record
+ * Assess only the directly published SPF record. Includes and redirect targets
+ * remain unresolved dependencies; this never claims recursive ten-term budget
+ * compliance or sender authorization.
  */
-export function countSPFLookups(record: SPFRecord): number {
-  let count = 0;
-  const lookupMechanisms = ['include', 'a', 'mx', 'ptr', 'exists', 'redirect'];
+export function assessFirstLevelSpf(record: SPFRecord): FirstLevelSpfAssessment {
+  const includeDomains = record.mechanisms
+    .filter((mechanism) => mechanism.type === 'include' && mechanism.value)
+    .map((mechanism) => mechanism.value as string);
+  const redirects = record.modifiers.filter((modifier) => modifier.name === 'redirect');
+  const invalidMechanism = record.mechanisms.some(
+    (mechanism) => !VALID_SPF_MECHANISMS.has(mechanism.type)
+  );
+  const missingIncludeTarget = record.mechanisms.some(
+    (mechanism) => mechanism.type === 'include' && !mechanism.value
+  );
+  const invalidRedirect = redirects.length > 1 || redirects.some((redirect) => !redirect.value);
 
-  for (const mech of record.mechanisms) {
-    if (lookupMechanisms.includes(mech.type)) {
-      count++;
-    }
-  }
-
-  return count;
+  return {
+    scope: 'FIRST_LEVEL_ONLY',
+    directDnsLookupTerms: countDirectSpfLookupTerms(record),
+    includeDomains,
+    redirectDomain: redirects[0]?.value,
+    status:
+      invalidMechanism || missingIncludeTarget || invalidRedirect
+        ? 'DIRECT_SYNTAX_INVALID'
+        : 'DIRECT_SYNTAX_VALID',
+    completeEvaluation: false,
+    limitation:
+      'Only the published SPF record was inspected. Include and redirect targets were not evaluated; recursive lookup-budget, cycle, void-lookup, nested validity, and sender-authorization claims are unavailable.',
+  };
 }
 
 // =============================================================================

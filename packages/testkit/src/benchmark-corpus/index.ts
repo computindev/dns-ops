@@ -177,7 +177,7 @@ export const knownGoodUnmanaged: BenchmarkCase[] = [
 export const historicalIncidents: BenchmarkCase[] = [
   {
     id: 'incident-001',
-    description: 'SPF record too many lookups (caused mail delivery issues)',
+    description: 'SPF record with nested dependencies requiring first-level-only disclosure',
     domain: 'spf-lookup-incident.test',
     zoneManagement: 'managed',
     expectedResult: 'complete',
@@ -185,13 +185,14 @@ export const historicalIncidents: BenchmarkCase[] = [
     characteristics: ['has-mx', 'has-spf', 'has-dmarc'],
     expectedFindings: [
       {
-        type: 'spf-too-many-lookups',
-        severity: 'high',
+        type: 'mail.spf-present',
+        severity: 'medium',
         confidence: 'certain',
         reviewOnly: true,
       },
     ],
-    notes: 'SPF record exceeded 10 DNS lookup limit',
+    notes:
+      'The published record contains unresolved dependencies. Phase 0–1 does not evaluate or claim compliance with the recursive ten-term lookup budget.',
   },
   {
     id: 'incident-002',

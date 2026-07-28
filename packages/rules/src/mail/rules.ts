@@ -13,7 +13,7 @@
  */
 
 import type { Observation } from '@dns-ops/db';
-import { parseDMARC, parseSPF } from '@dns-ops/parsing';
+import { assessFirstLevelSpf, parseDMARC, parseSPF } from '@dns-ops/parsing';
 import type { Rule, RuleContext, RuleResult } from '../engine/index.js';
 
 // =============================================================================
@@ -278,26 +278,13 @@ export const spfRule: Rule = {
       };
     }
 
-    // Validate SPF mechanisms - check for unknown/invalid mechanisms
-    const validMechanisms = [
-      'all',
-      'include',
-      'a',
-      'mx',
-      'ptr',
-      'ip4',
-      'ip6',
-      'exists',
-      'redirect',
-    ];
-    const invalidMechanisms = parsed.mechanisms.filter((m) => !validMechanisms.includes(m.type));
-
-    if (invalidMechanisms.length > 0) {
+    const assessment = assessFirstLevelSpf(parsed);
+    if (assessment.status === 'DIRECT_SYNTAX_INVALID') {
       return {
         finding: {
           type: 'mail.spf-malformed',
-          title: `Malformed SPF record for ${context.domainName}`,
-          description: `${context.domainName} has an SPF record with invalid mechanisms: ${invalidMechanisms.map((m) => m.type).join(', ')}. Raw: "${spfRecord}". Valid mechanisms are: ${validMechanisms.join(', ')}.`,
+          title: `Malformed directly published SPF record for ${context.domainName}`,
+          description: `${context.domainName} has directly visible SPF syntax that cannot be assessed safely. ${assessment.limitation}`,
           severity: 'critical',
           confidence: 'certain',
           riskPosture: 'critical',
@@ -307,27 +294,17 @@ export const spfRule: Rule = {
             ? [
                 {
                   observationId: spfObservation.id,
-                  description: `Invalid SPF mechanisms found`,
+                  description: `First-level SPF assessment: ${JSON.stringify(assessment)}`,
                 },
               ]
             : [],
           ruleId: this.id,
           ruleVersion: this.version,
         },
-        suggestions: [
-          {
-            title: 'Fix SPF mechanism syntax',
-            description: `The SPF record contains unknown mechanisms that may cause mail delivery issues.`,
-            action: `Remove or correct invalid mechanisms: ${invalidMechanisms.map((m) => m.type).join(', ')}`,
-            riskPosture: 'high',
-            blastRadius: 'single-domain',
-            reviewOnly: true,
-          },
-        ],
       };
     }
 
-    // Valid SPF - analyze configuration
+    // Analyze only directly visible configuration. Dependencies remain unresolved.
     const issues: string[] = [];
 
     // Check for ~all (softfail) vs -all (hardfail)
@@ -363,7 +340,7 @@ export const spfRule: Rule = {
       finding: {
         type: 'mail.spf-present',
         title: `SPF record present for ${context.domainName}`,
-        description: `${context.domainName} has a valid SPF record. Raw: "${spfRecord}". ${issues.length > 0 ? `Issues: ${issues.join('; ')}` : 'Configuration looks good with proper all mechanism.'}`,
+        description: `${context.domainName} has directly valid published SPF syntax within a FIRST_LEVEL_ONLY assessment. completeEvaluation=false. ${issues.length > 0 ? `Direct issues: ${issues.join('; ')}. ` : ''}${assessment.limitation}`,
         severity,
         confidence: 'certain',
         riskPosture:
@@ -374,7 +351,7 @@ export const spfRule: Rule = {
           ? [
               {
                 observationId: spfObservation.id,
-                description: `Parsed SPF: ${JSON.stringify(parsed)}`,
+                description: `First-level SPF assessment: ${JSON.stringify(assessment)}`,
               },
             ]
           : [],
