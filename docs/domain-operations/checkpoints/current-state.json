@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "f1edcdf34b559358f5b3a132f771caa10c2d61d6",
+  "currentSha": "14299a7be02f949c6978180e4209c5efba4c5794",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2",
   "whatIsTrue": [
@@ -10,7 +10,9 @@
     "Day 0 founder declarations and controlled test assets remain incomplete",
     "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
     "PR #3 remains open and draft",
-    "No product behavior had changed at the recorded currentSha",
+    "FIX-01 proves a throwing rule becomes persisted partial UNKNOWN coverage rather than a clean result",
+    "Historical snapshots without coverage are actionable UNKNOWN",
+    "API and UI surfaces no longer treat zero findings as healthy unless coverage is explicitly complete",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
@@ -24,7 +26,7 @@
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2539 tests passed and 41 skipped at the Gate 1 baseline"
+      "result": "2548 tests passed and 41 skipped after FIX-01; evidence: docs/domain-operations/evidence/gate-2/fix-01-rule-failure.json"
     },
     {
       "command": "bun run build",
@@ -82,13 +84,10 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Commit the founder override and checkpoint update",
-    "Add a deterministic throwing-rule false-green fixture",
-    "Implement typed rule-evaluation errors and actionable UNKNOWN propagation",
     "Correct authoritative DNS evidence handling",
     "Implement the explicit first-level SPF contract",
     "Implement RFC 9989 DMARC discovery with stubbed fixtures",
     "Downgrade generic remediation to guidance-only"
   ],
-  "updatedAt": "2026-07-28T22:39:44Z"
+  "updatedAt": "2026-07-28T22:53:59Z"
 }
