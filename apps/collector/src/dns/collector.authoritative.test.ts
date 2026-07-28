@@ -184,6 +184,101 @@ describe('PR-07.6: Authoritative Collection', () => {
     });
   });
 
+  it('FIX-02: does not report complete when authoritative responses lack AA proof', () => {
+    const collector = new DNSCollector(baseConfig, mockDb);
+    const results: DNSQueryResult[] = [
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        responseCode: 0,
+        flags: { aa: false, tc: false, rd: true, ra: true, ad: false, cd: false },
+        answers: [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'authoritative', identifier: 'ns1.example.com' },
+        success: true,
+        responseCode: 0,
+        flags: { aa: false, tc: false, rd: false, ra: false, ad: false, cd: false },
+        answers: [{ name: 'example.com', type: 'A', ttl: 60, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+    ];
+
+    const state = (
+      collector as unknown as {
+        calculateResultState: (
+          queryResults: DNSQueryResult[],
+          errors: Array<{ queryName: string; queryType: string; vantage: string; error: string }>
+        ) => 'complete' | 'partial' | 'failed';
+      }
+    ).calculateResultState(results, []);
+
+    expect(state).toBe('partial');
+
+    const coverage = (
+      collector as unknown as {
+        getAuthoritativeEvidenceCoverage: (queryResults: DNSQueryResult[]) => {
+          state: string;
+          unknown?: { reason: string; action: string; blocking: boolean };
+        };
+      }
+    ).getAuthoritativeEvidenceCoverage(results);
+    expect(coverage).toMatchObject({
+      state: 'UNKNOWN',
+      unknown: {
+        reason: 'AUTHORITATIVE_EVIDENCE_UNAVAILABLE',
+        action: 'RETRY_PROBE',
+        blocking: true,
+      },
+    });
+  });
+
+  it('reports complete only when every direct nameserver response proves AA', () => {
+    const collector = new DNSCollector(baseConfig, mockDb);
+    const results: DNSQueryResult[] = [
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        responseCode: 0,
+        flags: { aa: false, tc: false, rd: true, ra: true, ad: false, cd: false },
+        answers: [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'authoritative', identifier: 'ns1.example.com' },
+        success: true,
+        responseCode: 0,
+        flags: { aa: true, tc: false, rd: false, ra: false, ad: false, cd: false },
+        answers: [{ name: 'example.com', type: 'A', ttl: 60, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+    ];
+
+    const state = (
+      collector as unknown as {
+        calculateResultState: (
+          queryResults: DNSQueryResult[],
+          errors: Array<{ queryName: string; queryType: string; vantage: string; error: string }>
+        ) => 'complete' | 'partial' | 'failed';
+      }
+    ).calculateResultState(results, []);
+
+    expect(state).toBe('complete');
+  });
+
   it('should return partial result when one authoritative server times out', async () => {
     const collector = new DNSCollector(baseConfig, mockDb);
 

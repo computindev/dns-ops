@@ -39,6 +39,12 @@ export interface EvaluationCoverage {
   errors: RuleEvaluationFailure[];
 }
 
+export interface AuthoritativeEvidenceCoverage {
+  state: 'VERIFIED' | 'UNKNOWN' | 'NOT_REQUESTED';
+  nameservers: string[];
+  unknown?: UnknownResolution;
+}
+
 /**
  * Historical snapshots did not persist evaluation coverage. Absence must remain
  * actionable UNKNOWN rather than inheriting a green state from a ruleset ID.

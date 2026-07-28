@@ -293,13 +293,30 @@ function Domain360Page() {
         </div>
 
         {snapshot ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <ZoneManagementBadge type={snapshot.zoneManagement} />
-            <ResultStateBadge state={snapshot.resultState} />
-            <span className="text-sm text-gray-500 tabular-nums">
-              Last updated: {new Date(snapshot.createdAt).toLocaleString()}
-            </span>
-          </div>
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <ZoneManagementBadge type={snapshot.zoneManagement} />
+              <ResultStateBadge state={snapshot.resultState} />
+              <span className="text-sm text-gray-500 tabular-nums">
+                Last updated: {new Date(snapshot.createdAt).toLocaleString()}
+              </span>
+            </div>
+            {snapshot.metadata?.authoritativeEvidence?.state === 'UNKNOWN' && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <strong>Authoritative evidence UNKNOWN.</strong>{' '}
+                {snapshot.metadata.authoritativeEvidence.unknown?.explanation}{' '}
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshMutation.isPending}
+                  className="font-semibold underline disabled:opacity-50"
+                >
+                  {snapshot.metadata.authoritativeEvidence.unknown?.actionLabel ??
+                    'Retry authoritative DNS collection'}
+                </button>
+              </div>
+            )}
+          </>
         ) : loaderError ? (
           <div
             className={`mt-4 p-4 rounded-lg border ${

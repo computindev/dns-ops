@@ -5,7 +5,7 @@
  * Evaluates rules and persists findings immediately after collection.
  */
 
-import { determineStatus } from '@dns-ops/contracts';
+import { type AuthoritativeEvidenceCoverage, determineStatus } from '@dns-ops/contracts';
 import type {
   IDatabaseAdapter,
   NewFinding,
@@ -400,6 +400,14 @@ export class DNSCollector {
     const successCount = results.filter((r) => r.success).length;
     const totalCount = results.length;
 
+    if (this.config.zoneManagement === 'managed') {
+      const authoritativeResults = results.filter((r) => r.vantage.type === 'authoritative');
+      const lacksAuthoritativeProof =
+        authoritativeResults.length === 0 ||
+        authoritativeResults.some((result) => result.success && result.flags?.aa !== true);
+      if (lacksAuthoritativeProof) return 'partial';
+    }
+
     if (successCount === totalCount) {
       return this.config.zoneManagement === 'unmanaged' ? 'partial' : 'complete';
     }
@@ -409,6 +417,37 @@ export class DNSCollector {
     }
 
     return 'failed';
+  }
+
+  private getAuthoritativeEvidenceCoverage(
+    results: DNSQueryResult[]
+  ): AuthoritativeEvidenceCoverage {
+    if (this.config.zoneManagement !== 'managed') {
+      return { state: 'NOT_REQUESTED', nameservers: [] };
+    }
+
+    const authoritative = results.filter((result) => result.vantage.type === 'authoritative');
+    const nameservers = [...new Set(authoritative.map((result) => result.vantage.identifier))];
+    const verified =
+      authoritative.length > 0 &&
+      authoritative.every((result) => result.success && result.flags?.aa === true);
+
+    if (verified) return { state: 'VERIFIED', nameservers };
+
+    return {
+      state: 'UNKNOWN',
+      nameservers,
+      unknown: {
+        reason: 'AUTHORITATIVE_EVIDENCE_UNAVAILABLE',
+        explanation:
+          authoritative.length === 0
+            ? 'No direct authoritative response was captured.'
+            : 'At least one direct nameserver response failed or lacked the authoritative-answer flag.',
+        action: 'RETRY_PROBE',
+        actionLabel: 'Retry authoritative DNS collection',
+        blocking: true,
+      },
+    };
   }
 
   /**
@@ -449,6 +488,7 @@ export class DNSCollector {
       metadata: {
         // Vantage identifiers (IPs/hostnames) for detailed tracking
         vantageIdentifiers: [...new Set(results.map((r) => r.vantage.identifier))],
+        authoritativeEvidence: this.getAuthoritativeEvidenceCoverage(results),
         // Delegation data if available (Bead 12, dns-ops-1j4.6.4)
         ...(delegationData
           ? {

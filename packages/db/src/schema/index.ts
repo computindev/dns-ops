@@ -11,7 +11,7 @@
  * - RulesetVersion: Version tracking for rules
  */
 
-import type { EvaluationCoverage } from '@dns-ops/contracts';
+import type { AuthoritativeEvidenceCoverage, EvaluationCoverage } from '@dns-ops/contracts';
 import {
   boolean,
   index,
@@ -187,6 +187,7 @@ export const snapshots = pgTable(
       // Rules evaluation coverage. A partial evaluation must remain visible even
       // when no findings were produced by the failed check.
       evaluation?: EvaluationCoverage;
+      authoritativeEvidence?: AuthoritativeEvidenceCoverage;
     }>(),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -68,14 +68,17 @@ export interface DnsResponseSections {
  * types Node does not support at all (DNSKEY/DS). Encodes a query, sends it via
  * sendDnsQuery (UDP with TCP fallback), then decodes the wire response.
  */
-export async function queryWithDnsPacket(
-  query: DNSQuery,
-  dnsServer: string = DEFAULT_DNS_SERVERS[0]
-): Promise<DnsResponseSections> {
-  const packetOut = dnsPacket.encode({
+export interface DnsQueryOptions {
+  recursionDesired?: boolean;
+}
+
+/** Encode a DNS query without performing I/O so recursion policy is testable. */
+export function encodeDnsQuery(query: DNSQuery, options: DnsQueryOptions = {}): Buffer {
+  const { recursionDesired = true } = options;
+  return dnsPacket.encode({
     type: 'query',
     id: Math.floor(Math.random() * 0xffff),
-    flags: dnsPacket.RECURSION_DESIRED as number,
+    flags: recursionDesired ? (dnsPacket.RECURSION_DESIRED as number) : 0,
     questions: [
       {
         type: DNS_TYPES[query.type] || query.type,
@@ -84,8 +87,14 @@ export async function queryWithDnsPacket(
       },
     ],
   });
+}
 
-  const response = await sendDnsQuery(packetOut, dnsServer, 53);
+export async function queryWithDnsPacket(
+  query: DNSQuery,
+  dnsServer: string = DEFAULT_DNS_SERVERS[0],
+  options: DnsQueryOptions = {}
+): Promise<DnsResponseSections> {
+  const response = await sendDnsQuery(encodeDnsQuery(query, options), dnsServer, 53);
   return decodeDnsResponse(response, query.type);
 }
 
