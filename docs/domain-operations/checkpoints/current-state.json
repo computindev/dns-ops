@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "5369aa4b8683e55b47016aa151f76b9e0f9db906",
+  "currentSha": "dd3edc14d70a864de5e3df3ee879de77f265e389",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2",
   "whatIsTrue": [
@@ -15,6 +15,7 @@
     "API and UI surfaces no longer treat zero findings as healthy unless coverage is explicitly complete",
     "FIX-02 preserves wire DNS flags, disables recursion for authoritative targets, and requires AA proof for managed completeness",
     "Unavailable authoritative evidence is actionable UNKNOWN rather than authoritative absence",
+    "FIX-03 exposes SPF as FIRST_LEVEL_ONLY with unresolved dependencies and no recursive budget claim",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
@@ -28,7 +29,7 @@
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2543 tests passed and 41 skipped after FIX-02; evidence: docs/domain-operations/evidence/gate-2/fix-02-authoritative-evidence.json"
+      "result": "2546 tests passed and 41 skipped after FIX-03; evidence: docs/domain-operations/evidence/gate-2/fix-03-spf-first-level.json"
     },
     {
       "command": "bun run build",
@@ -86,9 +87,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Implement the explicit first-level SPF contract",
     "Implement RFC 9989 DMARC discovery with stubbed fixtures",
     "Downgrade generic remediation to guidance-only"
   ],
-  "updatedAt": "2026-07-28T23:01:23Z"
+  "updatedAt": "2026-07-28T23:08:38Z"
 }
