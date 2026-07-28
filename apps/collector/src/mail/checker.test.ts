@@ -15,14 +15,16 @@ import {
 
 // Mock DNS resolution
 vi.mock('./dns.js', () => ({
+  resolveDomainExists: vi.fn(),
   resolveTXT: vi.fn(),
 }));
 
-import { resolveTXT } from './dns.js';
+import { resolveDomainExists, resolveTXT } from './dns.js';
 
 describe('Mail Checker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (resolveDomainExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
   });
 
   describe('performMailCheck', () => {
@@ -49,7 +51,7 @@ describe('Mail Checker', () => {
       expect(result.dmarc.present).toBe(false);
       expect(result.dkim.present).toBe(false);
       expect(result.spf.present).toBe(false);
-      expect(result.dmarc.errors).toContain('DNS error: NXDOMAIN');
+      expect(result.dmarc.dmarcDiscovery?.status).toBe('UNKNOWN');
     });
   });
 
@@ -73,7 +75,7 @@ describe('Mail Checker', () => {
 
       expect(result.present).toBe(false);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('DNS error: NXDOMAIN');
+      expect(result.dmarcDiscovery?.status).toBe('UNKNOWN');
     });
 
     it('should handle TXT records without DMARC', async () => {
@@ -86,7 +88,8 @@ describe('Mail Checker', () => {
 
       expect(result.present).toBe(false);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('No DMARC record found');
+      expect(result.errors).toContain('No applicable DMARC policy record found');
+      expect(result.dmarcDiscovery?.queries.length).toBeLessThanOrEqual(8);
     });
 
     it('should store raw record content', async () => {

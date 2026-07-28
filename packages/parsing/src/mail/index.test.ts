@@ -1,5 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { assessFirstLevelSpf, countDirectSpfLookupTerms, parseSPF } from './index.js';
+import { assessFirstLevelSpf, countDirectSpfLookupTerms, parseDMARC, parseSPF } from './index.js';
+
+describe('RFC 9989 DMARC tags', () => {
+  it('accepts RFC whitespace around the exact version tag', () => {
+    expect(parseDMARC('v = DMARC1 ; p=none')).toMatchObject({ policy: 'none' });
+    expect(parseDMARC('v=DMARC10; p=reject')).toBeNull();
+  });
+
+  it('accepts psd=u and ignores malformed psd values', () => {
+    expect(parseDMARC('v=DMARC1; p=reject; psd=u')).toMatchObject({
+      policy: 'reject',
+      publicSuffix: 'u',
+    });
+    const malformed = parseDMARC('v=DMARC1; p=reject; psd=bogus');
+    expect(malformed).toMatchObject({ policy: 'reject' });
+    expect(malformed?.publicSuffix).toBeUndefined();
+  });
+
+  it('applies the safe fallback consistently for duplicate policy tags', () => {
+    expect(parseDMARC('v=DMARC1; p=reject; p=bogus; rua=mailto:dmarc@example.com')).toMatchObject({
+      policy: 'none',
+    });
+  });
+
+  it('parses t=y and rejects malformed rua fallback URIs', () => {
+    expect(parseDMARC('v=DMARC1; p=reject; t=y')).toMatchObject({ testing: 'y' });
+    expect(parseDMARC('v=DMARC1; p=bogus; rua=mailto:%ZZ')).toBeNull();
+  });
+
+  it('parses non-existent-domain and public-suffix policy tags', () => {
+    expect(parseDMARC('v=DMARC1; p=reject; np=quarantine; psd=n')).toMatchObject({
+      policy: 'reject',
+      nonExistentSubdomainPolicy: 'quarantine',
+      publicSuffix: 'n',
+    });
+  });
+});
 
 describe('first-level SPF assessment', () => {
   it('FIX-03: exposes nested include and redirect as unresolved dependencies', () => {

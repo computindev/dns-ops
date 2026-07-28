@@ -104,7 +104,7 @@ export function parseDMARCResult(txtData: string): ResultOrError<DMARCRecord, Ma
 
   if (result === null) {
     // Check if it's because it's not a DMARC record
-    if (!txtData.includes('v=DMARC1')) {
+    if (!/^v[\t ]*=[\t ]*DMARC1(?:[\t ]*;|[\t ]*$)/.test(txtData)) {
       return Result.err(
         new MailParseError({
           message: 'Not a valid DMARC record: missing v=DMARC1',
@@ -114,13 +114,11 @@ export function parseDMARCResult(txtData: string): ResultOrError<DMARCRecord, Ma
       );
     }
 
-    // Missing required policy field
     return Result.err(
       new MailParseError({
-        message: 'DMARC record missing required policy (p=) field',
-        code: 'MISSING_REQUIRED_FIELD',
+        message: 'DMARC record contains invalid tag syntax',
+        code: 'INVALID_FORMAT',
         input: txtData,
-        field: 'p',
       })
     );
   }
@@ -294,7 +292,7 @@ export function parseAnyMailRecord(
   }
 
   // Check for DMARC
-  if (data.includes('v=DMARC1')) {
+  if (/^v[\t ]*=[\t ]*DMARC1(?:[\t ]*;|[\t ]*$)/.test(data)) {
     const dmarc = parseDMARCResult(txtData);
     if (dmarc.isOk()) {
       return { type: 'dmarc', result: dmarc };

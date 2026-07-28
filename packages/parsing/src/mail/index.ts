@@ -163,6 +163,9 @@ export interface DMARCRecord {
   version: string;
   policy: 'none' | 'quarantine' | 'reject';
   subdomainPolicy?: 'none' | 'quarantine' | 'reject';
+  nonExistentSubdomainPolicy?: 'none' | 'quarantine' | 'reject';
+  publicSuffix?: 'y' | 'n' | 'u';
+  testing?: 'y' | 'n';
   percentage?: number;
   rua?: string[]; // Aggregate report URIs
   ruf?: string[]; // Forensic report URIs
@@ -174,44 +177,69 @@ export interface DMARCRecord {
   raw: string;
 }
 
+function isValidDmarcUri(candidate: string): boolean {
+  const uri = candidate.trim();
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9\-._~:/?#[\]@$&'()*+;=%]*$/.test(uri)) {
+    return false;
+  }
+  return !/%(?![0-9A-Fa-f]{2})/.test(uri);
+}
+
 /**
  * Parse a DMARC TXT record
  */
 export function parseDMARC(txtData: string): DMARCRecord | null {
-  // Check if this is a DMARC record
-  if (!txtData.includes('v=DMARC1')) {
-    return null;
-  }
+  if (!/^v[\t ]*=[\t ]*DMARC1(?:[\t ]*;|[\t ]*$)/.test(txtData)) return null;
 
   const record: Partial<DMARCRecord> = {
     version: 'DMARC1',
     raw: txtData,
   };
-
+  let invalidPolicyTag = false;
+  const seenPolicyTags = new Set<string>();
+  const policies = new Set(['none', 'quarantine', 'reject']);
   const parts = txtData.split(/\s*;\s*/).filter(Boolean);
 
   for (const part of parts) {
     const [key, ...valueParts] = part.split('=');
+    const name = key.trim().toLowerCase();
     const value = valueParts.join('=').trim();
 
-    switch (key.trim()) {
+    switch (name) {
       case 'v':
-        record.version = value;
+        if (value !== 'DMARC1') return null;
         break;
       case 'p':
-        record.policy = value as 'none' | 'quarantine' | 'reject';
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else record.policy = value as DMARCRecord['policy'];
+        seenPolicyTags.add(name);
         break;
       case 'sp':
-        record.subdomainPolicy = value as 'none' | 'quarantine' | 'reject';
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else record.subdomainPolicy = value as DMARCRecord['subdomainPolicy'];
+        seenPolicyTags.add(name);
+        break;
+      case 'np':
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else {
+          record.nonExistentSubdomainPolicy = value as DMARCRecord['nonExistentSubdomainPolicy'];
+        }
+        seenPolicyTags.add(name);
+        break;
+      case 'psd':
+        if (value === 'y' || value === 'n' || value === 'u') record.publicSuffix = value;
+        break;
+      case 't':
+        if (value === 'y' || value === 'n') record.testing = value;
         break;
       case 'pct':
         record.percentage = parseInt(value, 10);
         break;
       case 'rua':
-        record.rua = value.split(',').map((s) => s.trim());
+        record.rua = value.split(',').map((item) => item.trim());
         break;
       case 'ruf':
-        record.ruf = value.split(',').map((s) => s.trim());
+        record.ruf = value.split(',').map((item) => item.trim());
         break;
       case 'fo':
         record.fo = value;
@@ -231,9 +259,10 @@ export function parseDMARC(txtData: string): DMARCRecord | null {
     }
   }
 
-  // Policy is required
-  if (!record.policy) {
-    return null;
+  if (invalidPolicyTag || !record.policy) {
+    const validRua = record.rua?.some(isValidDmarcUri);
+    if (!validRua) return null;
+    record.policy = 'none';
   }
 
   return record as DMARCRecord;
