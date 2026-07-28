@@ -32,6 +32,18 @@ interface MailFindingsData {
   domain: string;
   rulesetVersion: string;
   persisted: boolean;
+  evaluationCoverage: {
+    state: 'COMPLETE' | 'PARTIAL';
+    errors: Array<{
+      ruleId: string;
+      message: string;
+      status: 'UNKNOWN';
+      unknown: {
+        explanation: string;
+        actionLabel: string;
+      };
+    }>;
+  };
   mailConfig: MailConfig;
   findings: Finding[];
   suggestions: Suggestion[];
@@ -80,6 +92,23 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
 
   return (
     <div className="space-y-6">
+      {data.evaluationCoverage.state === 'PARTIAL' && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4" role="status">
+          <h4 className="font-semibold text-amber-900">Needs setup/evidence</h4>
+          <p className="mt-1 text-sm text-amber-800">
+            One or more checks could not be evaluated. Missing results are UNKNOWN, not healthy.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {data.evaluationCoverage.errors.map((evaluationError) => (
+              <li key={evaluationError.ruleId} className="text-sm text-amber-900">
+                <strong>{evaluationError.ruleId}:</strong> {evaluationError.unknown.explanation}{' '}
+                <span className="font-medium">{evaluationError.unknown.actionLabel}.</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 border border-indigo-100">
         <div className="flex items-center justify-between">
           <div>
@@ -89,7 +118,15 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <ScoreCircle score={mailConfig.securityScore} />
+            {data.evaluationCoverage.state === 'COMPLETE' ? (
+              <ScoreCircle score={mailConfig.securityScore} />
+            ) : (
+              <div className="rounded-full border-4 border-gray-300 px-3 py-4 text-center text-xs font-semibold text-gray-600">
+                Score
+                <br />
+                unavailable
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -145,9 +182,11 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
           )}
         </div>
 
-        {findings.length === 0 && (
+        {findings.length === 0 && data.evaluationCoverage.state === 'COMPLETE' && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-800 text-sm">✓ No mail configuration issues detected.</p>
+            <p className="text-green-800 text-sm">
+              ✓ No mail configuration issues detected by the checks that completed.
+            </p>
           </div>
         )}
 

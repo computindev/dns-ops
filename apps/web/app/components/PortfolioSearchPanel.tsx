@@ -22,6 +22,10 @@ interface SearchResult {
   zoneManagement: ZoneManagement;
   findings: Array<{ severity: Severity; summary?: string }>;
   findingsEvaluated: boolean;
+  evaluationCoverage: {
+    state: 'COMPLETE' | 'PARTIAL';
+    errors: Array<{ unknown: { explanation: string; actionLabel: string } }>;
+  };
   latestSnapshot: {
     id: string;
     createdAt: string;
@@ -366,7 +370,12 @@ function SearchResultCard({ result }: { result: SearchResult }) {
 
       <div className="mt-3 text-sm text-gray-600">
         {!result.findingsEvaluated ? (
-          <span>Rules not evaluated yet.</span>
+          <span>
+            Needs setup/evidence. {result.evaluationCoverage.errors[0]?.unknown.explanation}{' '}
+            <strong>
+              {result.evaluationCoverage.errors[0]?.unknown.actionLabel ?? 'Run a fresh scan'}.
+            </strong>
+          </span>
         ) : result.findings.length === 0 ? (
           <span>No matching findings for the current filters.</span>
         ) : (

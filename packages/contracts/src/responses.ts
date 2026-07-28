@@ -4,6 +4,7 @@
  */
 
 import type { Confidence, KnownProvider, RiskPosture, Severity } from './enums.js';
+import type { EvaluationCoverage } from './evaluation.js';
 import type {
   FindingSummary,
   RemediationRequestDto,
@@ -428,6 +429,7 @@ export interface SnapshotListItem {
   createdAt: Date;
   rulesetVersionId: string | null;
   findingsEvaluated: boolean;
+  evaluationCoverage: EvaluationCoverage;
   queryScope: {
     names: string[];
     types: string[];
@@ -455,6 +457,7 @@ export interface SnapshotResponse {
   createdAt: Date;
   rulesetVersionId: string | null;
   findingsEvaluated: boolean;
+  evaluationCoverage: EvaluationCoverage;
   queryScope: {
     names: string[];
     types: string[];
@@ -893,6 +896,7 @@ export interface DomainWithFindings {
   updatedAt: Date;
   findings: Finding[];
   findingsEvaluated: boolean;
+  evaluationCoverage: EvaluationCoverage;
   latestSnapshot: {
     id: string;
     createdAt: Date;

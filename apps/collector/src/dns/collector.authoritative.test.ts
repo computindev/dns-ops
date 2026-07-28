@@ -31,6 +31,7 @@ vi.mock('@dns-ops/db', () => ({
   SnapshotRepository: vi.fn().mockImplementation(function () {
     this.create = vi.fn().mockResolvedValue({ id: 'snapshot-1' });
     this.updateRulesetVersion = vi.fn().mockResolvedValue(undefined);
+    this.updateEvaluationCoverage = vi.fn().mockResolvedValue(undefined);
   }),
   ObservationRepository: vi.fn().mockImplementation(function () {
     this.createMany = vi.fn().mockResolvedValue([]);
@@ -52,7 +53,12 @@ vi.mock('@dns-ops/db', () => ({
 
 vi.mock('@dns-ops/rules', () => ({
   RulesEngine: vi.fn().mockImplementation(function () {
-    this.evaluate = vi.fn().mockReturnValue({ findings: [], suggestions: [] });
+    this.evaluate = vi.fn().mockReturnValue({
+      findings: [],
+      suggestions: [],
+      errors: [],
+      complete: true,
+    });
   }),
   authoritativeFailureRule: {
     id: 'auth-failure',

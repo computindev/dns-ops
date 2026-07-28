@@ -837,5 +837,57 @@ describe('findingsRoutes runtime', () => {
       expect(json.summary.totalFindings).toBe(1);
       expect(json.mailConfig.hasSpf).toBe(true);
     });
+
+    it('FIX-01: exposes partial UNKNOWN coverage even when no mail issue finding exists', async () => {
+      const evaluationCoverage = {
+        state: 'PARTIAL',
+        errors: [
+          {
+            code: 'RULE_EXECUTION_FAILED',
+            ruleId: 'mail.test-throw',
+            message: 'Rule mail.test-throw could not be evaluated',
+            status: 'UNKNOWN',
+            unknown: {
+              reason: 'CHECK_EVALUATION_FAILED',
+              explanation: 'The mail check failed before it produced a trustworthy result.',
+              action: 'RUN_FRESH_SCAN',
+              actionLabel: 'Run a fresh scan',
+              blocking: true,
+            },
+          },
+        ],
+      };
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            resultState: 'partial',
+            metadata: { evaluation: evaluationCoverage },
+          },
+        ],
+        findings: [
+          {
+            id: 'dns-only',
+            snapshotId: 'snap-1',
+            type: 'dns.partial-coverage-unmanaged',
+            title: 'Coverage is partial',
+            severity: 'info',
+            ruleVersion: '1.0.0',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/mail');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        findings: unknown[];
+        evaluationCoverage: typeof evaluationCoverage;
+      };
+      expect(json.findings).toEqual([]);
+      expect(json.evaluationCoverage).toEqual(evaluationCoverage);
+      expect(json.evaluationCoverage.errors[0]?.status).toBe('UNKNOWN');
+    });
   });
 });

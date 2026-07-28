@@ -23,6 +23,10 @@ interface SnapshotListItem {
   createdAt: string;
   rulesetVersionId: string | null;
   findingsEvaluated: boolean;
+  evaluationCoverage: {
+    state: 'COMPLETE' | 'PARTIAL';
+    errors: Array<{ unknown: { explanation: string; actionLabel: string } }>;
+  };
   queryScope: { names: string[]; types: string[]; vantages: string[] };
 }
 
@@ -299,8 +303,11 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
                       Evaluated
                     </span>
                   ) : (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                      Pending
+                    <span
+                      className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"
+                      title={`${snap.evaluationCoverage.errors[0]?.unknown.explanation ?? 'Evaluation coverage is incomplete'} ${snap.evaluationCoverage.errors[0]?.unknown.actionLabel ?? 'Run a fresh scan'}.`}
+                    >
+                      UNKNOWN — run fresh scan
                     </span>
                   )}
                 </td>

@@ -5,6 +5,7 @@
  * saved filters, and template management.
  */
 
+import { evaluationCoverageOrUnknown, isEvaluationComplete } from '@dns-ops/contracts';
 import {
   AuditEventRepository,
   DomainNoteRepository,
@@ -175,12 +176,15 @@ portfolioRoutes.post('/search', async (c) => {
           ...domain,
           findings: [],
           findingsEvaluated: false,
+          evaluationCoverage: evaluationCoverageOrUnknown(undefined),
           latestSnapshot: null,
         };
       }
 
-      // Check if findings were evaluated (rulesetVersionId set on snapshot)
-      const findingsEvaluated = latestSnapshot.rulesetVersionId !== null;
+      // Only explicit complete coverage permits a zero-finding result to filter
+      // the domain out. A ruleset ID alone does not prove every check completed.
+      const evaluationCoverage = evaluationCoverageOrUnknown(latestSnapshot.metadata?.evaluation);
+      const findingsEvaluated = isEvaluationComplete(evaluationCoverage);
       const domainFindings = findingsBySnapshot.get(latestSnapshot.id) || [];
 
       // Filter out if severity filter doesn't match AND findings were evaluated
@@ -193,6 +197,7 @@ portfolioRoutes.post('/search', async (c) => {
         ...domain,
         findings: domainFindings,
         findingsEvaluated,
+        evaluationCoverage,
         latestSnapshot: {
           id: latestSnapshot.id,
           createdAt: latestSnapshot.createdAt,

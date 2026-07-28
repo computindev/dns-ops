@@ -5,6 +5,7 @@
  * Includes DNS rules and Mail rules with database persistence.
  */
 
+import { evaluationCoverageOrUnknown } from '@dns-ops/contracts';
 import type { NewFinding, NewSuggestion } from '@dns-ops/db';
 import {
   DkimSelectorRepository,
@@ -182,6 +183,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
         rulesetVersionId,
         persisted: true,
         idempotent: true, // Indicates findings were already present for this ruleset version
+        evaluationCoverage: evaluationCoverageOrUnknown(snapshot.metadata?.evaluation),
         summary: {
           totalFindings: existingFindingsForVersion.length,
           dnsFindings: dnsFindings.length,
@@ -212,9 +214,15 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
       rulesetVersion: ruleset.version,
     };
 
-    // Evaluate rules
+    // Evaluate rules. Persist explicit coverage so zero findings cannot imply
+    // healthy when an enabled rule failed.
     const engine = new RulesEngine(ruleset);
-    const { findings, suggestions } = engine.evaluate(context);
+    const { findings, suggestions, errors, complete } = engine.evaluate(context);
+    const evaluationCoverage = {
+      state: complete ? ('COMPLETE' as const) : ('PARTIAL' as const),
+      errors,
+    };
+    await snapshotRepo.updateEvaluationCoverage(snapshotId, evaluationCoverage);
 
     // Delete existing findings for this ruleset version only (not other versions)
     // This preserves historical findings from previous ruleset versions
@@ -283,6 +291,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
       evaluated: true,
       idempotent: false, // Indicates findings were freshly evaluated (not cached)
       rulesEvaluated: engine.getEnabledRulesCount(),
+      evaluationCoverage,
       summary: {
         totalFindings: persistedFindings.length,
         dnsFindings: dnsFindings.length,
@@ -375,6 +384,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings/mail', requireAuth, async (c)
       const mainData = (await mainResponse.json()) as {
         findings?: Array<{ type: string }>;
         categorized?: { mail?: Array<{ type: string }> };
+        evaluationCoverage?: { state: 'COMPLETE' | 'PARTIAL'; errors: unknown[] };
       };
       const evaluatedMailFindings = mainData.categorized?.mail || [];
 
@@ -388,6 +398,8 @@ findingsRoutes.get('/snapshot/:snapshotId/findings/mail', requireAuth, async (c)
         snapshotId,
         domain: domain.name,
         rulesetVersion: CURRENT_RULESET_VERSION,
+        evaluationCoverage:
+          mainData.evaluationCoverage ?? evaluationCoverageOrUnknown(snapshot.metadata?.evaluation),
         summary: {
           totalFindings: evaluatedMailFindings.length,
           dkimSelectorsFound: dkimSelectors.filter((s) => s.found).length,
@@ -416,6 +428,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings/mail', requireAuth, async (c)
       domain: domain.name,
       rulesetVersion: mailFindings[0]?.ruleVersion || CURRENT_RULESET_VERSION,
       persisted: true,
+      evaluationCoverage: evaluationCoverageOrUnknown(snapshot.metadata?.evaluation),
       summary: {
         totalFindings: mailFindings.length,
         suggestions: allSuggestions.length,
@@ -834,7 +847,7 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
       domainName: string;
       findingsCount: number;
       suggestionsCount: number;
-      status: 'success' | 'error';
+      status: 'success' | 'partial' | 'error';
       error?: string;
     }> = [];
 
@@ -894,9 +907,13 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
           rulesetVersion: ruleset.version,
         };
 
-        // Evaluate rules
+        // Evaluate rules and preserve incomplete coverage during backfill.
         const engine = new RulesEngine(ruleset);
-        const { findings, suggestions } = engine.evaluate(context);
+        const { findings, suggestions, errors, complete } = engine.evaluate(context);
+        await snapshotRepo.updateEvaluationCoverage(snapshot.id, {
+          state: complete ? 'COMPLETE' : 'PARTIAL',
+          errors,
+        });
 
         // Delete any existing findings for this ruleset version (idempotent)
         await findingRepo.deleteBySnapshotIdAndRulesetVersionId(snapshot.id, rulesetVersionId);
@@ -957,7 +974,7 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
           domainName: snapshot.domainName,
           findingsCount: persistedFindings.length,
           suggestionsCount: persistedSuggestions.length,
-          status: 'success',
+          status: complete ? 'success' : 'partial',
         });
       } catch (error) {
         results.push({
