@@ -1,0 +1,94 @@
+{
+  "outcomeId": "dns-ops-phase-0-1",
+  "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
+  "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
+  "currentSha": "f1edcdf34b559358f5b3a132f771caa10c2d61d6",
+  "branch": "agent/domain-operations-phase-0-1-implementation",
+  "currentGate": "GATE_2",
+  "whatIsTrue": [
+    "Gate 1 repository truth was accepted by Antonio",
+    "Day 0 founder declarations and controlled test assets remain incomplete",
+    "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
+    "PR #3 remains open and draft",
+    "No product behavior had changed at the recorded currentSha",
+    "Production and client mutation remain prohibited"
+  ],
+  "passingChecks": [
+    {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed at the Gate 1 baseline"
+    },
+    {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed at the Gate 1 baseline"
+    },
+    {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2539 tests passed and 41 skipped at the Gate 1 baseline"
+    },
+    {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed at the Gate 1 baseline"
+    },
+    {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "No schema drift at the Gate 1 baseline"
+    }
+  ],
+  "failingChecks": [
+    {
+      "command": "bun run --filter @dns-ops/db build in clean standalone order",
+      "failure": "Contracts declarations were not built first",
+      "blocking": false
+    },
+    {
+      "command": "bun run --filter @dns-ops/db verify-migrations",
+      "failure": "An isolated DATABASE_URL was unavailable",
+      "blocking": false
+    },
+    {
+      "command": "smoke and Playwright E2E",
+      "failure": "Required isolated database and running services were unavailable",
+      "blocking": false
+    }
+  ],
+  "pendingExternalInputs": [
+    "Measured manual-check baseline",
+    "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
+    "Authorized non-production test domain, web host, mail subdomain, zone, and provider",
+    "Scoped provider-token secret name and fingerprint confirmation",
+    "Mutable-record allowlist",
+    "Previous TTL values",
+    "Baseline, rollback, and token revocation owner"
+  ],
+  "materialDecisions": [
+    "SPF remains first-level only",
+    "RFC 9989 DMARC discovery with an eight-query maximum is required",
+    "Coverage gaps never automatically create signals, alerts, or cases",
+    "Migrated conditions use one canonical signal path",
+    "Generic remediation is guidance-only without complete provider context",
+    "MCP uses a static token-hash principal map and exactly ten tools",
+    "The founder override removes time and context limits as automatic stop conditions",
+    "Incomplete Day 0 fields block live tests and final acceptance, not deterministic implementation"
+  ],
+  "deferredScope": [
+    "Recursive SPF evaluation",
+    "DMARC RUA and RUF ingestion",
+    "Formal hypothesis graph",
+    "Built-in reasoning agent",
+    "Buzz integration",
+    "OAuth and principal-management UI",
+    "Provider-write product capability",
+    "Client portal, billing, and commercial features"
+  ],
+  "nextActions": [
+    "Commit the founder override and checkpoint update",
+    "Add a deterministic throwing-rule false-green fixture",
+    "Implement typed rule-evaluation errors and actionable UNKNOWN propagation",
+    "Correct authoritative DNS evidence handling",
+    "Implement the explicit first-level SPF contract",
+    "Implement RFC 9989 DMARC discovery with stubbed fixtures",
+    "Downgrade generic remediation to guidance-only"
+  ],
+  "updatedAt": "2026-07-28T22:39:44Z"
+}

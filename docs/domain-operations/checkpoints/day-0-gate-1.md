@@ -1,9 +1,9 @@
 # DNS Ops Phase 0–1 — Day 0 / Gate 1 Repository Truth
 
 **Recorded:** 2026-07-28  
-**Checkpoint status:** `GATE_1_PASS` / `DAY_0_INPUT_REQUIRED` — product implementation has not started
+**Checkpoint status:** `GATE_1_PASS` / `DAY_0_INPUT_REQUIRED` / `GATE_2_AUTHORIZED`
 
-Gate 1 was accepted by the founder on 2026-07-28. PR #3 remains open and draft; merge and implementation remain unauthorized until Day 0 passes.
+Gate 1 was accepted by the founder on 2026-07-28. PR #3 remains open and draft; merge and deployment remain unauthorized. The sequencing override in [`../amendments/2026-07-28-autonomous-completion-override.md`](../amendments/2026-07-28-autonomous-completion-override.md) authorizes independent Gate 2 and non-live Gate 3 work while preserving the external-input block on live mutations and final acceptance.
 
 ## Git authority
 
@@ -32,8 +32,9 @@ Read in required order:
 6. `docs/domain-operations/phase-0-1/04-review-gates-and-agent-prompt.md`
 7. `docs/domain-operations/controlled-test-assets-runbook-v4.1.md`
 8. `docs/domain-operations/day-0-worksheet.md`
+9. `docs/domain-operations/amendments/2026-07-28-autonomous-completion-override.md`
 
-The product brief was not used to expand scope.
+The product brief was not used to expand scope. The amendment changes stop/sequencing behavior only; all V4.1 scope and safety boundaries remain authoritative.
 
 ## Repository-native commands
 
@@ -227,5 +228,5 @@ Scope expansion is not available. If correctness or the canonical operating loop
 - Founder time consumed: **0 hours**.
 - Remaining engineering budget: **14.5 days total**, with **12 days reserved after Gate 1**.
 - Remaining founder budget: **24 hours**.
-- Real blocker: human-only Day 0 fields and unavailable test-asset authorization/secret presence.
-- Next automatic action after founder inputs: validate the completed worksheet without reading secret values, record Day 0 PASS, then begin Gate 2 correctness work with rule-error and DNS uncertainty tests first.
+- Real external blocker: human-only Day 0 fields and unavailable test-asset authorization/secret presence block live mutations and final Gate 3/4 acceptance, but not deterministic Gate 2 work.
+- Next automatic action: begin Gate 2 with the throwing-rule false-green fixture, then typed UNKNOWN propagation and DNS evidence honesty; continue independent work while preserving the bundled founder-input request.
