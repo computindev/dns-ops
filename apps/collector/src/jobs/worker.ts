@@ -366,13 +366,14 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
         domainName: domain.normalizedName,
       });
     } catch (finalizationError) {
-      logger.warn('Canonical condition finalization failed (non-fatal)', {
+      logger.error('Canonical condition finalization failed; monitoring refresh will retry', {
         snapshotId: result.snapshotId,
         error:
           finalizationError instanceof Error
             ? finalizationError.message
             : String(finalizationError),
       });
+      throw finalizationError;
     }
 
     await job.updateProgress(100);

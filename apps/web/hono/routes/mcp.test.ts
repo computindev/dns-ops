@@ -12,7 +12,7 @@ const env = {
       tokenHash: hashMcpToken(token),
       tenantId: 'tenant-a',
       actorId: 'actor-a',
-      scopes: ['CASE_READ'],
+      scopes: ['DOMAIN_READ', 'SIGNAL_READ', 'CASE_READ', 'CASE_WRITE', 'SCAN_REQUEST'],
     },
   ]),
 };
@@ -54,6 +54,23 @@ describe('MCP discovery transport', () => {
     });
     const listed = await server.request('/mcp', rpc('tools/list'), env);
     await expect(listed.json()).resolves.toMatchObject({ result: { tools: MCP_TOOLS } });
+  });
+
+  it('does not disclose tools above the caller scope', async () => {
+    const limitedEnv = {
+      MCP_PRINCIPALS_JSON: JSON.stringify([
+        {
+          tokenHash: hashMcpToken(token),
+          tenantId: 'tenant-a',
+          actorId: 'actor-a',
+          scopes: ['CASE_READ'],
+        },
+      ]),
+    };
+    const response = await app().request('/mcp', rpc('tools/list'), limitedEnv);
+    await expect(response.json()).resolves.toMatchObject({
+      result: { tools: [{ name: 'case_get', requiredScope: 'CASE_READ' }] },
+    });
   });
 
   it('rejects malformed and unimplemented transport methods without leaking exceptions', async () => {

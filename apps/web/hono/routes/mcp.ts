@@ -49,7 +49,11 @@ mcpRoutes.post('/', async (c) => {
     });
   }
   if (request.method === 'tools/list') {
-    return c.json({ jsonrpc: '2.0', id: request.id ?? null, result: { tools: MCP_TOOLS } });
+    return c.json({
+      jsonrpc: '2.0',
+      id: request.id ?? null,
+      result: { tools: MCP_TOOLS.filter((tool) => principal.scopes.has(tool.requiredScope)) },
+    });
   }
   return c.json(rpcError(request.id, -32601, 'Method not found'), 404);
 });

@@ -36,8 +36,9 @@ app.use('*', authMiddleware);
 
 // Public API routes (no auth required)
 app.route('/api/auth', authRoutes);
-// MCP authenticates independently with a static bearer-principal map.
-app.route('/mcp', mcpRoutes);
+// MCP authenticates independently with a static bearer-principal map. This handler is
+// served by TanStack Start's /api entrypoint, so its public application path is /api/mcp.
+app.route('/api/mcp', mcpRoutes);
 
 // All other API routes require authentication. enforceTenantIsolation runs as
 // a structural chokepoint right after auth populates the tenant context, so
