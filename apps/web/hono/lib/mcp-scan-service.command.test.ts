@@ -19,6 +19,7 @@ vi.mock('@dns-ops/db', () => ({
 
 vi.mock('./collector-proxy.js', () => ({ proxyToCollector: mocks.proxyToCollector }));
 
+import { consumeMcpScanQuota, resetMcpScanQuotaForTest } from './mcp-scan-rate-limit.js';
 import { McpScanService } from './mcp-scan-service.js';
 
 function service() {
@@ -31,7 +32,10 @@ function service() {
 }
 
 describe('McpScanService command controls', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    resetMcpScanQuotaForTest();
+  });
 
   it('denies a cross-tenant registered-domain ID before claiming or proxying a scan', async () => {
     mocks.findById.mockResolvedValue({
@@ -74,5 +78,32 @@ describe('McpScanService command controls', () => {
     });
     expect(mocks.proxyToCollector).not.toHaveBeenCalled();
     expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  it('persists a rate-limited command without proxying a collector scan', async () => {
+    mocks.findById.mockResolvedValue({
+      id: 'domain-1',
+      tenantId: 'tenant-1',
+      normalizedName: 'example.com',
+    });
+    mocks.claim.mockResolvedValue({ state: 'CLAIMED', command: { id: 'command-1' } });
+    mocks.complete.mockResolvedValue(undefined);
+    for (let index = 0; index < 10; index += 1) consumeMcpScanQuota('tenant-1');
+
+    await expect(
+      service().request({ domainId: 'domain-1', idempotencyKey: 'key-rate-limited' })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'RATE_LIMITED' },
+      replayed: false,
+    });
+    expect(mocks.proxyToCollector).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith(
+      'tenant-1',
+      'command-1',
+      expect.objectContaining({ error: { code: 'RATE_LIMITED', message: expect.any(String) } }),
+      undefined,
+      'FAILED'
+    );
   });
 });
