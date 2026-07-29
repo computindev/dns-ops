@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   claim: vi.fn(),
   complete: vi.fn(),
   openCanonicalCase: vi.fn(),
+  setCaseDisposition: vi.fn(),
 }));
 
 vi.mock('@dns-ops/db', () => ({
@@ -13,6 +14,7 @@ vi.mock('@dns-ops/db', () => ({
   },
   OperationalConditionService: class {
     openCanonicalCase = mocks.openCanonicalCase;
+    setCaseDisposition = mocks.setCaseDisposition;
   },
 }));
 
@@ -46,6 +48,41 @@ describe('McpCaseCommandService command failures', () => {
       'tenant-1',
       'command-1',
       expect.objectContaining({ error: expect.objectContaining({ code: 'COMMAND_FAILED' }) }),
+      undefined,
+      'FAILED'
+    );
+  });
+
+  it('persists a stale expectedVersion result with no internal exception leakage', async () => {
+    mocks.claim.mockResolvedValue({ state: 'CLAIMED', command: { id: 'command-2' } });
+    mocks.setCaseDisposition.mockRejectedValue(
+      Object.assign(new Error('database conflict detail'), { code: 'OPERATION_CONFLICT' })
+    );
+    mocks.complete.mockResolvedValue(undefined);
+
+    const service = new McpCaseCommandService({} as never, {
+      tenantId: 'tenant-1',
+      principalId: 'principal-1',
+      actorId: 'actor-1',
+      scopes: new Set(['CASE_WRITE']),
+    });
+
+    await expect(
+      service.caseSetDisposition({
+        caseId: 'case-1',
+        disposition: 'ACKNOWLEDGED',
+        expectedVersion: 1,
+        idempotencyKey: 'key-2',
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: 'CASE_VERSION_STALE', message: 'Case version is stale' },
+      replayed: false,
+    });
+    expect(mocks.complete).toHaveBeenCalledWith(
+      'tenant-1',
+      'command-2',
+      expect.objectContaining({ error: expect.objectContaining({ code: 'CASE_VERSION_STALE' }) }),
       undefined,
       'FAILED'
     );
