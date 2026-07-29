@@ -8,6 +8,8 @@ export const mcpRoutes = new Hono<Env>();
 
 type JsonRpcRequest = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
 
+const MCP_PRINCIPALS_SECRET_KEY = 'MCP_PRINCIPALS_JSON';
+
 function rpcError(id: unknown, code: number, message: string) {
   return {
     jsonrpc: '2.0',
@@ -17,7 +19,9 @@ function rpcError(id: unknown, code: number, message: string) {
 }
 
 function principalSecret(c: { env: Env['Bindings'] }): string | undefined {
-  return c.env.MCP_PRINCIPALS_JSON ?? process.env.MCP_PRINCIPALS_JSON;
+  // Bracket access keeps Nitro's Node runtime environment dynamic rather than
+  // replacing an undeclared secret with undefined at build time.
+  return c.env.MCP_PRINCIPALS_JSON ?? process.env[MCP_PRINCIPALS_SECRET_KEY];
 }
 
 /**
