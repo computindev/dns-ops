@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "ea43d32adbaeffa641ccffc32b85c08deeee748d",
+  "currentSha": "ef38151b670d64d97024dac618c6361c16a36da7",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -29,24 +29,25 @@
     "Bounded TLS evidence pins a validated public address while preserving SNI and independently records certificate chain and hostname authorization",
     "Bounded HTTP evidence covers the HTTP/HTTPS apex/www matrix, manual redirect topology, and HTML-only homepage indexability with safe-stop handling for unsafe redirects",
     "Tenant-scoped profile and latest external-evidence routes provide actionable setup state; profile mutation and audit history are atomic",
+    "Synchronous and scheduled collection paths now persist profile-gated RDAP/TLS/HTTP evidence with tenant, snapshot, hostname, feature-gate, timeout, and semaphore controls",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
     {
       "command": "bun run lint",
-      "result": "8 of 8 workspace tasks passed after tenant-scoped setup/evidence routes"
+      "result": "8 of 8 workspace tasks passed after profile-gated evidence collection"
     },
     {
       "command": "bun run typecheck",
-      "result": "14 of 14 workspace tasks passed after tenant-scoped setup/evidence routes"
+      "result": "14 of 14 workspace tasks passed after profile-gated evidence collection"
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2646 tests passed and 41 skipped after tenant-scoped setup/evidence routes"
+      "result": "2651 tests passed and 41 skipped after profile-gated evidence collection"
     },
     {
       "command": "bun run build",
-      "result": "8 of 8 workspace tasks passed after tenant-scoped setup/evidence routes"
+      "result": "8 of 8 workspace tasks passed after profile-gated evidence collection"
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
@@ -100,11 +101,11 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Wire profile-gated RDAP/TLS/HTTP evidence collection and persistence into synchronous and scheduled snapshots",
     "Render setup/evidence and profile state in the Domain 360 UI without treating UNKNOWN as healthy",
+    "Wire baseline-aware condition evaluation to the canonical signal/case service",
     "Wire baseline-aware condition evaluation to the canonical signal/case service",
     "Converge migrated alert creation on the canonical signal path and prove FIX-06",
     "Add deterministic FIX-05 stale-evidence and FIX-06 canonical deduplication fixtures"
   ],
-  "updatedAt": "2026-07-29T15:15:06Z"
+  "updatedAt": "2026-07-29T15:37:52Z"
 }
