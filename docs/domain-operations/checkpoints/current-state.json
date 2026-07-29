@@ -40,6 +40,7 @@
     "The only external MCP transport is POST /mcp, mounted in TanStack's server-only SSR entrypoint; it was smoke-tested from the built Node server with a static hashed principal",
     "New MCP scan commands have a tenant-scoped 10-per-minute limiter before proxying; completed idempotent replays bypass the quota and the collector remains the downstream rate-limit boundary",
     "A deterministic MCP transport harness calls all ten tools with schema-valid arguments and asserts typed JSON-RPC results plus malformed-schema rejection; service-level tenant, idempotency, audit, and stale-version proofs remain to be consolidated",
+    "FIX-05 proves stale TLS evidence remains setup/evidence with no canonical observation or delivery; FIX-06 proves duplicate canonical observations create one signal/case/alert and delivery occurs only on create and reopen",
     "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records"
   ],
   "passingChecks": [
@@ -112,8 +113,8 @@
   ],
   "nextActions": [
     "Build the deterministic MCP harness for all ten tool outcomes, scope/tenant negatives, parity, idempotency, and rate-limit evidence",
-    "Add the remaining case UI and deterministic FIX-06 end-to-end lifecycle fixture",
+    "Add the remaining case UI and consolidate service-level MCP tenant, idempotency, audit, stale-version, and rate-limit proofs into its deterministic harness",
     "Complete isolated PostgreSQL migration/concurrency verification and retain live Gate 3/4 blocks"
   ],
-  "updatedAt": "2026-07-29T18:08:00Z"
+  "updatedAt": "2026-07-29T18:10:00Z"
 }
