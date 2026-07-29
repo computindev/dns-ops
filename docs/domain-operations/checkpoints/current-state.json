@@ -2,9 +2,9 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "dc9eae4cc72764f9a8c1b73262b3631a2bc20b15",
+  "currentSha": "021753fa35138bfc2ada3be99f435e17917ca40d",
   "branch": "agent/domain-operations-phase-0-1-implementation",
-  "currentGate": "GATE_2",
+  "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
   "whatIsTrue": [
     "Gate 1 repository truth was accepted by Antonio",
     "Day 0 founder declarations and controlled test assets remain incomplete",
@@ -17,28 +17,30 @@
     "Unavailable authoritative evidence is actionable UNKNOWN rather than authoritative absence",
     "FIX-03 exposes SPF as FIRST_LEVEL_ONLY with unresolved dependencies and no recursive budget claim",
     "FIX-04 performs RFC 9989 DMARC policy discovery with an eight-query maximum and effective p/sp/np/t policy evidence",
+    "Gate 2 passed: generic remediation is guidance-only, legacy executable text is sanitized, and closure requires lifecycle-fresh evidence",
+    "Suggestion reads and writes are tenant-isolated through finding, snapshot, and domain ownership",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
     {
       "command": "bun run lint",
-      "result": "8 of 8 workspace tasks passed at the Gate 1 baseline"
+      "result": "8 of 8 workspace tasks passed after Gate 2 remediation completion"
     },
     {
       "command": "bun run typecheck",
-      "result": "14 of 14 workspace tasks passed at the Gate 1 baseline"
+      "result": "14 of 14 workspace tasks passed after Gate 2 remediation completion"
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2566 tests passed and 41 skipped after FIX-04; evidence: docs/domain-operations/evidence/gate-2/fix-04-rfc9989-dmarc-discovery.json"
+      "result": "2571 tests passed and 41 skipped after Gate 2 remediation completion; evidence: docs/domain-operations/evidence/gate-2/guidance-only-remediation.json"
     },
     {
       "command": "bun run build",
-      "result": "8 of 8 workspace tasks passed at the Gate 1 baseline"
+      "result": "8 of 8 workspace tasks passed after Gate 2 remediation completion"
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
-      "result": "No schema drift at the Gate 1 baseline"
+      "result": "No schema drift after Gate 2 remediation completion"
     }
   ],
   "failingChecks": [
@@ -88,7 +90,11 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Downgrade generic remediation to guidance-only"
+    "Implement minimal domain purpose/profile and bounded RDAP/TLS/HTTP evidence",
+    "Implement setup/evidence lane without automatic signal promotion",
+    "Implement six canonical signal kinds and one deduplicated case lifecycle",
+    "Converge migrated alert creation on the canonical signal path",
+    "Add required operating playbooks and deterministic FIX-05/FIX-06 fixtures"
   ],
-  "updatedAt": "2026-07-28T23:42:19Z"
+  "updatedAt": "2026-07-29T03:56:46Z"
 }

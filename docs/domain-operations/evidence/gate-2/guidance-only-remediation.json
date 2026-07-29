@@ -1,5 +1,5 @@
 {
-  "fixtureId": "FIX-05",
+  "evidenceId": "GATE2-REMEDIATION-GUIDANCE",
   "recordedAt": "2026-07-29T03:56:46Z",
   "implementationBaseSha": "4b4e1f863809e5e938905cc5ce2226524d6845a5",
   "postFixAssertions": [
