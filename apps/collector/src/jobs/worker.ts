@@ -27,6 +27,7 @@ import {
   trackJobStart,
 } from '../middleware/error-tracking.js';
 import { getJobMetrics } from '../middleware/job-metrics.js';
+import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import { generateAndSendFindingAlerts } from './alert-from-findings.js';
 import {
   type CollectDomainJobData,
@@ -89,6 +90,23 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
 
     const collector = new DNSCollector(config, db);
     const result = await collector.collect();
+
+    const evidenceDomain = await new DomainRepository(db).findByNameForTenant(domain, tenantId);
+    if (evidenceDomain) {
+      try {
+        await collectAndPersistDomainEvidence(db, {
+          snapshotId: result.snapshotId,
+          tenantId,
+          domainId: evidenceDomain.id,
+          domain: evidenceDomain.normalizedName,
+        });
+      } catch (evidenceError) {
+        logger.warn('External evidence collection failed (non-fatal)', {
+          snapshotId: result.snapshotId,
+          error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+        });
+      }
+    }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook
     // Alerts only apply to monitored domains — the function handles the lookup
@@ -288,8 +306,11 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
     // Get domain to check zone management
     const domain = await domainRepo.findById(domainId);
-    if (!domain) {
-      throw new Error(`Domain ${domainId} not found`);
+    if (!domain || domain.tenantId !== tenantId) {
+      throw new Error(`Domain ${domainId} is outside the monitoring tenant`);
+    }
+    if (domain.normalizedName !== domainName.toLowerCase()) {
+      throw new Error('Monitoring job domain name does not match the registered domain');
     }
 
     const config: CollectionConfig = {
@@ -303,6 +324,20 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
     const collector = new DNSCollector(config, db);
     const result = await collector.collect();
+
+    try {
+      await collectAndPersistDomainEvidence(db, {
+        snapshotId: result.snapshotId,
+        tenantId,
+        domainId: domain.id,
+        domain: domain.normalizedName,
+      });
+    } catch (evidenceError) {
+      logger.warn('External evidence collection failed (non-fatal)', {
+        snapshotId: result.snapshotId,
+        error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+      });
+    }
 
     await job.updateProgress(100);
 
