@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "1e9de63dc5c7accbae928a3af57b0a907bd14011",
+  "currentSha": "0d673b45b046b9f6d6e1b09601acf42a84b881ea",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -136,5 +136,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T19:52:00Z"
+  "updatedAt": "2026-07-29T20:00:00Z"
 }
