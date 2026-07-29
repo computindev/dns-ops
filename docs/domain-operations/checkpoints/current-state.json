@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "11f8083ea5fae5c7d047e4c70340f35e35d657d4",
+  "currentSha": "1e9de63dc5c7accbae928a3af57b0a907bd14011",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -51,6 +51,7 @@
     "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added",
     "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval",
     "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability",
+    "A tested fault-run artifact contract validates the runbook evidence shape and rejects malformed/redaction-unsafe artifacts without a provider client, secret, or network operation",
     "The contract-to-evidence audit is reconciled with the completed fail-closed policy and latest exact-SHA independent review; only founder-controlled live/manual inputs remain blocked"
   ],
   "passingChecks": [
@@ -64,7 +65,7 @@
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2728 tests passed and 41 skipped after fail-closed controlled-live policy coverage"
+      "result": "2730 tests passed and 41 skipped after controlled-live policy and fault-run artifact coverage"
     },
     {
       "command": "bun run build",
@@ -135,5 +136,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T19:35:00Z"
+  "updatedAt": "2026-07-29T19:52:00Z"
 }
