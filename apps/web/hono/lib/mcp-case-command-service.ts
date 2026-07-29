@@ -56,19 +56,28 @@ export class McpCaseCommandService {
       if (!claim.command.response) throw new Error('Completed MCP command has no response');
       return { ...replayResult(claim.command.response), replayed: true };
     }
-    const found = await new OperationalConditionService(this.db).openCanonicalCase(
-      this.principal.tenantId,
-      input.domainId,
-      input.conditionKey
-    );
-    const result: McpCommandResult = found
-      ? { ok: true, value: { case: found.case, signal: found.signal }, replayed: false }
-      : errorResult('NOT_FOUND', 'Active canonical case not found');
+    let result: McpCommandResult;
+    let resourceId: string | undefined;
+    try {
+      const found = await new OperationalConditionService(this.db).openCanonicalCase(
+        this.principal.tenantId,
+        input.domainId,
+        input.conditionKey
+      );
+      if (found) {
+        resourceId = found.case.id;
+        result = { ok: true, value: { case: found.case, signal: found.signal }, replayed: false };
+      } else {
+        result = errorResult('NOT_FOUND', 'Active canonical case not found');
+      }
+    } catch {
+      result = errorResult('COMMAND_FAILED', 'Case open failed');
+    }
     await commands.complete(
       this.principal.tenantId,
       claim.command.id,
       result as unknown as Record<string, unknown>,
-      found?.case.id,
+      resourceId,
       result.ok ? 'COMPLETED' : 'FAILED'
     );
     return result;
