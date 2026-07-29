@@ -11,6 +11,7 @@ describe('McpCaseCommandService', () => {
     } as unknown as IDatabaseAdapter;
     const service = new McpCaseCommandService(db, {
       tenantId: 'tenant-1',
+      principalId: 'principal-1',
       actorId: 'actor-1',
       scopes: new Set(['CASE_READ']),
     });

@@ -10,6 +10,7 @@ describe('McpReadService', () => {
       },
     } as unknown as IDatabaseAdapter;
     const service = new McpReadService(db, {
+      principalId: 'principal-1',
       tenantId: 'tenant-1',
       actorId: 'actor-1',
       scopes: new Set(['CASE_READ']),
@@ -24,6 +25,7 @@ describe('McpReadService', () => {
       },
     } as unknown as IDatabaseAdapter;
     const service = new McpReadService(db, {
+      principalId: 'principal-1',
       tenantId: 'tenant-1',
       actorId: 'actor-1',
       scopes: new Set(['CASE_READ']),

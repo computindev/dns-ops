@@ -10,6 +10,7 @@ describe('MCP tool dispatch', () => {
     const db = {} as IDatabaseAdapter;
     const principal = {
       tenantId: 'tenant-1',
+      principalId: 'principal-1',
       actorId: 'actor-1',
       scopes: new Set(['DOMAIN_READ'] as const),
     };

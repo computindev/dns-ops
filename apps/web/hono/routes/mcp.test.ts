@@ -9,10 +9,12 @@ const token = 'a-long-random-mcp-bearer-token-with-enough-entropy-12345';
 const env = {
   MCP_PRINCIPALS_JSON: JSON.stringify([
     {
-      tokenHash: hashMcpToken(token),
-      tenantId: 'tenant-a',
+      principalId: 'mcp-operator-a',
+      tokenSha256: hashMcpToken(token),
+      tenantId: '11111111-1111-4111-8111-111111111111',
       actorId: 'actor-a',
       scopes: ['DOMAIN_READ', 'SIGNAL_READ', 'CASE_READ', 'CASE_WRITE', 'SCAN_REQUEST'],
+      enabled: true,
     },
   ]),
 };
@@ -56,14 +58,30 @@ describe('MCP discovery transport', () => {
     await expect(listed.json()).resolves.toMatchObject({ result: { tools: MCP_TOOLS } });
   });
 
+  it('rejects invalid JSON-RPC request IDs', async () => {
+    const response = await app().request(
+      '/mcp',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: true, method: 'initialize' }),
+      },
+      env
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: -32600 } });
+  });
+
   it('does not disclose tools above the caller scope', async () => {
     const limitedEnv = {
       MCP_PRINCIPALS_JSON: JSON.stringify([
         {
-          tokenHash: hashMcpToken(token),
-          tenantId: 'tenant-a',
+          principalId: 'mcp-operator-a',
+          tokenSha256: hashMcpToken(token),
+          tenantId: '11111111-1111-4111-8111-111111111111',
           actorId: 'actor-a',
           scopes: ['CASE_READ'],
+          enabled: true,
         },
       ]),
     };

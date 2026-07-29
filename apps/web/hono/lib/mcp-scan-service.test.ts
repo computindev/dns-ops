@@ -14,6 +14,7 @@ describe('McpScanService', () => {
     } as unknown as IDatabaseAdapter;
     const service = new McpScanService(context, db, {
       tenantId: 'tenant-1',
+      principalId: 'principal-1',
       actorId: 'actor-1',
       scopes: new Set(['CASE_WRITE']),
     });

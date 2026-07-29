@@ -10,14 +10,16 @@ export const MCP_SCOPES = [
 export type McpScope = (typeof MCP_SCOPES)[number];
 
 export interface McpPrincipal {
-  tokenHash: string;
-  tenantId: string;
+  principalId: string;
   actorId: string;
+  tenantId: string;
+  tokenSha256: string;
   scopes: McpScope[];
-  disabled?: boolean;
+  enabled: boolean;
 }
 
 export interface AuthenticatedMcpPrincipal {
+  principalId: string;
   tenantId: string;
   actorId: string;
   scopes: ReadonlySet<McpScope>;
@@ -40,23 +42,28 @@ export function parseMcpPrincipals(secret: string | undefined): McpPrincipal[] {
     if (!candidate || typeof candidate !== 'object') throw new Error('MCP principal is invalid');
     const value = candidate as Record<string, unknown>;
     if (
-      typeof value.tokenHash !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(value.tokenHash) ||
+      typeof value.principalId !== 'string' ||
+      !value.principalId ||
+      typeof value.tokenSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value.tokenSha256) ||
       typeof value.tenantId !== 'string' ||
-      !value.tenantId ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value.tenantId
+      ) ||
       typeof value.actorId !== 'string' ||
       !value.actorId ||
       !Array.isArray(value.scopes) ||
       value.scopes.some((scope) => !MCP_SCOPES.includes(scope as McpScope)) ||
-      (typeof value.disabled !== 'undefined' && typeof value.disabled !== 'boolean')
+      typeof value.enabled !== 'boolean'
     )
       throw new Error('MCP principal has invalid fields');
     return {
-      tokenHash: value.tokenHash,
+      principalId: value.principalId,
+      tokenSha256: value.tokenSha256,
       tenantId: value.tenantId,
       actorId: value.actorId,
       scopes: value.scopes as McpScope[],
-      disabled: value.disabled as boolean | undefined,
+      enabled: value.enabled,
     };
   });
 }
@@ -74,9 +81,10 @@ export function authenticateMcpBearer(
   const match = authorization?.match(/^Bearer ([A-Za-z0-9_-]{32,})$/);
   if (!match) return null;
   const tokenHash = hashMcpToken(match[1]);
-  const principal = principals.find((candidate) => fixedEqual(candidate.tokenHash, tokenHash));
-  if (!principal || principal.disabled) return null;
+  const principal = principals.find((candidate) => fixedEqual(candidate.tokenSha256, tokenHash));
+  if (!principal || !principal.enabled) return null;
   return {
+    principalId: principal.principalId,
     tenantId: principal.tenantId,
     actorId: principal.actorId,
     scopes: new Set(principal.scopes),

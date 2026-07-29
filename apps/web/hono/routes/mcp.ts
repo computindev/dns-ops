@@ -35,7 +35,15 @@ mcpRoutes.post('/', async (c) => {
   if (!principal) return c.json(rpcError(null, -32001, 'Unauthorized'), 401);
 
   const request = (await c.req.json().catch(() => null)) as JsonRpcRequest | null;
-  if (!request || request.jsonrpc !== '2.0' || typeof request.method !== 'string') {
+  if (
+    !request ||
+    request.jsonrpc !== '2.0' ||
+    typeof request.method !== 'string' ||
+    (typeof request.id !== 'undefined' &&
+      request.id !== null &&
+      typeof request.id !== 'string' &&
+      typeof request.id !== 'number')
+  ) {
     return c.json(rpcError(null, -32600, 'Invalid request'), 400);
   }
   if (request.method === 'initialize') {
