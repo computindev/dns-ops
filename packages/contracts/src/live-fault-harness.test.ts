@@ -84,6 +84,15 @@ describe('controlled live-fault harness policy', () => {
 
     expect(() =>
       authorizeControlledFaultMutation(policy(), {
+        zoneId: 'providerToken-secret',
+        name: 'www.faults.example.test',
+        type: 'CNAME',
+        mutationId: 'LIVE-01',
+      })
+    ).toThrow('controlled fault mutation zoneId must be a bounded non-secret identifier');
+
+    expect(() =>
+      authorizeControlledFaultMutation(policy(), {
         zoneId: 'zone-123',
         name: 'outside.example.test',
         type: 'CNAME',
@@ -248,6 +257,13 @@ describe('controlled live-fault harness policy', () => {
     expect(() =>
       validateControlledFaultHarnessPolicy({
         ...policy(),
+        zoneId: 'Authorization: Bearer must-not-be-accepted',
+      })
+    ).toThrow('zoneId must be a bounded non-secret identifier');
+
+    expect(() =>
+      validateControlledFaultHarnessPolicy({
+        ...policy(),
         providerCredentialFingerprint: 'not-a-fingerprint',
       })
     ).toThrow('sha256');
@@ -299,6 +315,13 @@ describe('controlled live-fault harness policy', () => {
         zoneId: 'X-Auth-Token: must-not-be-stored',
       })
     ).toThrow('zoneId must be a bounded non-secret identifier');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        signalIds: ['sk_live_must-not-be-stored'],
+      })
+    ).toThrow('signalIds must be a bounded non-secret identifier');
 
     expect(() =>
       validateFaultRunArtifact({

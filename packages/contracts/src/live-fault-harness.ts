@@ -134,8 +134,8 @@ const redactedArtifactPattern =
 const artifactIdentifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$/;
 const providerResponsePattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
 const isoTimestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
-const recoveryInstructionSecretPattern =
-  /\b(?:token|secret|password|authorization|cookie|bearer|api[ _-]?key|private[ _-]?key|credential)\b/i;
+const credentialMaterialPattern =
+  /(?:token|secret|password|credential|authorization|bearer|api[ _-]?key|private[ _-]?key|sk_(?:live|test)_)/i;
 
 type DataDescriptorMap = Record<string, PropertyDescriptor>;
 
@@ -361,7 +361,8 @@ function normalizeControlledFaultHarnessPolicy(policy: unknown): ValidatedContro
     );
   }
 
-  const zoneId = assertNonEmpty(readDataField(fields, 'zoneId'), 'zoneId');
+  const zoneId = assertCanonicalArtifactText(readDataField(fields, 'zoneId'), 'zoneId');
+  validateArtifactIdentifier(zoneId, 'zoneId');
   const providerCredentialFingerprint = assertNonEmpty(
     readDataField(fields, 'providerCredentialFingerprint'),
     'providerCredentialFingerprint'
@@ -387,8 +388,13 @@ function normalizeControlledFaultMutationRequest(
   request: unknown
 ): ValidatedControlledFaultRequest {
   const fields = readPlainDataObject(request, requestKeys);
+  const zoneId = assertCanonicalArtifactText(
+    readDataField(fields, 'zoneId'),
+    'controlled fault mutation zoneId'
+  );
+  validateArtifactIdentifier(zoneId, 'controlled fault mutation zoneId');
   return {
-    zoneId: assertNonEmpty(readDataField(fields, 'zoneId'), 'controlled fault mutation zoneId'),
+    zoneId,
     name: normalizeRecordName(
       readDataField(fields, 'name'),
       'controlled fault mutation record name'
@@ -417,7 +423,7 @@ function validateArtifactSummary(value: unknown, label: string): void {
 
 function validateArtifactIdentifier(value: unknown, label: string): void {
   const identifier = assertCanonicalArtifactText(value, label);
-  if (!artifactIdentifierPattern.test(identifier) || redactedArtifactPattern.test(identifier)) {
+  if (!artifactIdentifierPattern.test(identifier) || credentialMaterialPattern.test(identifier)) {
     throw new Error(`${label} must be a bounded non-secret identifier`);
   }
 }
@@ -441,7 +447,7 @@ function validateProviderResponseList(value: unknown): void {
 
 function validateRecoveryInstructions(value: unknown): void {
   validateArtifactSummary(value, 'recoveryInstructions');
-  if (recoveryInstructionSecretPattern.test(value as string)) {
+  if (credentialMaterialPattern.test(value as string)) {
     throw new Error('recoveryInstructions must not contain credential material');
   }
 }
