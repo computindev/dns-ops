@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "46549363576da7b84fad86641d1aac19aa4842c6",
+  "currentSha": "cd7c2d62d4c03d660c472e87a29e24cc5c8870cf",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
   "whatIsTrue": [
@@ -21,6 +21,7 @@
     "Suggestion reads and writes are tenant-isolated through finding, snapshot, and domain ownership",
     "The six canonical signal kinds, deduplicated signal/case/alert persistence, lifecycle audit, fresh-evidence resolution, and reopen foundation are implemented",
     "Mail findings remain explicitly LEGACY_ONLY until production regression evaluation is wired; no silent notification cutover occurred",
+    "Six non-executable operating playbooks document evidence, applicability, verification, and escalation boundaries",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
@@ -96,7 +97,7 @@
     "Implement setup/evidence lane without automatic signal promotion",
     "Wire baseline-aware condition evaluation to the canonical signal/case service",
     "Converge migrated alert creation on the canonical signal path and prove FIX-06",
-    "Add required operating playbooks and deterministic FIX-05/FIX-06 fixtures"
+    "Add deterministic FIX-05 stale-evidence and FIX-06 canonical deduplication fixtures"
   ],
-  "updatedAt": "2026-07-29T04:29:21Z"
+  "updatedAt": "2026-07-29T04:34:00Z"
 }
