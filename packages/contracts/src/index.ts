@@ -7,6 +7,7 @@
 // are used across web and collector runtimes.
 
 export * from './dns.js';
+export * from './domain-profile.js';
 export * from './enums.js';
 export * from './env.js';
 export * from './evaluation.js';
@@ -16,6 +17,7 @@ export * from './operations.js';
 export * from './requests.js';
 export * from './result.js';
 export * from './tenant.js';
+export * from './web-evidence.js';
 
 // -----------------------------------------------------------------------------
 // Persistence entity types — MOVED to @dns-ops/db

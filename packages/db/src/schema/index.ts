@@ -14,10 +14,12 @@
 import type {
   AuthoritativeEvidenceCoverage,
   EvaluationCoverage,
+  ExternalEvidenceData,
   InternalSignalKind,
 } from '@dns-ops/contracts';
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -100,10 +102,47 @@ export const domains = pgTable(
     // Composite unique index: allows same domain name per tenant
     // NULL tenant_id is allowed (system domains) - PostgreSQL treats NULLs as distinct
     nameTenantIdx: uniqueIndex('domain_name_tenant_idx').on(table.normalizedName, table.tenantId),
+    idTenantIdx: uniqueIndex('domain_id_tenant_idx').on(table.id, table.tenantId),
     tenantIdx: index('domain_tenant_idx').on(table.tenantId),
     zoneMgmtIdx: index('domain_zone_management_idx').on(table.zoneManagement),
   })
 );
+
+export const domainPurposeEnum = pgEnum('domain_purpose', [
+  'WEB',
+  'MAIL',
+  'WEB_AND_MAIL',
+  'REDIRECT',
+  'PARKED',
+  'UNKNOWN',
+]);
+
+export const domainCriticalityEnum = pgEnum('domain_criticality', ['HIGH', 'NORMAL', 'LOW']);
+
+export const domainProfiles = pgTable(
+  'domain_profiles',
+  {
+    domainId: uuid('domain_id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    purpose: domainPurposeEnum('purpose').notNull().default('UNKNOWN'),
+    responsibleActorId: varchar('responsible_actor_id', { length: 100 }),
+    criticality: domainCriticalityEnum('criticality').notNull().default('NORMAL'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantIdx: index('domain_profile_tenant_idx').on(table.tenantId),
+    purposeIdx: index('domain_profile_purpose_idx').on(table.purpose),
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'domain_profile_domain_tenant_fk',
+    }).onDelete('cascade'),
+  })
+);
+
+export type DomainProfile = typeof domainProfiles.$inferSelect;
+export type NewDomainProfile = typeof domainProfiles.$inferInsert;
 
 // =============================================================================
 // RULESET VERSION TABLE
@@ -980,7 +1019,13 @@ export type NewFleetReport = typeof fleetReports.$inferInsert;
 // PROBE OBSERVATIONS TABLE
 // =============================================================================
 
-export const probeTypeEnum = pgEnum('probe_type', ['smtp_starttls', 'mta_sts', 'tls_cert', 'http']);
+export const probeTypeEnum = pgEnum('probe_type', [
+  'smtp_starttls',
+  'mta_sts',
+  'tls_cert',
+  'http',
+  'rdap',
+]);
 
 export const probeStatusEnum = pgEnum('probe_status', [
   'success',
@@ -1022,7 +1067,7 @@ export interface MTASTSProbeData {
   certificateValid?: boolean;
 }
 
-export type ProbeData = SMTPProbeData | MTASTSProbeData;
+export type ProbeData = SMTPProbeData | MTASTSProbeData | ExternalEvidenceData;
 
 export const probeObservations = pgTable(
   'probe_observations',

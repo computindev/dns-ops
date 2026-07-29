@@ -10,12 +10,13 @@ export {
   type IDatabaseAdapter,
   SimpleDatabaseAdapter,
 } from '../database/index.js';
-// Domain repositories
 export { type DomainFilter, DomainRepository } from './domain.js';
 export {
   DomainRepositoryResults,
   withDomainResults,
 } from './domain.result.js';
+// Domain repositories
+export { DomainProfileRepository, type SetDomainProfile } from './domain-profile.js';
 export { FindingRepository } from './finding.js';
 export { FleetReportRepository } from './fleet-report.js';
 // Mail evidence repositories
