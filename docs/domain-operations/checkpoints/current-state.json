@@ -87,6 +87,7 @@
       "blocking": false
     }
   ],
+  "trackingIssue": "https://github.com/computindev/dns-ops/issues/4",
   "pendingExternalInputs": [
     "Measured manual-check baseline",
     "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
