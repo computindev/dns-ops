@@ -43,7 +43,7 @@
     "Stale MCP case disposition commands return and durably persist only CASE_VERSION_STALE, with no database conflict detail in the command result",
     "The deterministic scan-command harness proves cross-tenant domain denial occurs before claim/proxy, completed scan requests replay without a second collector call, and rate-limited commands persist a failed result without proxying",
     "Independent MCP review identified and the implementation corrected a scan-quota mismatch: MCP now uses the collector's ten-token incremental-refill algorithm",
-    "A fresh independent Gate 4 review at 603a7ff is BLOCKED only on documented external live/manual-baseline prerequisites; a separate detached clean checkout was attested at 47e6c4a with no code-level blocker",
+    "A fresh independent Gate 4 review at 06ecb55 is BLOCKED only on documented external live/manual-baseline prerequisites; it found no code-level blocker for the fail-closed policy and ran from a clean detached checkout",
     "The deterministic MCP harness matrix consolidates ten-tool typed transport, invalid input/ID, disabled/scope, tenant, stale evidence, duplicate/stale command, scan idempotency/rate, audit, parity, and exception-leakage evidence",
     "FIX-05 proves stale TLS evidence remains setup/evidence with no canonical observation or delivery; FIX-06 proves duplicate canonical observations create one signal/case/alert and delivery occurs only on create and reopen",
     "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records",
@@ -134,5 +134,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T19:30:00Z"
+  "updatedAt": "2026-07-29T19:33:00Z"
 }
