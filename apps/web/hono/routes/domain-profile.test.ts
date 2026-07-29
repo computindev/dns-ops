@@ -3,6 +3,7 @@ import {
   auditEvents,
   domainProfiles,
   domains,
+  operationalConditionBaselines,
   probeObservations,
   snapshots,
 } from '@dns-ops/db/schema';
@@ -54,6 +55,7 @@ function createApp(
     },
   ] as never[];
   const profiles: Array<Record<string, unknown>> = [];
+  const baselines: Array<Record<string, unknown>> = [];
   const probes = [
     {
       id: 'probe-1',
@@ -78,12 +80,17 @@ function createApp(
       if (table === probeObservations) return values.includes('snapshot-1') ? probes : [];
       if (table === domainProfiles)
         return profiles.filter((profile) => values.includes(profile.tenantId));
+      if (table === operationalConditionBaselines)
+        return baselines.filter((baseline) => values.includes(baseline.tenantId));
       return [];
     },
     async selectOne(table: unknown, condition: unknown) {
       const values = params(condition);
-      if (table === domains)
-        return values.includes('domain-1') && values.includes(tenantId) ? domain : undefined;
+      if (table === domains) return values.includes('domain-1') ? domain : undefined;
+      if (table === snapshots)
+        return values.includes('snapshot-1')
+          ? { ...(snapshotsForDomain[1] as object), resultState: 'complete' }
+          : undefined;
       if (table === domainProfiles)
         return profiles.find(
           (profile) => values.includes(profile.domainId) && values.includes(profile.tenantId)
@@ -99,6 +106,17 @@ function createApp(
       if (table === domainProfiles) {
         const row = { createdAt: new Date(), updatedAt: new Date(), ...values };
         profiles.push(row);
+        return row;
+      }
+      if (table === operationalConditionBaselines) {
+        const row = {
+          id: `baseline-${baselines.length + 1}`,
+          acceptedAt: new Date(),
+          supersededAt: null,
+          supersededBy: null,
+          ...values,
+        };
+        baselines.push(row);
         return row;
       }
       throw new Error('Unexpected insert');
@@ -195,6 +213,37 @@ describe('domainProfileRoutes', () => {
     });
     expect(denied.status).toBe(401);
     expect(invalid.status).toBe(400);
+  });
+
+  it('accepts a tenant-owned complete TLS baseline and writes an attributed audit event', async () => {
+    const { app, audits } = createApp();
+    const response = await app.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'vitest' },
+      body: JSON.stringify({
+        signalKind: 'TLS_CERTIFICATE_REGRESSION',
+        sourceSnapshotId: 'snapshot-1',
+        discriminator: 'example.com:443',
+        maxEvidenceAgeSeconds: 60,
+        policy: {
+          kind: 'TLS_CERTIFICATE',
+          requireHostnameAuthorized: true,
+          requireChainAuthorized: true,
+          minimumRemainingValiditySeconds: 0,
+        },
+      }),
+    });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      baseline: { tenantId: 'tenant-1', domainId: 'domain-1', discriminator: 'example.com:443' },
+    });
+    expect(audits).toContainEqual(
+      expect.objectContaining({
+        action: 'operational_baseline_accepted',
+        actorId: 'actor-1',
+        tenantId: 'tenant-1',
+      })
+    );
   });
 
   it('writes a validated profile with an attributed atomic audit event', async () => {

@@ -112,6 +112,9 @@ export class OperationalBaselineRepository {
       if (!domain || domain.tenantId !== input.tenantId || snapshot?.domainId !== input.domainId) {
         throw new Error('Baseline source snapshot is outside the tenant domain');
       }
+      if (snapshot.resultState !== 'complete') {
+        throw new Error('Baseline source snapshot must be complete');
+      }
       const active = await tx.selectWhere(
         operationalConditionBaselines,
         requiredAnd(

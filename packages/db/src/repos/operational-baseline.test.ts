@@ -14,7 +14,7 @@ function params(condition: unknown): unknown[] {
   return (candidate.queryChunks ?? []).flatMap(params);
 }
 
-function createDb(failAuditAt?: number) {
+function createDb(failAuditAt?: number, snapshotState: 'complete' | 'partial' = 'complete') {
   const baselines: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
   const db = {
@@ -24,7 +24,7 @@ function createDb(failAuditAt?: number) {
         return values.includes('domain-1') ? { id: 'domain-1', tenantId: 'tenant-1' } : undefined;
       if (table === snapshots)
         return values.includes('snapshot-1')
-          ? { id: 'snapshot-1', domainId: 'domain-1' }
+          ? { id: 'snapshot-1', domainId: 'domain-1', resultState: snapshotState }
           : undefined;
       return undefined;
     },
@@ -130,6 +130,15 @@ describe('OperationalBaselineRepository', () => {
     await expect(
       new OperationalBaselineRepository(db).accept({ ...input, tenantId: 'other-tenant' })
     ).rejects.toThrow('outside the tenant domain');
+  });
+
+  it('rejects incomplete source snapshots before persistence', async () => {
+    const { db, baselines, audits } = createDb(undefined, 'partial');
+    await expect(new OperationalBaselineRepository(db).accept(input)).rejects.toThrow(
+      'source snapshot must be complete'
+    );
+    expect(baselines).toEqual([]);
+    expect(audits).toEqual([]);
   });
 
   it('rejects an unsupported signal kind before persistence', async () => {
