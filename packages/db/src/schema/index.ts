@@ -767,7 +767,11 @@ export const internalSignalKindEnum = pgEnum('internal_signal_kind', [
   'MAIL_DNS_CONFIGURATION_REGRESSION',
 ]);
 export const internalSignalStatusEnum = pgEnum('internal_signal_status', ['ACTIVE', 'RESOLVED']);
-export const mcpCommandStatusEnum = pgEnum('mcp_command_status', ['PENDING', 'COMPLETED']);
+export const mcpCommandStatusEnum = pgEnum('mcp_command_status', [
+  'PENDING',
+  'COMPLETED',
+  'FAILED',
+]);
 export const internalCaseStatusEnum = pgEnum('internal_case_status', [
   'OPEN',
   'ACKNOWLEDGED',

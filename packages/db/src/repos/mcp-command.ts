@@ -52,11 +52,12 @@ export class McpCommandRepository {
     tenantId: string,
     commandId: string,
     response: Record<string, unknown>,
-    resourceId?: string
+    resourceId?: string,
+    status: 'COMPLETED' | 'FAILED' = 'COMPLETED'
   ): Promise<McpCommand> {
     const completed = await this.db.updateOne(
       mcpCommands,
-      { status: 'COMPLETED', response, resourceId: resourceId ?? null, completedAt: new Date() },
+      { status, response, resourceId: resourceId ?? null, completedAt: new Date() },
       requiredAnd(
         eq(mcpCommands.id, commandId),
         eq(mcpCommands.tenantId, tenantId),
@@ -74,7 +75,7 @@ export class McpCommandRepository {
         'MCP idempotency key was reused for different input'
       );
     }
-    if (command.status !== 'COMPLETED' || !command.response) {
+    if ((command.status !== 'COMPLETED' && command.status !== 'FAILED') || !command.response) {
       throw commandError('MCP_COMMAND_IN_PROGRESS', 'MCP command is already in progress');
     }
     return { state: 'REPLAY', command };

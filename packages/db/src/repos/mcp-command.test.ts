@@ -57,6 +57,24 @@ describe('McpCommandRepository', () => {
     });
   });
 
+  it('replays a completed deterministic failure rather than leaving a pending command', async () => {
+    const { db } = createDb();
+    const repository = new McpCommandRepository(db);
+    const claim = await repository.claim(input);
+    if (claim.state !== 'CLAIMED') throw new Error('Expected claimed command');
+    await repository.complete(
+      input.tenantId,
+      claim.command.id,
+      { error: { code: 'CASE_VERSION_STALE' } },
+      undefined,
+      'FAILED'
+    );
+    await expect(repository.claim(input)).resolves.toMatchObject({
+      state: 'REPLAY',
+      command: { status: 'FAILED' },
+    });
+  });
+
   it('rejects a key reused for different input', async () => {
     const { db } = createDb();
     const repository = new McpCommandRepository(db);

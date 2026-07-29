@@ -1,0 +1,1 @@
+ALTER TYPE "mcp_command_status" ADD VALUE IF NOT EXISTS 'FAILED';
