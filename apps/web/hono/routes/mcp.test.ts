@@ -84,8 +84,8 @@ describe('MCP discovery transport', () => {
       env
     );
     expect(invalid.status).toBe(400);
-    const missing = await app().request('/mcp', rpc('tools/call'), env);
-    expect(missing.status).toBe(404);
-    await expect(missing.json()).resolves.toMatchObject({ error: { code: -32601 } });
+    const invalidCall = await app().request('/mcp', rpc('tools/call'), env);
+    expect(invalidCall.status).toBe(400);
+    await expect(invalidCall.json()).resolves.toMatchObject({ error: { code: -32602 } });
   });
 });

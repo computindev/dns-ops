@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { authenticateMcpBearer, type McpPrincipal, parseMcpPrincipals } from '../lib/mcp-auth.js';
+import { dispatchMcpTool, toMcpDispatchError } from '../lib/mcp-dispatch.js';
 import { MCP_TOOLS } from '../lib/mcp-tools.js';
 import type { Env } from '../types.js';
 
@@ -54,6 +55,35 @@ mcpRoutes.post('/', async (c) => {
       id: request.id ?? null,
       result: { tools: MCP_TOOLS.filter((tool) => principal.scopes.has(tool.requiredScope)) },
     });
+  }
+  if (request.method === 'tools/call') {
+    const params = request.params;
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return c.json(rpcError(request.id, -32602, 'Invalid tool call parameters'), 400);
+    }
+    const call = params as { name?: unknown; arguments?: unknown };
+    if (typeof call.name !== 'string') {
+      return c.json(rpcError(request.id, -32602, 'Tool name is required'), 400);
+    }
+    // Collector proxy headers must remain principal-derived rather than model arguments.
+    c.set('tenantId', principal.tenantId);
+    c.set('actorId', principal.actorId);
+    try {
+      const result = await dispatchMcpTool(
+        c,
+        c.get('db'),
+        principal,
+        call.name,
+        call.arguments ?? {}
+      );
+      return c.json({ jsonrpc: '2.0', id: request.id ?? null, result });
+    } catch (error) {
+      const mapped = toMcpDispatchError(error);
+      return c.json(
+        rpcError(request.id, mapped.code, mapped.message),
+        mapped.code === -32601 ? 404 : 400
+      );
+    }
   }
   return c.json(rpcError(request.id, -32601, 'Method not found'), 404);
 });
