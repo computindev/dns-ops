@@ -14,6 +14,12 @@ export {
   probeAllowlist,
   probeAllowlistManager,
 } from './allowlist.js';
+export type {
+  HttpWebCollectionOptions,
+  HttpWebCollectionResult,
+  HttpWebStartEvidence,
+} from './http-web.js';
+export { collectHttpWebEvidence } from './http-web.js';
 export type { MTASTSPolicy, MTASTSProbeResult } from './mta-sts.js';
 // MTA-STS Probe
 export { fetchMTASTSPolicy, validateMTASTSTxtRecord } from './mta-sts.js';
