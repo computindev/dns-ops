@@ -1,5 +1,15 @@
 import type { InternalSignalKind } from '@dns-ops/contracts';
 import {
+  FindingRepository,
+  type IDatabaseAdapter,
+  MonitoredDomainRepository,
+  OperationalBaselineRepository,
+  OperationalConditionService,
+  ProbeObservationRepository,
+  SnapshotRepository,
+} from '@dns-ops/db';
+import { sendAlertNotification } from '../notifications/webhook.js';
+import {
   evaluateOperationalConditions,
   type PersistedConditionBaseline,
   type PersistedConditionFinding,
@@ -57,6 +67,55 @@ function presentation(
  * The sole canonical notification boundary. Evaluator output never sends directly;
  * only a newly-created or reopened canonical alert is delivered.
  */
+export async function finalizePersistedCanonicalConditions(
+  db: IDatabaseAdapter,
+  input: { tenantId: string; domainId: string; domainName: string; snapshotId: string; now?: Date }
+) {
+  const snapshot = await new SnapshotRepository(db).findById(input.snapshotId);
+  if (!snapshot || snapshot.domainId !== input.domainId) {
+    throw new Error('Canonical finalization snapshot is outside the domain');
+  }
+  const monitored = await new MonitoredDomainRepository(db).findByDomainId(
+    input.domainId,
+    input.tenantId
+  );
+  if (!monitored || !monitored.isActive) {
+    return { evaluation: { observations: [], setupEvidence: [] }, outcomes: [] };
+  }
+  const [baselines, probes, snapshotFindings] = await Promise.all([
+    new OperationalBaselineRepository(db).listActive(input.tenantId, input.domainId),
+    new ProbeObservationRepository(db).findBySnapshotId(input.snapshotId),
+    new FindingRepository(db).findBySnapshotId(input.snapshotId),
+  ]);
+  const observer = new OperationalConditionService(db);
+  return finalizeCanonicalConditions(
+    {
+      tenantId: input.tenantId,
+      domainId: input.domainId,
+      domainName: input.domainName,
+      snapshotId: input.snapshotId,
+      snapshotComplete: snapshot.resultState === 'complete',
+      monitoredDomainId: monitored.id,
+      webhookUrl: monitored.alertChannels.webhook,
+      baselines,
+      probes,
+      findings: snapshotFindings,
+      now: input.now ?? new Date(),
+    },
+    {
+      observer,
+      send: (alertId, webhookUrl, alert) =>
+        sendAlertNotification(
+          alertId,
+          webhookUrl,
+          { ...alert, domain: input.domainName, tenantId: input.tenantId },
+          db,
+          process.env.WEB_APP_URL
+        ),
+    }
+  );
+}
+
 export async function finalizeCanonicalConditions(
   input: {
     tenantId: string;
