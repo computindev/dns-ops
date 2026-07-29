@@ -21,6 +21,11 @@ export { FleetReportRepository } from './fleet-report.js';
 // Mail evidence repositories
 export { DkimSelectorRepository, MailEvidenceRepository } from './mail-evidence.js';
 export { ObservationRepository } from './observation.js';
+export {
+  type ObserveOperationalCondition,
+  type OperationalConditionResult,
+  OperationalConditionService,
+} from './operations.js';
 // Parity evidence repositories
 export {
   LegacyAccessLogRepository,

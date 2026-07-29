@@ -1,0 +1,37 @@
+{
+  "evidenceId": "GATE3-SIGNAL-CASE-FOUNDATION",
+  "recordedAt": "2026-07-29T04:29:21Z",
+  "implementationBaseSha": "78913a402bbfc03c70f4be99aa24083086c2aeec",
+  "scope": "Non-live persistence and lifecycle foundation; not FIX-06 completion",
+  "assertions": [
+    "Exactly six InternalSignalKind values and five InternalCaseStatus values are typed",
+    "Tenant plus bounded canonical condition key uniquely identifies a signal",
+    "One case and one alert are uniquely linked to each signal",
+    "Repeated sequential observation reuses one signal, case, and alert",
+    "Observation validates tenant ownership of domain, snapshot, monitored domain, and optional finding",
+    "Observation and resolution use transactions plus optimistic predicates with bounded conflict retry",
+    "Resolution requires newer complete evidence and an exact cleared condition key",
+    "Verification evidence cannot be replayed as reopening evidence",
+    "A newer concurrent scan can reopen even when captured before resolution commit",
+    "Case lifecycle transitions append audit events only after successful updates",
+    "Unclassified legacy conditions default to DISABLED/NONE",
+    "Mail findings remain explicitly LEGACY_ONLY until production regression evaluation is wired, preventing a silent notification gap"
+  ],
+  "validation": {
+    "targeted": "30 tests passed across operations contracts/repos, condition registry, and alert generation",
+    "lint": "8 of 8 workspace tasks passed",
+    "typecheck": "14 of 14 workspace tasks passed",
+    "deterministicSuite": "2582 passed, 41 skipped; 144 files passed, 3 skipped",
+    "build": "8 of 8 workspace tasks passed",
+    "schemaDrift": "NO DRIFT"
+  },
+  "blockedEvidence": [
+    "Real PostgreSQL migration execution and concurrent Promise.all attestation require an isolated DATABASE_URL",
+    "FIX-06 remains incomplete until production condition evaluation drives the canonical service and proves one notification"
+  ],
+  "safety": {
+    "providerWritesAdded": false,
+    "liveMutations": false,
+    "productionSignalCutover": false
+  }
+}

@@ -11,7 +11,11 @@
  * - RulesetVersion: Version tracking for rules
  */
 
-import type { AuthoritativeEvidenceCoverage, EvaluationCoverage } from '@dns-ops/contracts';
+import type {
+  AuthoritativeEvidenceCoverage,
+  EvaluationCoverage,
+  InternalSignalKind,
+} from '@dns-ops/contracts';
 import {
   boolean,
   index,
@@ -705,6 +709,109 @@ export type MonitoredDomain = typeof monitoredDomains.$inferSelect;
 export type NewMonitoredDomain = typeof monitoredDomains.$inferInsert;
 
 // =============================================================================
+// INTERNAL SIGNALS AND CASES (Phase 0-1 canonical operating loop)
+// =============================================================================
+
+export const internalSignalKindEnum = pgEnum('internal_signal_kind', [
+  'DOMAIN_EXPIRING_SOON',
+  'TLS_CERTIFICATE_REGRESSION',
+  'HTTP_ENDPOINT_UNAVAILABLE',
+  'REDIRECT_TOPOLOGY_REGRESSION',
+  'HOMEPAGE_INDEXABILITY_REGRESSION',
+  'MAIL_DNS_CONFIGURATION_REGRESSION',
+]);
+export const internalSignalStatusEnum = pgEnum('internal_signal_status', ['ACTIVE', 'RESOLVED']);
+export const internalCaseStatusEnum = pgEnum('internal_case_status', [
+  'OPEN',
+  'ACKNOWLEDGED',
+  'BLOCKED',
+  'RESOLVED',
+  'DISMISSED',
+]);
+
+export const internalSignals = pgTable(
+  'internal_signals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    domainId: uuid('domain_id')
+      .notNull()
+      .references(() => domains.id, { onDelete: 'cascade' }),
+    kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
+    conditionKey: varchar('condition_key', { length: 500 }).notNull(),
+    status: internalSignalStatusEnum('status').notNull().default('ACTIVE'),
+    firstSeenSnapshotId: uuid('first_seen_snapshot_id').references(() => snapshots.id),
+    lastSeenSnapshotId: uuid('last_seen_snapshot_id').references(() => snapshots.id),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tenantConditionUnique: uniqueIndex('internal_signal_tenant_condition_unique').on(
+      table.tenantId,
+      table.conditionKey
+    ),
+    tenantIdx: index('internal_signal_tenant_idx').on(table.tenantId),
+    domainIdx: index('internal_signal_domain_idx').on(table.domainId),
+    statusIdx: index('internal_signal_status_idx').on(table.status),
+  })
+);
+
+export const internalCases = pgTable(
+  'internal_cases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    signalId: uuid('signal_id')
+      .notNull()
+      .references(() => internalSignals.id, { onDelete: 'cascade' }),
+    status: internalCaseStatusEnum('status').notNull().default('OPEN'),
+    disposition: text('disposition'),
+    note: text('note'),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedBy: varchar('acknowledged_by', { length: 100 }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    verificationSnapshotId: uuid('verification_snapshot_id').references(() => snapshots.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    signalUnique: uniqueIndex('internal_case_signal_unique').on(table.signalId),
+    tenantIdx: index('internal_case_tenant_idx').on(table.tenantId),
+    statusIdx: index('internal_case_status_idx').on(table.status),
+  })
+);
+
+export const internalCaseEvents = pgTable(
+  'internal_case_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    caseId: uuid('case_id')
+      .notNull()
+      .references(() => internalCases.id, { onDelete: 'cascade' }),
+    tenantId: uuid('tenant_id').notNull(),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    fromStatus: internalCaseStatusEnum('from_status'),
+    toStatus: internalCaseStatusEnum('to_status').notNull(),
+    note: text('note'),
+    disposition: text('disposition'),
+    verificationSnapshotId: uuid('verification_snapshot_id').references(() => snapshots.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    caseIdx: index('internal_case_event_case_idx').on(table.caseId),
+    tenantIdx: index('internal_case_event_tenant_idx').on(table.tenantId),
+  })
+);
+
+export type InternalSignal = typeof internalSignals.$inferSelect;
+export type NewInternalSignal = typeof internalSignals.$inferInsert;
+export type InternalCase = typeof internalCases.$inferSelect;
+export type NewInternalCase = typeof internalCases.$inferInsert;
+export type InternalCaseEvent = typeof internalCaseEvents.$inferSelect;
+export type NewInternalCaseEvent = typeof internalCaseEvents.$inferInsert;
+
+// =============================================================================
 // ALERTS (Bead 15)
 // =============================================================================
 
@@ -744,6 +851,7 @@ export const alerts = pgTable(
 
     // Trigger
     triggeredByFindingId: uuid('triggered_by_finding_id').references(() => findings.id),
+    signalId: uuid('signal_id').references(() => internalSignals.id),
 
     // Status
     status: alertStatusEnum('status').notNull().default('pending'),
@@ -769,6 +877,7 @@ export const alerts = pgTable(
     statusIdx: index('alert_status_idx').on(table.status),
     tenantIdx: index('alert_tenant_idx').on(table.tenantId),
     dedupIdx: index('alert_dedup_idx').on(table.dedupKey),
+    signalUnique: uniqueIndex('alert_signal_unique').on(table.signalId),
     createdIdx: index('alert_created_idx').on(table.createdAt),
   })
 );

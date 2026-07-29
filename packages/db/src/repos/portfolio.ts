@@ -436,9 +436,14 @@ export class AlertRepository {
     );
   }
 
-  async findByDedupKey(dedupKey: string, since: Date): Promise<Alert[]> {
+  async findByDedupKey(tenantId: string, dedupKey: string, since: Date): Promise<Alert[]> {
     const results = await this.db.select(alerts);
-    return results.filter((r) => r.dedupKey === dedupKey && new Date(r.createdAt) > since);
+    return results.filter(
+      (alert) =>
+        alert.tenantId === tenantId &&
+        alert.dedupKey === dedupKey &&
+        new Date(alert.createdAt) > since
+    );
   }
 
   async create(data: NewAlert): Promise<Alert> {
