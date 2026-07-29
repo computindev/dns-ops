@@ -1,6 +1,6 @@
 {
   "auditId": "PHASE-0-1-CONTRACT-REQUIREMENT-AUDIT",
-  "recordedAt": "2026-07-29T19:05:00Z",
+  "recordedAt": "2026-07-29T19:35:00Z",
   "contract": "docs/domain-operations/phase-0-1-execution-contract-v4.1.md",
   "amendment": "docs/domain-operations/amendments/2026-07-28-autonomous-completion-override.md",
   "verdict": "BLOCKED_BY_EXTERNAL_AUTHORITY",
@@ -38,11 +38,20 @@
       ]
     },
     {
+      "requirement": "Provider-independent fail-closed allowlist safety layer authorized by the amendment",
+      "evidence": [
+        "packages/contracts/src/live-fault-harness.ts",
+        "packages/contracts/src/live-fault-harness.test.ts",
+        "docs/domain-operations/evidence/gate-3/provider-harness-policy.json"
+      ]
+    },
+    {
       "requirement": "Exact non-live validation, isolated migration/concurrency, browser smoke, and independent non-live review",
       "evidence": [
         "docs/domain-operations/evidence/gate-4/isolated-postgres-migration-concurrency.json",
         "docs/domain-operations/evidence/gate-4/isolated-browser-smoke.json",
         "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-post-isolation.json",
+        "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-live-policy.json",
         "docs/domain-operations/evidence/gate-4/clean-checkout-attestation.json"
       ]
     }
@@ -50,7 +59,7 @@
   "blocked": [
     {
       "requirement": "A concrete, isolated controlled provider/test-host fault harness and LIVE-01 through LIVE-03",
-      "reason": "Provider kind, authorized test asset manifest, exact mutation allowlist, test-host deployment mechanism, TTL history, rollback procedure, and revocation owner are absent. A generic unimplemented provider adapter would violate the no-stubs policy.",
+      "reason": "The provider-independent fail-closed policy is complete, but provider kind, authorized test asset manifest, exact mutation allowlist, test-host deployment mechanism, TTL history, rollback procedure, and revocation owner are absent. A generic unimplemented provider adapter would violate the no-stubs policy.",
       "evidence": "docs/domain-operations/evidence/gate-3/provider-harness-readiness.json"
     },
     {
@@ -66,7 +75,7 @@
     {
       "requirement": "Final Gate 4 PASS review",
       "reason": "The contract requires final live artifacts, manual baseline comparison, playbook approval, and a fresh review after those inputs. Current review is correctly BLOCKED, not PASS.",
-      "evidence": "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-post-isolation.json"
+      "evidence": "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-live-policy.json"
     }
   ],
   "scopeConfirmations": [

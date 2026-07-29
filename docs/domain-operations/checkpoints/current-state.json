@@ -50,7 +50,8 @@
     "Isolated browser smoke now passes nine Playwright checks against a migrated disposable PostgreSQL database; development migration discovery works when the app cwd is apps/web",
     "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added",
     "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval",
-    "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability"
+    "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability",
+    "The contract-to-evidence audit is reconciled with the completed fail-closed policy and latest exact-SHA independent review; only founder-controlled live/manual inputs remain blocked"
   ],
   "passingChecks": [
     {
@@ -134,5 +135,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T19:33:00Z"
+  "updatedAt": "2026-07-29T19:35:00Z"
 }
