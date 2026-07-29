@@ -164,6 +164,7 @@ class InternalCaseRepository {
     const update: Partial<NewInternalCase> = {
       status,
       updatedAt: new Date(),
+      version: current.version + 1,
       note: metadata.note ?? current.note,
       disposition: metadata.disposition ?? current.disposition,
     };
@@ -186,6 +187,7 @@ class InternalCaseRepository {
       requiredAnd(
         eq(internalCases.id, current.id),
         eq(internalCases.status, current.status),
+        eq(internalCases.version, current.version),
         eq(internalCases.updatedAt, current.updatedAt)
       )
     );
@@ -347,6 +349,52 @@ export class OperationalConditionService {
       }
     }
     return snapshot;
+  }
+
+  async setCaseDisposition(input: {
+    tenantId: string;
+    caseId: string;
+    expectedVersion: number;
+    disposition: string;
+    actorId: string;
+  }): Promise<InternalCase | null> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 1) {
+      throw new Error('Case expected version must be a positive integer');
+    }
+    if (!input.disposition.trim() || input.disposition.length > 500) {
+      throw new Error('Case disposition must contain 1-500 characters');
+    }
+    return this.db.transaction(async (tx) => {
+      const cases = await tx.selectWhere(internalCases, eq(internalCases.id, input.caseId));
+      const current = cases.find((internalCase) => internalCase.tenantId === input.tenantId);
+      if (!current) return null;
+      if (current.version !== input.expectedVersion) {
+        throw operationConflict('Case version is stale');
+      }
+      const updated = await tx.updateOne(
+        internalCases,
+        {
+          disposition: input.disposition.trim(),
+          version: current.version + 1,
+          updatedAt: new Date(),
+        },
+        requiredAnd(
+          eq(internalCases.id, current.id),
+          eq(internalCases.tenantId, input.tenantId),
+          eq(internalCases.version, input.expectedVersion)
+        )
+      );
+      if (!updated) throw operationConflict('Case changed during disposition update');
+      await tx.insert(internalCaseEvents, {
+        caseId: current.id,
+        tenantId: input.tenantId,
+        actorId: input.actorId,
+        fromStatus: current.status,
+        toStatus: current.status,
+        disposition: updated.disposition,
+      });
+      return updated;
+    });
   }
 
   async resolveCase(

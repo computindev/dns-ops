@@ -850,6 +850,8 @@ export const internalCases = pgTable(
       .notNull()
       .references(() => internalSignals.id, { onDelete: 'cascade' }),
     status: internalCaseStatusEnum('status').notNull().default('OPEN'),
+    /** Numeric optimistic-concurrency version exposed to operator/MCP disposition updates. */
+    version: integer('version').notNull().default(1),
     disposition: text('disposition'),
     note: text('note'),
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),

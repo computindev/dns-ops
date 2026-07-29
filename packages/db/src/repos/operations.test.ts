@@ -68,7 +68,9 @@ function createDb() {
           : name === 'internal_cases' || name === 'alerts'
             ? 'signalId'
             : 'id';
-      return (rows[name] ?? []).filter((row) => row[key] === param);
+      return (rows[name] ?? []).filter(
+        (row) => row[key] === param || (name === 'internal_cases' && row.id === param)
+      );
     }),
     selectOne: vi.fn(async (table: unknown, condition: unknown) => {
       const name = tableName(table);
@@ -84,6 +86,7 @@ function createDb() {
         updatedAt: now,
         firstSeenAt: now,
         lastSeenAt: now,
+        ...(name === 'internal_cases' ? { version: 1 } : {}),
         ...values,
       };
       rows[name] ??= [];
@@ -138,6 +141,30 @@ describe('OperationalConditionService', () => {
     expect(rows.internal_cases).toHaveLength(1);
     expect(rows.alerts).toHaveLength(1);
     expect(rows.internal_case_events).toHaveLength(1);
+  });
+
+  it('sets an attributed disposition with numeric optimistic concurrency', async () => {
+    const { db, rows } = createDb();
+    const service = new OperationalConditionService(db);
+    const first = await service.observe(observation);
+    const updated = await service.setCaseDisposition({
+      tenantId: 'tenant-1',
+      caseId: first.case.id,
+      expectedVersion: first.case.version,
+      disposition: 'Investigating with owner',
+      actorId: 'operator-1',
+    });
+    expect(updated).toMatchObject({ disposition: 'Investigating with owner', version: 2 });
+    await expect(
+      service.setCaseDisposition({
+        tenantId: 'tenant-1',
+        caseId: first.case.id,
+        expectedVersion: 1,
+        disposition: 'Stale write',
+        actorId: 'operator-2',
+      })
+    ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
+    expect(rows.internal_case_events).toHaveLength(2);
   });
 
   it('resolves from fresh evidence and reopens the same operational objects', async () => {
