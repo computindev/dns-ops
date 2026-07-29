@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "444b16054a4e1b3abeff250b463d9dd4d6691c01",
+  "currentSha": "6f17098984c279270567447ffa0abb8f272a1ea3",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -26,24 +26,25 @@
     "Minimal operator-declared domain profiles and typed RDAP/TLS/HTTP/redirect/indexability evidence contracts are implemented with database-enforced tenant ownership",
     "Coverage/setup evidence remains separate from signals, cases, findings, and alerts",
     "Bounded RDAP expiration collection uses IANA bootstrap, cumulative deadlines, streamed byte limits, exact-domain validation, strict event dates, and actionable UNKNOWN results",
+    "Bounded TLS evidence pins a validated public address while preserving SNI and independently records certificate chain and hostname authorization",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
     {
       "command": "bun run lint",
-      "result": "8 of 8 workspace tasks passed after bounded RDAP evidence"
+      "result": "8 of 8 workspace tasks passed after bounded TLS evidence"
     },
     {
       "command": "bun run typecheck",
-      "result": "14 of 14 workspace tasks passed after bounded RDAP evidence"
+      "result": "14 of 14 workspace tasks passed after bounded TLS evidence"
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2618 tests passed and 41 skipped after bounded RDAP evidence"
+      "result": "2627 tests passed and 41 skipped after bounded TLS evidence"
     },
     {
       "command": "bun run build",
-      "result": "8 of 8 workspace tasks passed after bounded RDAP evidence"
+      "result": "8 of 8 workspace tasks passed after bounded TLS evidence"
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
@@ -97,11 +98,11 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Implement bounded TLS/HTTP/redirect/indexability collectors against registered tenant domain targets",
+    "Implement bounded HTTP/redirect/indexability collectors against registered tenant domain targets",
     "Persist probe failure and stale evidence as actionable setup/evidence without automatic signal promotion",
     "Wire baseline-aware condition evaluation to the canonical signal/case service",
     "Converge migrated alert creation on the canonical signal path and prove FIX-06",
     "Add deterministic FIX-05 stale-evidence and FIX-06 canonical deduplication fixtures"
   ],
-  "updatedAt": "2026-07-29T12:38:18Z"
+  "updatedAt": "2026-07-29T13:03:26Z"
 }
