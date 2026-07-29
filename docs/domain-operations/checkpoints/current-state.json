@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "2a3b0b2d758e9b72148dbe85c9bbadc03fcaf2ad",
+  "currentSha": "0c8167fe162f96f3fca8b76ccb0314cc8b6ec323",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -67,18 +67,21 @@
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
-      "result": "No schema drift after migrations 0015–0019 operational baselines, case versioning, and MCP command idempotency"
+      "result": "No schema drift after migrations 0015–0020 operational baselines, case versioning, MCP command idempotency, and schema-exported session tables"
+    },
+    {
+      "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-migrations",
+      "result": "Fresh isolated PostgreSQL migration verification passed: 32/32 tables and 32/32 enums"
+    },
+    {
+      "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-operations-concurrency",
+      "result": "Fresh isolated PostgreSQL verification passed for canonical-signal unique insert and internal-case version CAS concurrency"
     }
   ],
   "failingChecks": [
     {
       "command": "bun run --filter @dns-ops/db build in clean standalone order",
       "failure": "Contracts declarations were not built first",
-      "blocking": false
-    },
-    {
-      "command": "bun run --filter @dns-ops/db verify-migrations",
-      "failure": "An isolated DATABASE_URL was unavailable",
       "blocking": false
     },
     {
@@ -118,9 +121,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Build the deterministic MCP harness for all ten tool outcomes, scope/tenant negatives, parity, idempotency, and rate-limit evidence",
-    "Obtain issue #4 external prerequisites for live Gate 3 fixtures, manual baseline, and isolated PostgreSQL verification",
-    "Complete isolated PostgreSQL migration/concurrency verification and retain live Gate 3/4 blocks"
+    "Obtain issue #4 external prerequisites for live Gate 3 fixtures, manual baseline, and final clean-checkout Gate 4 review",
+    "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T18:33:00Z"
+  "updatedAt": "2026-07-29T18:41:00Z"
 }
