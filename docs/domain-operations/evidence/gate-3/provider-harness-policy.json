@@ -1,6 +1,6 @@
 {
   "evidenceId": "GATE3-PROVIDER-HARNESS-POLICY",
-  "recordedAt": "2026-07-29T19:12:00Z",
+  "recordedAt": "2026-07-29T19:52:00Z",
   "source": "packages/contracts/src/live-fault-harness.ts",
   "status": "NON_LIVE_SAFETY_INFRASTRUCTURE_COMPLETE",
   "implements": [
@@ -11,11 +11,11 @@
   ],
   "verification": {
     "command": "bunx vitest run packages/contracts/src/live-fault-harness.test.ts",
-    "result": "7 passed",
+    "result": "9 passed",
     "additional": [
       "bunx biome check packages/contracts/src/live-fault-harness.ts packages/contracts/src/live-fault-harness.test.ts packages/contracts/src/index.ts passed",
       "bun run --filter @dns-ops/contracts typecheck passed",
-      "bun run lint, RUN_LIVE_DNS_TESTS=0 bun run test (2728 passed, 41 skipped), bun run typecheck, bun run build, and bun run --filter @dns-ops/db check-drift all passed"
+      "bun run lint, RUN_LIVE_DNS_TESTS=0 bun run test (2730 passed, 41 skipped), bun run typecheck, bun run build, and bun run --filter @dns-ops/db check-drift all passed"
     ]
   },
   "safety": {

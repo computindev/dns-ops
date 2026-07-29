@@ -42,7 +42,8 @@
       "evidence": [
         "packages/contracts/src/live-fault-harness.ts",
         "packages/contracts/src/live-fault-harness.test.ts",
-        "docs/domain-operations/evidence/gate-3/provider-harness-policy.json"
+        "docs/domain-operations/evidence/gate-3/provider-harness-policy.json",
+        "docs/domain-operations/evidence/gate-3/fault-run-artifact-policy.json"
       ]
     },
     {

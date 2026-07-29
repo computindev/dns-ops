@@ -43,6 +43,34 @@ export interface AuthorizedControlledFaultMutation {
   providerCredentialFingerprint: string;
 }
 
+export const FAULT_RUN_RESULTS = ['PASS', 'FAIL', 'RECOVERY_REQUIRED'] as const;
+
+export type FaultRunResult = (typeof FAULT_RUN_RESULTS)[number];
+
+/**
+ * Redacted, durable evidence emitted by the future isolated provider harness.
+ * It intentionally permits only a credential fingerprint, never a token value.
+ */
+export interface FaultRunArtifact {
+  runId: string;
+  mutationId: LiveFaultMutationId;
+  zoneId: string;
+  targetNames: readonly string[];
+  baselineHash: string;
+  providerCredentialFingerprint: string;
+  appliedAt?: string;
+  restoredAt?: string;
+  providerResponses: readonly string[];
+  authoritativeEvidenceIds: readonly string[];
+  recursiveEvidenceIds: readonly string[];
+  scanTaskIds: readonly string[];
+  signalIds: readonly string[];
+  caseIds: readonly string[];
+  auditEventIds: readonly string[];
+  result: FaultRunResult;
+  recoveryInstructions?: string;
+}
+
 interface ValidatedControlledFaultPolicy {
   testDomain: string;
   testWebHost: string;
@@ -79,7 +107,35 @@ const policyKeys = new Set([
 ]);
 const allowlistEntryKeys = new Set(['name', 'types', 'mutationIds']);
 const requestKeys = new Set(['zoneId', 'name', 'type', 'mutationId']);
+const faultRunArtifactKeys = new Set([
+  'runId',
+  'mutationId',
+  'zoneId',
+  'targetNames',
+  'baselineHash',
+  'providerCredentialFingerprint',
+  'appliedAt',
+  'restoredAt',
+  'providerResponses',
+  'authoritativeEvidenceIds',
+  'recursiveEvidenceIds',
+  'scanTaskIds',
+  'signalIds',
+  'caseIds',
+  'auditEventIds',
+  'result',
+  'recoveryInstructions',
+]);
 const maximumAllowlistEntries = 64;
+const maximumArtifactItems = 128;
+const maximumArtifactSummaryLength = 1_024;
+const redactedArtifactPattern =
+  /(?:authorization|x-auth-token|x-api-key|(?:access|api|provider)[_-]?token|(?:set-)?cookie|password|secret)\s*[:=]|bearer\s+/i;
+const artifactIdentifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$/;
+const providerResponsePattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
+const isoTimestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
+const recoveryInstructionSecretPattern =
+  /\b(?:token|secret|password|authorization|cookie|bearer|api[ _-]?key|private[ _-]?key|credential)\b/i;
 
 type DataDescriptorMap = Record<string, PropertyDescriptor>;
 
@@ -91,6 +147,14 @@ function assertNonEmpty(value: unknown, label: string): string {
   const normalized = value.trim();
   if (!normalized) {
     throw new Error(`${label} is required`);
+  }
+  return normalized;
+}
+
+function assertCanonicalArtifactText(value: unknown, label: string): string {
+  const normalized = assertNonEmpty(value, label);
+  if (value !== normalized) {
+    throw new Error(`${label} must not contain surrounding whitespace`);
   }
   return normalized;
 }
@@ -338,6 +402,141 @@ function normalizeControlledFaultMutationRequest(
       'controlled fault mutation ID'
     ),
   };
+}
+
+function validateArtifactSummary(value: unknown, label: string): void {
+  const summary = assertCanonicalArtifactText(value, label);
+  if (
+    summary.length > maximumArtifactSummaryLength ||
+    /[\r\n]/.test(summary) ||
+    redactedArtifactPattern.test(summary)
+  ) {
+    throw new Error(`${label} must be a bounded redacted summary`);
+  }
+}
+
+function validateArtifactIdentifier(value: unknown, label: string): void {
+  const identifier = assertCanonicalArtifactText(value, label);
+  if (!artifactIdentifierPattern.test(identifier) || redactedArtifactPattern.test(identifier)) {
+    throw new Error(`${label} must be a bounded non-secret identifier`);
+  }
+}
+
+function validateArtifactIdList(value: unknown, label: string): void {
+  const values = readDataArray(value, label, maximumArtifactItems);
+  for (const item of values) {
+    validateArtifactIdentifier(item, label);
+  }
+}
+
+function validateProviderResponseList(value: unknown): void {
+  const values = readDataArray(value, 'providerResponses', maximumArtifactItems);
+  for (const item of values) {
+    const response = assertCanonicalArtifactText(item, 'providerResponses');
+    if (!providerResponsePattern.test(response)) {
+      throw new Error('providerResponses must contain only operation/status summaries');
+    }
+  }
+}
+
+function validateRecoveryInstructions(value: unknown): void {
+  validateArtifactSummary(value, 'recoveryInstructions');
+  if (recoveryInstructionSecretPattern.test(value as string)) {
+    throw new Error('recoveryInstructions must not contain credential material');
+  }
+}
+
+function validateIsoTimestamp(value: unknown, label: string): void {
+  const timestamp = assertCanonicalArtifactText(value, label);
+  const match = isoTimestampPattern.exec(timestamp);
+  if (!match) {
+    throw new Error(`${label} must be an ISO-8601 UTC timestamp`);
+  }
+
+  const fraction = (match[2] ?? '').padEnd(3, '0');
+  const canonicalTimestamp = `${match[1]}.${fraction}Z`;
+  if (
+    Number.isNaN(Date.parse(timestamp)) ||
+    new Date(timestamp).toISOString() !== canonicalTimestamp
+  ) {
+    throw new Error(`${label} must be a calendar-valid ISO-8601 UTC timestamp`);
+  }
+}
+
+/**
+ * Validates the runbook's durable artifact shape and rejects credential/header
+ * material before an artifact can be stored or emitted. It performs no I/O.
+ */
+export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
+  const fields = readPlainDataObject(artifact, faultRunArtifactKeys);
+  validateArtifactIdentifier(readDataField(fields, 'runId'), 'runId');
+  normalizeMutationId(readDataField(fields, 'mutationId'), 'mutationId');
+  validateArtifactIdentifier(readDataField(fields, 'zoneId'), 'zoneId');
+
+  const targetNames = readDataArray(
+    readDataField(fields, 'targetNames'),
+    'targetNames',
+    maximumAllowlistEntries
+  );
+  if (targetNames.length === 0) {
+    throw new Error('targetNames must contain at least one name');
+  }
+  const normalizedTargetNames = targetNames.map((name) => {
+    const canonicalName = assertCanonicalArtifactText(name, 'targetNames entry');
+    const normalizedName = normalizeRecordName(canonicalName, 'targetNames entry');
+    if (canonicalName !== normalizedName) {
+      throw new Error('targetNames entries must be lowercase DNS names without a trailing dot');
+    }
+    return normalizedName;
+  });
+  if (new Set(normalizedTargetNames).size !== normalizedTargetNames.length) {
+    throw new Error('targetNames must not contain duplicates');
+  }
+
+  const baselineHash = assertCanonicalArtifactText(
+    readDataField(fields, 'baselineHash'),
+    'baselineHash'
+  );
+  if (!fingerprintPattern.test(baselineHash)) {
+    throw new Error('baselineHash must be a sha256:<64 lowercase hex> hash');
+  }
+  const credentialFingerprint = assertCanonicalArtifactText(
+    readDataField(fields, 'providerCredentialFingerprint'),
+    'providerCredentialFingerprint'
+  );
+  if (!fingerprintPattern.test(credentialFingerprint)) {
+    throw new Error(
+      'providerCredentialFingerprint must be a sha256:<64 lowercase hex> fingerprint'
+    );
+  }
+
+  const appliedAt = readDataField(fields, 'appliedAt');
+  if (appliedAt !== undefined) validateIsoTimestamp(appliedAt, 'appliedAt');
+  const restoredAt = readDataField(fields, 'restoredAt');
+  if (restoredAt !== undefined) validateIsoTimestamp(restoredAt, 'restoredAt');
+
+  validateProviderResponseList(readDataField(fields, 'providerResponses'));
+  validateArtifactIdList(
+    readDataField(fields, 'authoritativeEvidenceIds'),
+    'authoritativeEvidenceIds'
+  );
+  validateArtifactIdList(readDataField(fields, 'recursiveEvidenceIds'), 'recursiveEvidenceIds');
+  validateArtifactIdList(readDataField(fields, 'scanTaskIds'), 'scanTaskIds');
+  validateArtifactIdList(readDataField(fields, 'signalIds'), 'signalIds');
+  validateArtifactIdList(readDataField(fields, 'caseIds'), 'caseIds');
+  validateArtifactIdList(readDataField(fields, 'auditEventIds'), 'auditEventIds');
+
+  const result = readDataField(fields, 'result');
+  if (!FAULT_RUN_RESULTS.includes(result as FaultRunResult)) {
+    throw new Error('result is not permitted');
+  }
+  const recoveryInstructions = readDataField(fields, 'recoveryInstructions');
+  if (result === 'RECOVERY_REQUIRED' && recoveryInstructions === undefined) {
+    throw new Error('recoveryInstructions are required when result is RECOVERY_REQUIRED');
+  }
+  if (recoveryInstructions !== undefined) {
+    validateRecoveryInstructions(recoveryInstructions);
+  }
 }
 
 /**

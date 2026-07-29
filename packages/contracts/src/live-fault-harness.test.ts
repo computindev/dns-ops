@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   authorizeControlledFaultMutation,
   type ControlledFaultHarnessPolicy,
+  type FaultRunArtifact,
   validateControlledFaultHarnessPolicy,
+  validateFaultRunArtifact,
 } from './live-fault-harness.js';
 
 const fingerprint = `sha256:${'a'.repeat(64)}`;
@@ -27,6 +29,27 @@ function policy(): ControlledFaultHarnessPolicy {
         mutationIds: ['LIVE-03'],
       },
     ],
+  };
+}
+
+function artifact(): FaultRunArtifact {
+  return {
+    runId: 'run-01',
+    mutationId: 'LIVE-03',
+    zoneId: 'zone-123',
+    targetNames: ['mail.faults.example.test', '_dmarc.mail.faults.example.test'],
+    baselineHash: fingerprint,
+    providerCredentialFingerprint: fingerprint,
+    appliedAt: '2026-07-29T19:00:00Z',
+    restoredAt: '2026-07-29T19:01:00Z',
+    providerResponses: ['update-record: 200'],
+    authoritativeEvidenceIds: ['authoritative-01'],
+    recursiveEvidenceIds: ['recursive-01'],
+    scanTaskIds: ['scan-01'],
+    signalIds: ['signal-01'],
+    caseIds: ['case-01'],
+    auditEventIds: ['audit-01'],
+    result: 'PASS',
   };
 }
 
@@ -235,5 +258,97 @@ describe('controlled live-fault harness policy', () => {
         testMailSubdomain: 'faults.example.test',
       })
     ).toThrow('strict subdomain');
+  });
+
+  it('accepts a bounded, redacted fault-run artifact', () => {
+    expect(() => validateFaultRunArtifact(artifact())).not.toThrow();
+  });
+
+  it('rejects artifact secrets, malformed hashes, and incomplete recovery instructions', () => {
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        providerResponses: ['Authorization: Bearer must-not-be-stored'],
+      })
+    ).toThrow('providerResponses must contain only operation/status summaries');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        providerResponses: ['Cookie: session=must-not-be-stored'],
+      })
+    ).toThrow('providerResponses must contain only operation/status summaries');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        providerResponses: ['X-Auth-Token: must-not-be-stored'],
+      })
+    ).toThrow('providerResponses must contain only operation/status summaries');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        providerResponses: ['password=must-not-be-stored'],
+      })
+    ).toThrow('providerResponses must contain only operation/status summaries');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        zoneId: 'X-Auth-Token: must-not-be-stored',
+      })
+    ).toThrow('zoneId must be a bounded non-secret identifier');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        baselineHash: 'not-a-hash',
+      })
+    ).toThrow('baselineHash must be a sha256');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        appliedAt: '2025-02-29T12:00:00Z',
+      })
+    ).toThrow('calendar-valid');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        baselineHash: ` ${fingerprint}`,
+      })
+    ).toThrow('surrounding whitespace');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        targetNames: ['MAIL.FAULTS.EXAMPLE.TEST'],
+      })
+    ).toThrow('must be lowercase DNS names');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+      })
+    ).toThrow('recoveryInstructions are required');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recoveryInstructions: 'Use the secret abc123',
+      })
+    ).toThrow('must not contain credential material');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recoveryInstructions: 'Use API key sk_live_abc123 to restore the record',
+      })
+    ).toThrow('must not contain credential material');
   });
 });
