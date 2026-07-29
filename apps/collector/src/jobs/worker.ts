@@ -29,6 +29,7 @@ import {
 import { getJobMetrics } from '../middleware/job-metrics.js';
 import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import { generateAndSendFindingAlerts } from './alert-from-findings.js';
+import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
 import {
   type CollectDomainJobData,
   type FleetReportJobData,
@@ -104,6 +105,25 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
         logger.warn('External evidence collection failed (non-fatal)', {
           snapshotId: result.snapshotId,
           error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+        });
+      }
+    }
+
+    if (evidenceDomain) {
+      try {
+        await finalizePersistedCanonicalConditions(db, {
+          snapshotId: result.snapshotId,
+          tenantId,
+          domainId: evidenceDomain.id,
+          domainName: evidenceDomain.normalizedName,
+        });
+      } catch (finalizationError) {
+        logger.warn('Canonical condition finalization failed (non-fatal)', {
+          snapshotId: result.snapshotId,
+          error:
+            finalizationError instanceof Error
+              ? finalizationError.message
+              : String(finalizationError),
         });
       }
     }

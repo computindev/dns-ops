@@ -11,11 +11,19 @@ const MAIL_REGRESSION_FINDINGS = [
 ] as const;
 
 export const LEGACY_CONDITION_REGISTRY: readonly LegacyConditionMapEntry[] = [
-  ...MAIL_REGRESSION_FINDINGS.map((conditionId) => ({
-    conditionId,
-    disposition: 'LEGACY_ONLY' as const,
-    notificationPath: 'LEGACY_ALERT' as const,
-  })),
+  {
+    conditionId: 'mail.no-spf-record',
+    disposition: 'MIGRATED',
+    replacementSignalKind: 'MAIL_DNS_CONFIGURATION_REGRESSION',
+    notificationPath: 'SIGNAL_ALERT',
+  },
+  ...MAIL_REGRESSION_FINDINGS.filter((conditionId) => conditionId !== 'mail.no-spf-record').map(
+    (conditionId) => ({
+      conditionId,
+      disposition: 'LEGACY_ONLY' as const,
+      notificationPath: 'LEGACY_ALERT' as const,
+    })
+  ),
   {
     conditionId: 'monitoring.collection-failed',
     disposition: 'LEGACY_ONLY',

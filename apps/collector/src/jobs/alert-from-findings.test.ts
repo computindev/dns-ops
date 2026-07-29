@@ -227,7 +227,7 @@ describe('generateAlertsFromFindings', () => {
       expect(mockData.alerts).toEqual([]);
     });
 
-    it('retains explicitly legacy mail alerts until canonical regression evaluation is wired', async () => {
+    it('excludes migrated SPF absence from direct legacy alerts', async () => {
       const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
       mockData.monitoredDomains.push({
         id: MONITORED_DOMAIN_ID,
@@ -235,6 +235,21 @@ describe('generateAlertsFromFindings', () => {
         tenantId: TENANT_ID,
       });
       mockData.findings.push(createMockFinding({ type: 'mail.no-spf-record' }));
+
+      const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
+
+      expect(results).toEqual([]);
+      expect(mockData.alerts).toEqual([]);
+    });
+
+    it('retains direct alerts for unmigrated mail findings', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+      });
+      mockData.findings.push(createMockFinding({ type: 'mail.no-dmarc-record' }));
 
       const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
 
