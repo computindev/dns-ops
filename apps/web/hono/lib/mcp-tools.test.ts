@@ -14,6 +14,13 @@ describe('MCP Phase 1 tool contract', () => {
     }
   });
 
+  it('assigns least-privilege Phase 1 read scopes', () => {
+    expect(getMcpTool('domain_search')?.requiredScope).toBe('DOMAIN_READ');
+    expect(getMcpTool('evidence_get')?.requiredScope).toBe('DOMAIN_READ');
+    expect(getMcpTool('signal_list')?.requiredScope).toBe('SIGNAL_READ');
+    expect(getMcpTool('case_get')?.requiredScope).toBe('CASE_READ');
+  });
+
   it('does not resolve unapproved tools', () => {
     expect(getMcpTool('provider_mutate')).toBeUndefined();
   });

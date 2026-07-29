@@ -16,7 +16,7 @@ export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
 export interface McpToolDefinition {
   name: McpToolName;
   readOnly: boolean;
-  requiredScope: 'CASE_READ' | 'CASE_WRITE' | 'SCAN_REQUEST';
+  requiredScope: 'DOMAIN_READ' | 'SIGNAL_READ' | 'CASE_READ' | 'CASE_WRITE' | 'SCAN_REQUEST';
   inputSchema: {
     type: 'object';
     required: readonly string[];
@@ -32,25 +32,25 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'domain_search',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'DOMAIN_READ',
     inputSchema: { type: 'object', required: [], properties: { query: { type: 'string' } } },
   },
   {
     name: 'domain_get_profile',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'DOMAIN_READ',
     inputSchema: { type: 'object', required: ['domainId'], properties: { domainId: id } },
   },
   {
     name: 'domain_get_posture',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'DOMAIN_READ',
     inputSchema: { type: 'object', required: ['domainId'], properties: { domainId: id } },
   },
   {
     name: 'snapshot_compare',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'DOMAIN_READ',
     inputSchema: {
       type: 'object',
       required: ['domainId', 'leftSnapshotId', 'rightSnapshotId'],
@@ -60,13 +60,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'evidence_get',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'DOMAIN_READ',
     inputSchema: { type: 'object', required: ['snapshotId'], properties: { snapshotId: id } },
   },
   {
     name: 'signal_list',
     readOnly: true,
-    requiredScope: 'CASE_READ',
+    requiredScope: 'SIGNAL_READ',
     inputSchema: { type: 'object', required: [], properties: { domainId: id } },
   },
   {

@@ -1,6 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-export const MCP_SCOPES = ['CASE_READ', 'CASE_WRITE', 'SCAN_REQUEST'] as const;
+export const MCP_SCOPES = [
+  'DOMAIN_READ',
+  'SIGNAL_READ',
+  'CASE_READ',
+  'CASE_WRITE',
+  'SCAN_REQUEST',
+] as const;
 export type McpScope = (typeof MCP_SCOPES)[number];
 
 export interface McpPrincipal {
