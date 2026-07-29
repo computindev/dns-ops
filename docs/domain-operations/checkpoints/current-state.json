@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "af4d9f606221908a715ba054dede33ba764e6a5b",
+  "currentSha": "eea9ca46f5cb713af18dcb03629d6ce002fff4a2",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -31,7 +31,9 @@
     "Tenant-scoped profile and latest external-evidence routes provide actionable setup state; profile mutation and audit history are atomic",
     "Synchronous and scheduled collection paths now persist profile-gated RDAP/TLS/HTTP evidence with tenant, snapshot, hostname, feature-gate, timeout, and semaphore controls",
     "Domain 360 exposes a tenant-safe Needs setup/evidence lane; UNKNOWN cannot render as healthy and authentication cache transitions clear active observers",
-    "Production and client mutation remain prohibited"
+    "Production and client mutation remain prohibited",
+    "Accepted TLS and SPF operational baselines are append-only, tenant/domain/snapshot scoped, audited, and cannot be inferred from scans",
+    "A pure evaluator classifies stale, failed, UNKNOWN, missing, or incomplete TLS evidence as setup/evidence and emits canonical observations only for an accepted fresh TLS policy violation or accepted SPF baseline regression"
   ],
   "passingChecks": [
     {
@@ -52,7 +54,7 @@
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
-      "result": "No schema drift after migration 0014 domain profile audit"
+      "result": "No schema drift after migration 0015 operational condition baselines"
     }
   ],
   "failingChecks": [
@@ -102,11 +104,10 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Wire baseline-aware condition evaluation to the canonical signal/case service",
-    "Converge migrated notifications on the canonical signal path and prove FIX-06",
-    "Wire baseline-aware condition evaluation to the canonical signal/case service",
-    "Converge migrated alert creation on the canonical signal path and prove FIX-06",
-    "Add deterministic FIX-05 stale-evidence and FIX-06 canonical deduplication fixtures"
+    "Wire persisted baseline-aware evaluation to the canonical signal/case service",
+    "Expose tenant-scoped baseline acceptance and freshness in the profile/evidence API and Domain 360",
+    "Converge migrated SPF notifications on the canonical signal path and prove FIX-06",
+    "Add deterministic finalizer/deduplication fixtures and complete isolated migration verification"
   ],
-  "updatedAt": "2026-07-29T16:07:51Z"
+  "updatedAt": "2026-07-29T16:27:00Z"
 }
