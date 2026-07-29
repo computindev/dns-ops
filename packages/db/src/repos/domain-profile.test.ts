@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
-import { domainProfiles, domains } from '../schema/index.js';
+import { auditEvents, domainProfiles, domains } from '../schema/index.js';
 import { DomainProfileRepository } from './domain-profile.js';
 
 function conditionParams(condition: unknown): unknown[] {
@@ -27,6 +27,7 @@ function createDb(domainTenantId = 'tenant-1') {
     updatedAt: new Date(),
   };
   const profiles: Array<typeof domainProfiles.$inferSelect> = [];
+  const audits: Array<typeof auditEvents.$inferSelect> = [];
 
   const db = {
     async selectOne(table: unknown, condition: unknown) {
@@ -47,6 +48,15 @@ function createDb(domainTenantId = 'tenant-1') {
       return profiles.filter((profile) => params.includes(profile.tenantId));
     },
     async insert(table: unknown, values: typeof domainProfiles.$inferInsert) {
+      if (table === auditEvents) {
+        const event = {
+          id: 'audit-1',
+          createdAt: new Date(),
+          ...values,
+        } as typeof auditEvents.$inferSelect;
+        audits.push(event);
+        return event;
+      }
       if (table !== domainProfiles) throw new Error('Unexpected table');
       const row = {
         ...values,
@@ -75,7 +85,7 @@ function createDb(domainTenantId = 'tenant-1') {
     },
   };
 
-  return { db: db as unknown as IDatabaseAdapter, profiles };
+  return { db: db as unknown as IDatabaseAdapter, profiles, audits };
 }
 
 describe('DomainProfileRepository', () => {
@@ -104,6 +114,27 @@ describe('DomainProfileRepository', () => {
     await expect(repository.listByTenant('tenant-1')).resolves.toEqual([updated]);
     await expect(repository.listByTenant('other-tenant')).resolves.toEqual([]);
     await expect(repository.findByDomainId('domain-1', 'other-tenant')).resolves.toBeNull();
+  });
+
+  it('writes profile state and attribution in one transaction', async () => {
+    const { db, audits } = createDb();
+    const profile = await new DomainProfileRepository(db).setWithAudit(
+      { domainId: 'domain-1', tenantId: 'tenant-1', purpose: 'WEB', criticality: 'NORMAL' },
+      {
+        actorId: 'actor-1',
+        tenantId: 'tenant-1',
+        actorEmail: null,
+        ipAddress: null,
+        userAgent: null,
+      }
+    );
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      action: 'domain_profile_updated',
+      entityId: 'domain-1',
+      newValue: profile,
+      actorId: 'actor-1',
+    });
   });
 
   it('rejects cross-tenant writes', async () => {

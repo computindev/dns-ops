@@ -617,6 +617,7 @@ export const auditActionEnum = pgEnum('audit_action', [
   'alert_acknowledged',
   'alert_resolved',
   'alert_suppressed',
+  'domain_profile_updated',
 ]);
 
 export const auditEvents = pgTable(
