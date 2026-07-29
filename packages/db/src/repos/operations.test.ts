@@ -143,6 +143,28 @@ describe('OperationalConditionService', () => {
     expect(rows.internal_case_events).toHaveLength(1);
   });
 
+  it('opens only an existing active canonical signal case', async () => {
+    const { db } = createDb();
+    const service = new OperationalConditionService(db);
+    const observed = await service.observe({ ...observation, discriminator: 'spf' });
+    await expect(
+      service.openCanonicalCase('tenant-1', 'domain-1', observed.signal.conditionKey)
+    ).resolves.toMatchObject({
+      case: { id: observed.case.id },
+      signal: { id: observed.signal.id },
+    });
+    await expect(
+      service.openCanonicalCase(
+        'tenant-1',
+        'domain-1',
+        'tenant-1:domain-1:MAIL_DNS_CONFIGURATION_REGRESSION:absent'
+      )
+    ).resolves.toBeNull();
+    await expect(
+      service.openCanonicalCase('other-tenant', 'domain-1', observed.signal.conditionKey)
+    ).resolves.toBeNull();
+  });
+
   it('sets an attributed disposition with numeric optimistic concurrency', async () => {
     const { db, rows } = createDb();
     const service = new OperationalConditionService(db);

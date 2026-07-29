@@ -352,6 +352,36 @@ export class OperationalConditionService {
     return snapshot;
   }
 
+  /**
+   * MCP/operator case_open is intentionally constrained to an existing active
+   * canonical signal. It never creates model-authored conditions, alerts, or cases.
+   */
+  async openCanonicalCase(
+    tenantId: string,
+    domainId: string,
+    conditionKey: string
+  ): Promise<{ case: InternalCase; signal: InternalSignal } | null> {
+    const signals = await this.db.selectWhere(
+      internalSignals,
+      eq(internalSignals.conditionKey, conditionKey)
+    );
+    const signal = signals.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.domainId === domainId &&
+        candidate.status === 'ACTIVE'
+    );
+    if (!signal) return null;
+    const cases = await this.db.selectWhere(internalCases, eq(internalCases.signalId, signal.id));
+    const internalCase = cases.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.status !== 'RESOLVED' &&
+        candidate.status !== 'DISMISSED'
+    );
+    return internalCase ? { case: internalCase, signal } : null;
+  }
+
   async getCase(
     tenantId: string,
     caseId: string
