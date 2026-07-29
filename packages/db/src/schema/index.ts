@@ -16,6 +16,7 @@ import type {
   EvaluationCoverage,
   ExternalEvidenceData,
   InternalSignalKind,
+  UnknownResolution,
 } from '@dns-ops/contracts';
 import {
   boolean,
@@ -1067,7 +1068,19 @@ export interface MTASTSProbeData {
   certificateValid?: boolean;
 }
 
-export type ProbeData = SMTPProbeData | MTASTSProbeData | ExternalEvidenceData;
+export interface ExternalEvidenceProbeData {
+  check:
+    | 'RDAP_EXPIRATION'
+    | 'TLS_CERTIFICATE'
+    | 'HTTP_REACHABILITY'
+    | 'REDIRECT_TOPOLOGY'
+    | 'HOMEPAGE_INDEXABILITY';
+  status: 'OBSERVED' | 'UNKNOWN';
+  evidence?: ExternalEvidenceData;
+  unknown?: UnknownResolution;
+}
+
+export type ProbeData = SMTPProbeData | MTASTSProbeData | ExternalEvidenceProbeData;
 
 export const probeObservations = pgTable(
   'probe_observations',

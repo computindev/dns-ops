@@ -14,6 +14,7 @@ export {
   probeAllowlist,
   probeAllowlistManager,
 } from './allowlist.js';
+export { externalEvidenceToObservation } from './external-evidence-persistence.js';
 export type {
   HttpWebCollectionOptions,
   HttpWebCollectionResult,
