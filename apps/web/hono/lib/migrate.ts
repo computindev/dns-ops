@@ -6,7 +6,7 @@
  */
 
 import { access, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { IDatabaseAdapter } from '@dns-ops/db';
 import { sql } from 'drizzle-orm';
 import { getWebLogger } from '../middleware/error-tracking.js';
@@ -57,9 +57,11 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function resolveMigrationsDir(): Promise<string> {
+  const cwd = process.cwd();
+  const workspaceRoots = [cwd, dirname(cwd), dirname(dirname(cwd))];
   const candidates = [
     process.env.DNS_OPS_MIGRATIONS_DIR,
-    join(process.cwd(), 'packages', 'db', 'src', 'migrations'),
+    ...workspaceRoots.map((root) => join(root, 'packages', 'db', 'src', 'migrations')),
   ].filter((candidate): candidate is string => Boolean(candidate));
 
   for (const candidate of candidates) {

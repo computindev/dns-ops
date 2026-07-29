@@ -75,6 +75,7 @@ export default defineConfig({
     timeout: 120 * 1000, // 2 minutes to start
     env: {
       NODE_ENV: 'development',
+      PORT: process.env.PORT || new URL(BASE_URL).port || '3000',
       DATABASE_URL:
         process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/dns_ops',
       COLLECTOR_URL: process.env.COLLECTOR_URL || 'http://localhost:3001',
