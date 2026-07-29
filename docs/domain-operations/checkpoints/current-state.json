@@ -2,7 +2,8 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "cd7c2d62d4c03d660c472e87a29e24cc5c8870cf",
+  "currentSha": "38e5442fa70faeb59a2def56a0f8caad68ce0d23",
+  "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
   "whatIsTrue": [
@@ -22,28 +23,30 @@
     "The six canonical signal kinds, deduplicated signal/case/alert persistence, lifecycle audit, fresh-evidence resolution, and reopen foundation are implemented",
     "Mail findings remain explicitly LEGACY_ONLY until production regression evaluation is wired; no silent notification cutover occurred",
     "Six non-executable operating playbooks document evidence, applicability, verification, and escalation boundaries",
+    "Minimal operator-declared domain profiles and typed RDAP/TLS/HTTP/redirect/indexability evidence contracts are implemented with database-enforced tenant ownership",
+    "Coverage/setup evidence remains separate from signals, cases, findings, and alerts",
     "Production and client mutation remain prohibited"
   ],
   "passingChecks": [
     {
       "command": "bun run lint",
-      "result": "8 of 8 workspace tasks passed after Gate 2 remediation completion"
+      "result": "8 of 8 workspace tasks passed after domain-profile and external-evidence contracts"
     },
     {
       "command": "bun run typecheck",
-      "result": "14 of 14 workspace tasks passed after Gate 2 remediation completion"
+      "result": "14 of 14 workspace tasks passed after domain-profile and external-evidence contracts"
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2571 tests passed and 41 skipped after Gate 2 remediation completion; evidence: docs/domain-operations/evidence/gate-2/guidance-only-remediation.json"
+      "result": "2594 tests passed and 41 skipped after domain-profile and external-evidence contracts"
     },
     {
       "command": "bun run build",
-      "result": "8 of 8 workspace tasks passed after Gate 2 remediation completion"
+      "result": "8 of 8 workspace tasks passed after domain-profile and external-evidence contracts"
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
-      "result": "No schema drift after Gate 2 remediation completion"
+      "result": "No schema drift after migration 0013 domain profiles and external evidence"
     }
   ],
   "failingChecks": [
@@ -93,11 +96,11 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Implement minimal domain purpose/profile and bounded RDAP/TLS/HTTP evidence",
-    "Implement setup/evidence lane without automatic signal promotion",
+    "Implement bounded RDAP/TLS/HTTP/redirect/indexability collectors against registered tenant domain targets",
+    "Persist probe failure and stale evidence as actionable setup/evidence without automatic signal promotion",
     "Wire baseline-aware condition evaluation to the canonical signal/case service",
     "Converge migrated alert creation on the canonical signal path and prove FIX-06",
     "Add deterministic FIX-05 stale-evidence and FIX-06 canonical deduplication fixtures"
   ],
-  "updatedAt": "2026-07-29T04:34:00Z"
+  "updatedAt": "2026-07-29T12:03:28Z"
 }
