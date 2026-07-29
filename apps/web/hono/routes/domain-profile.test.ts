@@ -143,6 +143,20 @@ describe('domainProfileRoutes', () => {
     expect(response.status).toBe(404);
   });
 
+  it('keeps an explicitly UNKNOWN purpose in the actionable setup lane', async () => {
+    const { app } = createApp();
+    await app.request('/example.com/profile', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ purpose: 'UNKNOWN', criticality: 'NORMAL' }),
+    });
+    const response = await app.request('/example.com/profile');
+    await expect(response.json()).resolves.toMatchObject({
+      profile: { purpose: 'UNKNOWN' },
+      setup: { reason: 'PURPOSE_UNDECLARED', action: 'DECLARE_PURPOSE' },
+    });
+  });
+
   it('rejects unauthenticated and invalid profile writes', async () => {
     const unauthenticated = createApp('tenant-1', 'tenant-1', 'actor-1', false).app;
     const unauthorized = await unauthenticated.request('/example.com/profile', {

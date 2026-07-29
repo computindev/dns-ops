@@ -40,7 +40,10 @@ domainProfileRoutes.get('/:domain/profile', async (c) => {
   return c.json({
     domain: domain.normalizedName,
     profile,
-    setup: profile ? null : purposeUndeclaredUnknown('Domain evidence'),
+    setup:
+      !profile || profile.purpose === 'UNKNOWN'
+        ? purposeUndeclaredUnknown('Domain evidence')
+        : null,
   });
 });
 
