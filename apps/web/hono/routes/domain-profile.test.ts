@@ -174,6 +174,29 @@ describe('domainProfileRoutes', () => {
     expect(invalid.status).toBe(400);
   });
 
+  it('rejects unauthenticated and malformed baseline acceptance', async () => {
+    const unauthenticated = createApp('tenant-1', 'tenant-1', 'actor-1', false).app;
+    const denied = await unauthenticated.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const { app } = createApp();
+    const invalid = await app.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signalKind: 'TLS_CERTIFICATE_REGRESSION',
+        sourceSnapshotId: 'snapshot-1',
+        discriminator: 'example.com:443',
+        maxEvidenceAgeSeconds: 60,
+        policy: { kind: 'SPF_PRESENT' },
+      }),
+    });
+    expect(denied.status).toBe(401);
+    expect(invalid.status).toBe(400);
+  });
+
   it('writes a validated profile with an attributed atomic audit event', async () => {
     const { app, audits } = createApp();
     const response = await app.request('/example.com/profile', {

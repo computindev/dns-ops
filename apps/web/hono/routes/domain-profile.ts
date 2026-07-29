@@ -6,6 +6,7 @@ import {
 import {
   DomainProfileRepository,
   DomainRepository,
+  OperationalBaselineRepository,
   ProbeObservationRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
@@ -62,6 +63,62 @@ domainProfileRoutes.get('/:domain/evidence', async (c) => {
     snapshotId: snapshots[0].id,
     evidence: probes.filter((probe) => ['rdap', 'tls_cert', 'http'].includes(probe.probeType)),
   });
+});
+
+domainProfileRoutes.post('/:domain/baselines', requireWritePermission, async (c) => {
+  const tenantId = c.get('tenantId');
+  const actorId = c.get('actorId');
+  const domain = await ownedDomain(c);
+  if (!tenantId || !actorId || !domain) return c.json({ error: 'Domain not found' }, 404);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const maxEvidenceAgeSeconds = body?.maxEvidenceAgeSeconds;
+  if (
+    !body ||
+    typeof body.sourceSnapshotId !== 'string' ||
+    typeof body.discriminator !== 'string' ||
+    typeof maxEvidenceAgeSeconds !== 'number' ||
+    !Number.isInteger(maxEvidenceAgeSeconds)
+  ) {
+    return c.json({ error: 'Invalid baseline request' }, 400);
+  }
+  const signalKind = body.signalKind;
+  const policy = body.policy;
+  const validTls =
+    signalKind === 'TLS_CERTIFICATE_REGRESSION' &&
+    policy &&
+    typeof policy === 'object' &&
+    (policy as Record<string, unknown>).kind === 'TLS_CERTIFICATE' &&
+    typeof (policy as Record<string, unknown>).requireHostnameAuthorized === 'boolean' &&
+    typeof (policy as Record<string, unknown>).requireChainAuthorized === 'boolean' &&
+    Number.isInteger((policy as Record<string, unknown>).minimumRemainingValiditySeconds);
+  const validSpf =
+    signalKind === 'MAIL_DNS_CONFIGURATION_REGRESSION' &&
+    body.discriminator.trim().toLowerCase() === 'spf' &&
+    policy &&
+    typeof policy === 'object' &&
+    (policy as Record<string, unknown>).kind === 'SPF_PRESENT';
+  if (!validTls && !validSpf) return c.json({ error: 'Unsupported baseline policy' }, 400);
+  try {
+    const baseline = await new OperationalBaselineRepository(c.get('db')).accept({
+      tenantId,
+      domainId: domain.id,
+      kind: signalKind as 'TLS_CERTIFICATE_REGRESSION' | 'MAIL_DNS_CONFIGURATION_REGRESSION',
+      discriminator: body.discriminator,
+      sourceSnapshotId: body.sourceSnapshotId,
+      policy: policy as never,
+      maxEvidenceAgeSeconds,
+      actorId,
+      actorEmail: c.get('actorEmail') ?? null,
+      ipAddress: getRequestClientIp(c) ?? null,
+      userAgent: c.req.header('user-agent') ?? null,
+    });
+    return c.json({ baseline }, 201);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : 'Baseline acceptance failed' },
+      400
+    );
+  }
 });
 
 domainProfileRoutes.put('/:domain/profile', requireWritePermission, async (c) => {
