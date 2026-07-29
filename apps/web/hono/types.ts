@@ -8,6 +8,8 @@ export type Env = {
     INTERNAL_SECRET?: string;
     API_KEY_SECRET?: string;
     ADMIN_EMAILS?: string;
+    /** JSON array of static MCP principals containing only SHA-256 token hashes. */
+    MCP_PRINCIPALS_JSON?: string;
     /** Cloudflare Workers environment */
     NODE_ENV?: string;
     /** Cloudflare Workers ASSETS binding */

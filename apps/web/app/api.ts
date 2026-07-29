@@ -11,6 +11,7 @@ import {
   requireAuthMiddleware,
 } from '../hono/middleware/index.js';
 import { apiRoutes } from '../hono/routes/api.js';
+import { mcpRoutes } from '../hono/routes/mcp.js';
 import authRoutes from '../hono/routes/signup.js';
 import type { Env } from '../hono/types.js';
 
@@ -35,6 +36,8 @@ app.use('*', authMiddleware);
 
 // Public API routes (no auth required)
 app.route('/api/auth', authRoutes);
+// MCP authenticates independently with a static bearer-principal map.
+app.route('/mcp', mcpRoutes);
 
 // All other API routes require authentication. enforceTenantIsolation runs as
 // a structural chokepoint right after auth populates the tenant context, so
