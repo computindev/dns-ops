@@ -520,9 +520,9 @@ function OverviewTab({
 
       {SIMULATION_ENABLED && (
         <div>
-          <h3 className="font-semibold text-gray-900 mb-2">Fix Simulation</h3>
+          <h3 className="font-semibold text-gray-900 mb-2">Remediation Guidance</h3>
           <p className="text-sm text-gray-500 mb-3">
-            Simulate DNS changes to see which findings would be resolved.
+            Review non-executable playbooks. Exact changes require confirmed provider context.
           </p>
           <SimulationPanel snapshotId={snapshot.id} />
         </div>

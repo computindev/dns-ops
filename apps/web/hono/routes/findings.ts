@@ -37,6 +37,7 @@ import {
   unmanagedZonePartialCoverageRule,
 } from '@dns-ops/rules';
 import { Hono } from 'hono';
+import { sanitizePersistedSuggestion } from '../lib/guidance.js';
 import { requireAuth, requireWritePermission } from '../middleware/authorization.js';
 import { getWebLogger } from '../middleware/error-tracking.js';
 import type { Env } from '../types.js';
@@ -169,8 +170,17 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
       const findingIds = existingFindingsForVersion.map((f) => f.id);
       const suggestionsMap = await suggestionRepo.findByFindingIds(findingIds);
 
-      // Flatten suggestions
-      const allSuggestions = [...suggestionsMap.values()].flat();
+      const findingTypeById = new Map(
+        existingFindingsForVersion.map((finding) => [finding.id, finding.type])
+      );
+      const allSuggestions = [...suggestionsMap.values()]
+        .flat()
+        .map((suggestion) =>
+          sanitizePersistedSuggestion(
+            suggestion,
+            findingTypeById.get(suggestion.findingId) ?? 'unknown'
+          )
+        );
 
       // Categorize findings
       const dnsFindings = existingFindingsForVersion.filter((f) => f.type.startsWith('dns.'));
@@ -415,7 +425,15 @@ findingsRoutes.get('/snapshot/:snapshotId/findings/mail', requireAuth, async (c)
     // Get suggestions for mail findings
     const mailFindingIds = mailFindings.map((f) => f.id);
     const suggestionsMap = await suggestionRepo.findByFindingIds(mailFindingIds);
-    const allSuggestions = [...suggestionsMap.values()].flat();
+    const findingTypeById = new Map(mailFindings.map((finding) => [finding.id, finding.type]));
+    const allSuggestions = [...suggestionsMap.values()]
+      .flat()
+      .map((suggestion) =>
+        sanitizePersistedSuggestion(
+          suggestion,
+          findingTypeById.get(suggestion.findingId) ?? 'unknown'
+        )
+      );
 
     // Calculate mail security score from findings (basic analysis)
     const mailConfig = analyzeMailConfiguration(mailFindings);
@@ -1127,18 +1145,19 @@ function analyzeMailConfiguration(
         break;
       case 'mail.no-mx-record':
         config.issues.push('No MX record');
-        config.recommendations.push('Add an MX record');
+        config.recommendations.push('Review playbook mail.mx.purpose-and-provider');
         break;
       case 'mail.spf-present':
         config.hasSpf = true;
-        score += 20;
+        // Phase 0–1 SPF is FIRST_LEVEL_ONLY and cannot receive full-validity credit.
+        score += 10;
         if (finding.severity && finding.severity !== 'info') {
           config.issues.push(`SPF issue: ${finding.severity}`);
         }
         break;
       case 'mail.no-spf-record':
         config.issues.push('No SPF record');
-        config.recommendations.push('Add an SPF record');
+        config.recommendations.push('Review playbook mail.spf.provider-confirmation');
         break;
       case 'mail.dmarc-present':
         config.hasDmarc = true;
@@ -1149,7 +1168,7 @@ function analyzeMailConfiguration(
         break;
       case 'mail.no-dmarc-record':
         config.issues.push('No DMARC record');
-        config.recommendations.push('Add a DMARC record');
+        config.recommendations.push('Review playbook mail.dmarc.monitoring-readiness');
         break;
       case 'mail.dkim-keys-present':
         config.hasDkim = true;
@@ -1158,7 +1177,7 @@ function analyzeMailConfiguration(
       case 'mail.dkim-no-valid-keys':
       case 'mail.no-dkim-queried':
         config.issues.push('DKIM not configured');
-        config.recommendations.push('Configure DKIM');
+        config.recommendations.push('Review playbook mail.dkim.selector-evidence');
         break;
       case 'mail.mta-sts-present':
         config.hasMtaSts = true;

@@ -66,7 +66,7 @@ export const authoritativeFailureRule: Rule = {
           {
             title: 'Check authoritative server health',
             description: `Verify that authoritative nameservers for ${context.domainName} are responding correctly.`,
-            action: `Run connectivity checks to: ${[...new Set(queryFailures.map((f) => f.vantageIdentifier))].join(', ')}`,
+            action: 'Playbook: dns.authoritative.health-review',
             riskPosture: 'low',
             blastRadius,
             reviewOnly: true,
@@ -135,7 +135,7 @@ export const authoritativeMismatchRule: Rule = {
           {
             title: 'Investigate zone inconsistency',
             description: `Check for zone transfer issues or configuration differences between authoritative servers.`,
-            action: `Compare zone files on: ${rs.sourceVantages.filter((v) => !v.includes('(')).join(', ')}`,
+            action: 'Playbook: dns.authoritative.consistency-review',
             riskPosture: 'high',
             blastRadius,
             reviewOnly: true,
@@ -247,7 +247,7 @@ export const recursiveAuthoritativeMismatchRule: Rule = {
         {
           title: 'Check for stale cache',
           description: `Verify if this is a cache propagation issue or configuration problem.`,
-          action: `Compare TTL on recursive vs authoritative. Consider cache flush if values are stale.`,
+          action: 'Playbook: dns.propagation.evidence-review',
           riskPosture: 'low',
           blastRadius,
           reviewOnly: true,
@@ -323,9 +323,10 @@ export const cnameCoexistenceRule: Rule = {
       },
       suggestions: [
         {
-          title: 'Remove conflicting records',
-          description: `Either remove the CNAME or the conflicting record(s). CNAME cannot coexist with other data.`,
-          action: `Choose one: keep CNAME (${violation.cname.values.join(', ')}) OR keep ${violation.conflicting.map((r) => `${r.type} (${r.values.join(', ')})`).join(', ')}`,
+          title: 'Review CNAME conflict',
+          description:
+            'Confirm service ownership and dependencies before choosing which record family should remain. No removal is approved automatically.',
+          action: 'Playbook: dns.cname.conflict-review',
           riskPosture: 'high',
           blastRadius,
           reviewOnly: true,

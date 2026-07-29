@@ -1,94 +1,69 @@
 /**
- * Suggestions Routes
+ * Guidance-only suggestion routes.
  *
- * API endpoints for managing remediation suggestions.
- * Includes safeguard for review-only suggestions (PR-02.6.1).
+ * Persisted rows may predate the guidance-only contract, so every response is
+ * normalized from the finding type and never returns legacy executable text.
  */
 
-import { SuggestionRepository } from '@dns-ops/db';
+import type { IDatabaseAdapter, Suggestion } from '@dns-ops/db';
+import {
+  DomainRepository,
+  FindingRepository,
+  SnapshotRepository,
+  SuggestionRepository,
+} from '@dns-ops/db';
 import { Hono } from 'hono';
+import { guidanceForPersistedFinding, sanitizePersistedSuggestion } from '../lib/guidance.js';
 import { requireAuth, requireWritePermission } from '../middleware/authorization.js';
-import { boolean, validateBody } from '../middleware/validation.js';
 import type { Env } from '../types.js';
 
 export const suggestionsRoutes = new Hono<Env>();
-
-// Apply auth middleware to all routes
 suggestionsRoutes.use('*', requireAuth);
 
-// =============================================================================
-// SCHEMAS
-// =============================================================================
-
-interface ApplySuggestionBody {
-  confirmApply?: boolean;
-  [key: string]: unknown;
+async function findTenantSuggestion(
+  db: IDatabaseAdapter,
+  tenantId: string,
+  suggestionId: string
+): Promise<{ suggestion: Suggestion; findingType: string } | null> {
+  const suggestion = await new SuggestionRepository(db).findById(suggestionId);
+  if (!suggestion) return null;
+  const finding = await new FindingRepository(db).findById(suggestion.findingId);
+  if (!finding) return null;
+  const snapshot = await new SnapshotRepository(db).findById(finding.snapshotId);
+  if (!snapshot) return null;
+  const domain = await new DomainRepository(db).findById(snapshot.domainId);
+  if (!domain || domain.tenantId !== tenantId) return null;
+  return { suggestion, findingType: finding.type };
 }
 
-const ApplySuggestionSchema = {
-  confirmApply: boolean('confirmApply', false),
-};
-
-// =============================================================================
-// PATCH /api/suggestions/:suggestionId/apply
-// =============================================================================
-
-/**
- * Apply a suggestion
- *
- * For review-only suggestions, requires confirmApply: true in request body.
- * This safeguard prevents accidental application of risky changes.
- *
- * Request: { confirmApply?: boolean }
- * Response: { success: true, suggestion: Suggestion }
- * Error: { error: string, code: 'REQUIRES_CONFIRMATION' | 'NOT_FOUND' | 'ALREADY_APPLIED' }
- */
 suggestionsRoutes.patch('/:suggestionId/apply', requireWritePermission, async (c) => {
   const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
+  const tenantId = c.get('tenantId');
+  if (!db) return c.json({ error: 'Database not available' }, 503);
+  if (!tenantId) return c.json({ error: 'Unauthorized' }, 401);
 
   const suggestionId = c.req.param('suggestionId');
-  const actorId = c.get('actorId');
-  if (!actorId) {
-    return c.json({ error: 'Unauthorized' }, 401);
+  const loaded = await findTenantSuggestion(db, tenantId, suggestionId);
+  if (!loaded) {
+    return c.json({ error: 'Suggestion not found', code: 'NOT_FOUND', suggestionId }, 404);
   }
 
-  // Parse request body with optional confirmApply
-  const bodyResult = await validateBody<ApplySuggestionBody>(c, ApplySuggestionSchema);
-  const confirmApply = bodyResult.success ? bodyResult.data.confirmApply : undefined;
-
-  const suggestionRepo = new SuggestionRepository(db);
-
-  // Find the suggestion
-  const suggestion = await suggestionRepo.findById(suggestionId);
-  if (!suggestion) {
-    return c.json(
-      {
-        error: 'Suggestion not found',
-        code: 'NOT_FOUND',
-        suggestionId,
-      },
-      404
-    );
-  }
-
-  // Check if already applied
+  const { findingType, suggestion } = loaded;
   if (suggestion.appliedAt) {
     return c.json(
       {
-        error: 'Suggestion already applied',
-        code: 'ALREADY_APPLIED',
+        error: 'This guidance was historically acknowledged; no provider mutation was executed',
+        code: 'GUIDANCE_ONLY',
         suggestionId,
-        appliedAt: suggestion.appliedAt,
-        appliedBy: suggestion.appliedBy,
+        historicalAcknowledgement: {
+          acknowledgedAt: suggestion.appliedAt,
+          acknowledgedBy: suggestion.appliedBy,
+        },
+        guidance: guidanceForPersistedFinding(findingType),
       },
       409
     );
   }
-
-  // Check if dismissed
   if (suggestion.dismissedAt) {
     return c.json(
       {
@@ -101,155 +76,83 @@ suggestionsRoutes.patch('/:suggestionId/apply', requireWritePermission, async (c
     );
   }
 
-  // PR-02.6.1: Safeguard for review-only suggestions
-  if (suggestion.reviewOnly && !confirmApply) {
-    return c.json(
-      {
-        error: 'This suggestion is marked as review-only and requires explicit confirmation',
-        code: 'REQUIRES_CONFIRMATION',
-        suggestionId,
-        reviewOnly: true,
-        hint: 'Include { "confirmApply": true } in the request body to apply this suggestion',
-      },
-      403
-    );
-  }
-
-  // Apply the suggestion
-  const applied = await suggestionRepo.markApplied(suggestionId, actorId);
-
-  if (!applied) {
-    return c.json(
-      {
-        error: 'Failed to apply suggestion',
-        suggestionId,
-      },
-      500
-    );
-  }
-
-  return c.json({
-    success: true,
-    suggestion: applied,
-    confirmed: suggestion.reviewOnly && confirmApply,
-  });
+  return c.json(
+    {
+      error: 'Generic suggestions are guidance-only and cannot be applied by DNS Ops',
+      code: 'GUIDANCE_ONLY',
+      suggestionId,
+      guidance: guidanceForPersistedFinding(findingType),
+    },
+    409
+  );
 });
 
-// =============================================================================
-// PATCH /api/suggestions/:suggestionId/dismiss
-// =============================================================================
-
-/**
- * Dismiss a suggestion
- *
- * Request: { reason?: string }
- * Response: { success: true, suggestion: Suggestion }
- */
 suggestionsRoutes.patch('/:suggestionId/dismiss', requireWritePermission, async (c) => {
   const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
+  const tenantId = c.get('tenantId');
+  const actorId = c.get('actorId');
+  if (!db) return c.json({ error: 'Database not available' }, 503);
+  if (!tenantId || !actorId) return c.json({ error: 'Unauthorized' }, 401);
 
   const suggestionId = c.req.param('suggestionId');
-  const actorId = c.get('actorId');
-  if (!actorId) {
-    return c.json({ error: 'Unauthorized' }, 401);
+  const loaded = await findTenantSuggestion(db, tenantId, suggestionId);
+  if (!loaded) {
+    return c.json({ error: 'Suggestion not found', code: 'NOT_FOUND', suggestionId }, 404);
+  }
+
+  const { findingType, suggestion } = loaded;
+  if (suggestion.dismissedAt) {
+    return c.json(
+      { error: 'Suggestion already dismissed', code: 'ALREADY_DISMISSED', suggestionId },
+      409
+    );
+  }
+  if (suggestion.appliedAt) {
+    return c.json(
+      {
+        error: 'This guidance was historically acknowledged; no provider mutation was executed',
+        code: 'GUIDANCE_ONLY',
+        suggestionId,
+        historicalAcknowledgement: {
+          acknowledgedAt: suggestion.appliedAt,
+          acknowledgedBy: suggestion.appliedBy,
+        },
+        guidance: guidanceForPersistedFinding(findingType),
+      },
+      409
+    );
   }
 
   let reason: string | undefined;
   try {
-    const body = await c.req.json();
+    const body = await c.req.json<{ reason?: string }>();
     reason = body.reason;
   } catch {
-    // No body is fine
+    // An omitted body is valid for dismissal.
   }
 
-  const suggestionRepo = new SuggestionRepository(db);
-
-  // Find the suggestion
-  const suggestion = await suggestionRepo.findById(suggestionId);
-  if (!suggestion) {
-    return c.json(
-      {
-        error: 'Suggestion not found',
-        code: 'NOT_FOUND',
-        suggestionId,
-      },
-      404
-    );
-  }
-
-  // Check if already dismissed
-  if (suggestion.dismissedAt) {
-    return c.json(
-      {
-        error: 'Suggestion already dismissed',
-        code: 'ALREADY_DISMISSED',
-        suggestionId,
-      },
-      409
-    );
-  }
-
-  // Check if already applied
-  if (suggestion.appliedAt) {
-    return c.json(
-      {
-        error: 'Suggestion was already applied',
-        code: 'ALREADY_APPLIED',
-        suggestionId,
-      },
-      409
-    );
-  }
-
-  // Dismiss the suggestion
-  const dismissed = await suggestionRepo.markDismissed(suggestionId, actorId, reason);
-
-  if (!dismissed) {
-    return c.json(
-      {
-        error: 'Failed to dismiss suggestion',
-        suggestionId,
-      },
-      500
-    );
-  }
+  const dismissed = await new SuggestionRepository(db).markDismissed(suggestionId, actorId, reason);
+  if (!dismissed) return c.json({ error: 'Failed to dismiss suggestion', suggestionId }, 500);
 
   return c.json({
     success: true,
-    suggestion: dismissed,
+    suggestion: sanitizePersistedSuggestion(dismissed, findingType),
   });
 });
 
-// =============================================================================
-// GET /api/suggestions/:suggestionId
-// =============================================================================
-
-/**
- * Get a single suggestion by ID
- */
 suggestionsRoutes.get('/:suggestionId', async (c) => {
   const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
+  const tenantId = c.get('tenantId');
+  if (!db) return c.json({ error: 'Database not available' }, 503);
+  if (!tenantId) return c.json({ error: 'Unauthorized' }, 401);
 
   const suggestionId = c.req.param('suggestionId');
-  const suggestionRepo = new SuggestionRepository(db);
-
-  const suggestion = await suggestionRepo.findById(suggestionId);
-  if (!suggestion) {
-    return c.json(
-      {
-        error: 'Suggestion not found',
-        code: 'NOT_FOUND',
-        suggestionId,
-      },
-      404
-    );
+  const loaded = await findTenantSuggestion(db, tenantId, suggestionId);
+  if (!loaded) {
+    return c.json({ error: 'Suggestion not found', code: 'NOT_FOUND', suggestionId }, 404);
   }
 
-  return c.json({ suggestion });
+  return c.json({
+    suggestion: sanitizePersistedSuggestion(loaded.suggestion, loaded.findingType),
+  });
 });

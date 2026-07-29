@@ -10,6 +10,7 @@ export * from './dns.js';
 export * from './enums.js';
 export * from './env.js';
 export * from './evaluation.js';
+export * from './guidance.js';
 export * from './mail.js';
 export * from './requests.js';
 export * from './result.js';

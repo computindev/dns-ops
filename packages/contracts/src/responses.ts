@@ -5,6 +5,7 @@
 
 import type { Confidence, KnownProvider, RiskPosture, Severity } from './enums.js';
 import type { EvaluationCoverage } from './evaluation.js';
+import type { GuidanceOnlySuggestion } from './guidance.js';
 import type {
   FindingSummary,
   RemediationRequestDto,
@@ -1171,21 +1172,23 @@ export interface SuggestionErrorResponse {
   error: string;
   code: string;
   suggestionId: string;
-  appliedAt?: Date;
-  appliedBy?: string;
+  historicalAcknowledgement?: {
+    acknowledgedAt: Date;
+    acknowledgedBy?: string | null;
+  };
   dismissedAt?: Date;
   reviewOnly?: boolean;
   hint?: string;
 }
 
 /**
- * PATCH /suggestions/:suggestionId/apply
- * Apply suggestion
+ * Legacy apply route refusal for guidance-only suggestions.
  */
 export interface SuggestionApplyResponse {
-  success: boolean;
-  suggestion: Suggestion;
-  confirmed?: boolean;
+  error: string;
+  code: 'GUIDANCE_ONLY';
+  suggestionId: string;
+  guidance: GuidanceOnlySuggestion;
 }
 
 /**
@@ -1735,47 +1738,24 @@ export interface RulesetVersionActivateResponse {
 // =============================================================================
 
 /**
- * Proposed DNS change
- */
-export interface ProposedChange {
-  type: string;
-  name: string;
-  recordType: string;
-  action: 'add' | 'remove' | 'modify';
-  currentValue?: string;
-  proposedValue: string;
-  rationale: string;
-}
-
-/**
- * Finding prediction
- */
-export interface FindingPrediction {
-  type: string;
-  title: string;
-  severity: Severity;
-  predictedResolution: 'resolved' | 'improved' | 'unchanged' | 'worsened';
-  confidence: Confidence;
-}
-
-/**
- * POST /simulate
- * Run simulation
+ * POST /simulate legacy route response. Generic findings produce guidance and
+ * cannot produce record mutations without complete provider-confirmed context.
  */
 export interface SimulationResponse {
-  snapshotId: string;
-  domainName: string;
-  proposedChanges: ProposedChange[];
-  predictedFindings: FindingPrediction[];
+  mode: 'GUIDANCE_ONLY';
+  domain: string;
+  detectedProvider: 'unknown';
+  proposedChanges: [];
+  guidanceOnlySuggestions: GuidanceOnlySuggestion[];
   summary: {
-    totalChanges: number;
-    predictedResolutions: number;
-    riskLevel: RiskPosture;
+    changesProposed: 0;
+    guidanceProvided: number;
+    currentFindings: number;
   };
 }
 
 /**
- * Actionable finding type
+ * Finding type with a supported guidance playbook.
  */
 export interface ActionableFindingType {
   type: string;
@@ -1784,11 +1764,15 @@ export interface ActionableFindingType {
 }
 
 /**
- * GET /simulate/actionable-types
- * List actionable finding types
+ * GET /simulate/actionable-types (legacy alias)
+ * List finding types with guidance playbooks
  */
 export interface ActionableTypesResponse {
+  mode: 'GUIDANCE_ONLY';
+  guidanceSupportedTypes: ActionableFindingType[];
+  /** Legacy response alias. */
   actionableTypes: ActionableFindingType[];
+  supportedTypeIds: string[];
 }
 
 // =============================================================================

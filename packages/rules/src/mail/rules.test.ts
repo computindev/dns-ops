@@ -139,7 +139,7 @@ describe('MX Presence Rule', () => {
     expect(result?.finding?.type).toBe('mail.no-mx-record');
     expect(result?.finding?.severity).toBe('medium');
     expect(result?.suggestions).toBeDefined();
-    expect(result?.suggestions?.[0]?.title).toContain('Add MX');
+    expect(result?.suggestions?.[0]?.title).toContain('Review MX');
   });
 
   it('should detect MX query failures', () => {

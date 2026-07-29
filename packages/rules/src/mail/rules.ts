@@ -109,9 +109,10 @@ export const mxPresenceRule: Rule = {
         },
         suggestions: [
           {
-            title: 'Add MX record',
-            description: `Configure an MX record for ${context.domainName} to explicitly route mail.`,
-            action: `Add MX record pointing to your mail server(s), or add a Null MX (0 .) if the domain should not receive mail.`,
+            title: 'Review MX routing readiness',
+            description:
+              'Declare whether this domain receives mail, then obtain exact targets from the confirmed provider. This guidance contains no approved record value.',
+            action: 'Playbook: mail.mx.purpose-and-provider',
             riskPosture: 'medium',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -229,9 +230,10 @@ export const spfRule: Rule = {
         },
         suggestions: [
           {
-            title: 'Add SPF record',
-            description: `Add an SPF record to prevent email spoofing of ${context.domainName}.`,
-            action: `Add TXT record at ${context.domainName}: "v=spf1 include:_spf.google.com ~all" (adjust for your mail provider)`,
+            title: 'Review SPF readiness',
+            description:
+              'Inventory authorized senders and confirm provider instructions before planning SPF. This guidance contains no approved record value.',
+            action: 'Playbook: mail.spf.provider-confirmation',
             riskPosture: 'medium',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -267,9 +269,9 @@ export const spfRule: Rule = {
         },
         suggestions: [
           {
-            title: 'Fix SPF syntax',
+            title: 'Review SPF syntax',
             description: `The SPF record has syntax errors that need correction.`,
-            action: `Review and correct the SPF record syntax. Common issues: missing spaces, invalid mechanisms, or missing version tag.`,
+            action: 'Playbook: mail.spf.syntax-review',
             riskPosture: 'high',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -364,7 +366,7 @@ export const spfRule: Rule = {
               {
                 title: 'Review SPF configuration',
                 description: `The SPF record has configuration issues that may affect mail delivery.`,
-                action: `Address: ${issues.join('; ')}`,
+                action: 'Playbook: mail.spf.first-level-review',
                 riskPosture: 'medium',
                 blastRadius: 'single-domain',
                 reviewOnly: true,
@@ -429,9 +431,10 @@ export const dmarcRule: Rule = {
         },
         suggestions: [
           {
-            title: 'Add DMARC record',
-            description: `Add a DMARC record to specify how receivers should handle authentication failures.`,
-            action: `Start with monitoring: "v=DMARC1; p=none; rua=mailto:dmarc@yourdomain.com", then progress to quarantine/reject`,
+            title: 'Review DMARC readiness',
+            description:
+              'Confirm aligned senders and an operated report destination before planning DMARC. This guidance contains no approved record value.',
+            action: 'Playbook: mail.dmarc.monitoring-readiness',
             riskPosture: 'medium',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -527,8 +530,9 @@ export const dmarcRule: Rule = {
           ? [
               {
                 title: 'Strengthen DMARC policy',
-                description: `DMARC is in monitoring mode only. Consider progressing to quarantine or reject.`,
-                action: `After monitoring shows SPF/DKIM alignment, upgrade: "v=DMARC1; p=quarantine; rua=mailto:dmarc@${context.domainName}"`,
+                description:
+                  'Review aggregate reports and confirmed sender alignment before considering enforcement. This guidance contains no approved record value.',
+                action: 'Playbook: mail.dmarc.enforcement-readiness',
                 riskPosture: 'medium',
                 blastRadius: 'single-domain',
                 reviewOnly: true,
@@ -579,9 +583,9 @@ export const dkimRule: Rule = {
         },
         suggestions: [
           {
-            title: 'Configure DKIM',
+            title: 'Review DKIM setup',
             description: `DKIM provides cryptographic email authentication and is recommended.`,
-            action: `Configure DKIM with your mail provider and add the public key as a TXT record at selector._domainkey.${context.domainName}`,
+            action: 'Playbook: mail.dkim.selector-evidence',
             riskPosture: 'low',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -703,7 +707,7 @@ export const mtaStsRule: Rule = {
           {
             title: 'Consider MTA-STS',
             description: `MTA-STS enforces TLS for email and prevents downgrade attacks.`,
-            action: `Deploy MTA-STS: (1) Add TXT record _mta-sts.${context.domainName} with "v=STSv1; id=YYYYMMDD", (2) Host policy at https://mta-sts.${context.domainName}/.well-known/mta-sts.txt`,
+            action: 'Playbook: mail.mta-sts.readiness',
             riskPosture: 'low',
             blastRadius: 'single-domain',
             reviewOnly: true,
@@ -778,7 +782,7 @@ export const tlsRptRule: Rule = {
           {
             title: 'Consider TLS-RPT',
             description: `TLS-RPT provides reports on TLS connectivity issues for inbound mail.`,
-            action: `Add TXT record at _smtp._tls.${context.domainName}: "v=TLSRPTv1; rua=mailto:tls-rpt@${context.domainName}"`,
+            action: 'Playbook: mail.tls-rpt.reporting-readiness',
             riskPosture: 'low',
             blastRadius: 'single-domain',
             reviewOnly: true,

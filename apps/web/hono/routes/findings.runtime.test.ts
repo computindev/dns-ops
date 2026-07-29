@@ -277,9 +277,9 @@ describe('findingsRoutes runtime', () => {
           {
             id: 'sug-1',
             findingId: 'finding-1',
-            title: 'Fix authoritative',
-            description: 'Fix it',
-            action: 'manual',
+            title: 'Legacy executable suggestion',
+            description: 'Copy this value',
+            action: 'Add TXT record: v=spf1 include:_spf.google.com ~all',
           },
         ],
       });
@@ -293,6 +293,7 @@ describe('findingsRoutes runtime', () => {
         idempotent: boolean;
         persisted: boolean;
         summary: { totalFindings: number; dnsFindings: number; mailFindings: number };
+        suggestions: Array<{ title: string; description: string; action: string }>;
       };
       expect(json.snapshotId).toBe('snap-1');
       expect(json.idempotent).toBe(true);
@@ -300,6 +301,13 @@ describe('findingsRoutes runtime', () => {
       expect(json.summary.totalFindings).toBe(1);
       expect(json.summary.dnsFindings).toBe(1);
       expect(json.summary.mailFindings).toBe(0);
+      expect(json.suggestions).toEqual([
+        expect.objectContaining({
+          title: 'Review the evidence and applicable operator playbook',
+          action: 'Playbook: operations.manual-evidence-review',
+        }),
+      ]);
+      expect(JSON.stringify(json.suggestions)).not.toContain('_spf.google.com');
     });
 
     it('evaluates and persists findings when no cached version exists', async () => {
