@@ -14,7 +14,7 @@ function conditionParams(condition: unknown): unknown[] {
   return (candidate.queryChunks ?? []).flatMap(conditionParams);
 }
 
-function createDb(domainTenantId = 'tenant-1') {
+function createDb(domainTenantId = 'tenant-1', failAuditInsert = false) {
   const domain = {
     id: 'domain-1',
     name: 'example.com',
@@ -49,11 +49,12 @@ function createDb(domainTenantId = 'tenant-1') {
     },
     async insert(table: unknown, values: typeof domainProfiles.$inferInsert) {
       if (table === auditEvents) {
+        if (failAuditInsert) throw new Error('audit insert failed');
         const event = {
           id: 'audit-1',
           createdAt: new Date(),
           ...values,
-        } as typeof auditEvents.$inferSelect;
+        } as unknown as typeof auditEvents.$inferSelect;
         audits.push(event);
         return event;
       }
@@ -81,7 +82,15 @@ function createDb(domainTenantId = 'tenant-1') {
       return profiles[0];
     },
     async transaction<T>(callback: (tx: IDatabaseAdapter) => Promise<T>) {
-      return callback(db as unknown as IDatabaseAdapter);
+      const profileBefore = [...profiles];
+      const auditBefore = [...audits];
+      try {
+        return await callback(db as unknown as IDatabaseAdapter);
+      } catch (error) {
+        profiles.splice(0, profiles.length, ...profileBefore);
+        audits.splice(0, audits.length, ...auditBefore);
+        throw error;
+      }
     },
   };
 
@@ -135,6 +144,24 @@ describe('DomainProfileRepository', () => {
       newValue: profile,
       actorId: 'actor-1',
     });
+  });
+
+  it('rolls profile state back when audit insertion fails', async () => {
+    const { db, profiles, audits } = createDb('tenant-1', true);
+    await expect(
+      new DomainProfileRepository(db).setWithAudit(
+        { domainId: 'domain-1', tenantId: 'tenant-1', purpose: 'WEB', criticality: 'NORMAL' },
+        {
+          actorId: 'actor-1',
+          tenantId: 'tenant-1',
+          actorEmail: null,
+          ipAddress: null,
+          userAgent: null,
+        }
+      )
+    ).rejects.toThrow('audit insert failed');
+    expect(profiles).toEqual([]);
+    expect(audits).toEqual([]);
   });
 
   it('rejects cross-tenant writes', async () => {
