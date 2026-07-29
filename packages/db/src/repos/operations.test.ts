@@ -165,6 +165,9 @@ describe('OperationalConditionService', () => {
       })
     ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
     expect(rows.internal_case_events).toHaveLength(2);
+    expect(rows.audit_events).toMatchObject([
+      { action: 'mcp_case_disposition_set', actorId: 'operator-1', tenantId: 'tenant-1' },
+    ]);
   });
 
   it('resolves from fresh evidence and reopens the same operational objects', async () => {

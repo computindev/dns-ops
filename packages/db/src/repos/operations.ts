@@ -7,6 +7,7 @@ import { and, eq, isNull, type SQL } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import {
   alerts,
+  auditEvents,
   domains,
   findings,
   type InternalCase,
@@ -445,6 +446,15 @@ export class OperationalConditionService {
         fromStatus: current.status,
         toStatus: current.status,
         disposition: updated.disposition,
+      });
+      await tx.insert(auditEvents, {
+        action: 'mcp_case_disposition_set',
+        entityType: 'internal_case',
+        entityId: current.id,
+        tenantId: input.tenantId,
+        actorId: input.actorId,
+        previousValue: { disposition: current.disposition, version: current.version },
+        newValue: { disposition: updated.disposition, version: updated.version },
       });
       return updated;
     });
