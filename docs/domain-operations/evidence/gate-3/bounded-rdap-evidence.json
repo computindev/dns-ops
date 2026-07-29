@@ -1,0 +1,31 @@
+{
+  "evidenceId": "GATE3-BOUNDED-RDAP-EVIDENCE",
+  "recordedAt": "2026-07-29T12:38:18Z",
+  "implementationBaseSha": "7015fbae3e95bcca5458e8a523bd386b500706e3",
+  "scope": "Deterministic bounded RDAP expiration collection; no live portfolio scan",
+  "assertions": [
+    "The trust root is the fixed IANA DNS RDAP bootstrap URL",
+    "Only bootstrap-declared HTTPS services are queried and redirects are rejected",
+    "Credentials, fragments, private/reserved addresses, complete IPv6 local/multicast ranges, mapped-address variants, and zone-scoped IPv6 targets are rejected",
+    "One cumulative deadline covers bootstrap and service DNS resolution, fetch, and streamed body reads",
+    "Declared and streamed bodies are bounded before excess data is retained",
+    "The response must identify the exact requested domain",
+    "RDAP event dates require calendar-valid RFC3339 date-time syntax",
+    "Missing, malformed, mismatched, and conflicting expiration evidence remains actionable UNKNOWN",
+    "No test performs live DNS or HTTP and no condition creates a signal, alert, case, or finding"
+  ],
+  "validation": {
+    "focused": "169 tests passed across RDAP and SSRF suites",
+    "lint": "8 of 8 workspace tasks passed",
+    "typecheck": "14 of 14 workspace tasks passed",
+    "deterministicSuite": "2618 passed, 41 skipped; 147 files passed, 3 skipped",
+    "build": "8 of 8 workspace tasks passed",
+    "schemaDrift": "NO DRIFT"
+  },
+  "residualRisk": "The HTTP fetch connection independently resolves DNS after safe-address preflight; address pinning remains future hardening and is not represented as complete rebinding prevention.",
+  "safety": {
+    "liveNetworkUsedByTests": false,
+    "providerWritesAdded": false,
+    "liveMutations": false
+  }
+}

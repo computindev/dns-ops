@@ -17,6 +17,8 @@ export {
 export type { MTASTSPolicy, MTASTSProbeResult } from './mta-sts.js';
 // MTA-STS Probe
 export { fetchMTASTSPolicy, validateMTASTSTxtRecord } from './mta-sts.js';
+export type { RdapCollectionOptions } from './rdap.js';
+export { collectRdapExpirationEvidence } from './rdap.js';
 export type {} from './semaphore.js';
 // Probe Semaphore (concurrency control)
 export { getProbeSemaphore, resetProbeSemaphore, Semaphore } from './semaphore.js';
@@ -25,4 +27,4 @@ export type { SMTPProbeResult } from './smtp-starttls.js';
 export { probeMXHosts, probeSMTPStarttls } from './smtp-starttls.js';
 export type { SSRFCheckResult } from './ssrf-guard.js';
 // SSRF Guard
-export { checkResolvedIP, checkSSRF, validateUrl } from './ssrf-guard.js';
+export { checkResolvedIP, checkSSRF, resolveAndCheck, validateUrl } from './ssrf-guard.js';
