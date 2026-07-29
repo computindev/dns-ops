@@ -4,6 +4,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types.js';
 import { proxyToCollector } from './collector-proxy.js';
 import { type AuthenticatedMcpPrincipal, requireMcpScope } from './mcp-auth.js';
+import { consumeMcpScanQuota } from './mcp-scan-rate-limit.js';
 
 function fingerprint(input: Record<string, unknown>): string {
   return createHash('sha256')
@@ -46,6 +47,26 @@ export class McpScanService {
     if (claim.state === 'REPLAY') {
       if (!claim.command.response) throw new Error('Completed MCP command has no response');
       return { ...(claim.command.response as object), replayed: true };
+    }
+    const quota = consumeMcpScanQuota(this.principal.tenantId);
+    if (!quota.allowed) {
+      const result = {
+        ok: false,
+        error: {
+          code: 'RATE_LIMITED',
+          message: `Scan rate limit exceeded. Try again in ${quota.retryAfterSeconds} seconds.`,
+        },
+        retryAfterSeconds: quota.retryAfterSeconds,
+        replayed: false,
+      };
+      await commands.complete(
+        this.principal.tenantId,
+        claim.command.id,
+        result,
+        undefined,
+        'FAILED'
+      );
+      return result;
     }
     const proxied = await proxyToCollector(this.context, {
       path: '/api/collect/domain',
