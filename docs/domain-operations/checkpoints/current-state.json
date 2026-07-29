@@ -47,7 +47,8 @@
     "The deterministic MCP harness matrix consolidates ten-tool typed transport, invalid input/ID, disabled/scope, tenant, stale evidence, duplicate/stale command, scan idempotency/rate, audit, parity, and exception-leakage evidence",
     "FIX-05 proves stale TLS evidence remains setup/evidence with no canonical observation or delivery; FIX-06 proves duplicate canonical observations create one signal/case/alert and delivery occurs only on create and reopen",
     "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records",
-    "Isolated browser smoke now passes nine Playwright checks against a migrated disposable PostgreSQL database; development migration discovery works when the app cwd is apps/web"
+    "Isolated browser smoke now passes nine Playwright checks against a migrated disposable PostgreSQL database; development migration discovery works when the app cwd is apps/web",
+    "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added"
   ],
   "passingChecks": [
     {
@@ -88,6 +89,11 @@
       "command": "bun run --filter @dns-ops/db build in clean standalone order",
       "failure": "Contracts declarations were not built first",
       "blocking": false
+    },
+    {
+      "command": "controlled provider fault-injection harness",
+      "failure": "No authorized provider kind, test-zone/test-host mutation manifest, scoped-secret fingerprint, allowlist, TTL history, or rollback owner has been supplied; a generic adapter would be a prohibited stub",
+      "blocking": true
     }
   ],
   "trackingIssue": "https://github.com/computindev/dns-ops/issues/4",
@@ -98,7 +104,8 @@
     "Scoped provider-token secret name and fingerprint confirmation",
     "Mutable-record allowlist",
     "Previous TTL values",
-    "Baseline, rollback, and token revocation owner"
+    "Baseline, rollback, and token revocation owner",
+    "Test-host deployment mutation mechanism for LIVE-01 and LIVE-02 where provider DNS changes are insufficient"
   ],
   "materialDecisions": [
     "SPF remains first-level only",
@@ -121,8 +128,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain issue #4 external prerequisites for live Gate 3 fixtures and manual baseline, then repeat Gate 4 review after controlled-live evidence is recorded",
+    "Obtain issue #4 provider/test-host manifest, live-fixture authority, and manual baseline; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T18:55:00Z"
+  "updatedAt": "2026-07-29T19:02:00Z"
 }
