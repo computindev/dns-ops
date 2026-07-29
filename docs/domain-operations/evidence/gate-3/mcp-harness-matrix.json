@@ -1,0 +1,54 @@
+{
+  "evidenceId": "MCP-PHASE1-DETERMINISTIC-HARNESS",
+  "recordedAt": "2026-07-29T18:32:00Z",
+  "implementationSha": "2a3b0b2d758e9b72148dbe85c9bbadc03fcaf2ad",
+  "scope": "Deterministic non-live Phase 1 MCP contract and shared-service proof",
+  "requirements": [
+    {
+      "requirement": "all ten schemas and successful typed results",
+      "evidence": "apps/web/hono/routes/mcp.harness.test.ts invokes every closed-contract tool through JSON-RPC and asserts structuredContent."
+    },
+    {
+      "requirement": "invalid tool input and invalid JSON-RPC IDs",
+      "evidence": "mcp.harness.test.ts rejects malformed schema arguments; apps/web/hono/routes/mcp.test.ts rejects boolean request IDs with -32600."
+    },
+    {
+      "requirement": "disabled principal and insufficient scope",
+      "evidence": "apps/web/hono/lib/mcp-auth.test.ts rejects disabled principals and denied scopes; apps/web/hono/routes/mcp.test.ts confirms scoped discovery; read, case, and scan service tests deny persistence before an absent scope."
+    },
+    {
+      "requirement": "cross-tenant denial",
+      "evidence": "apps/web/hono/lib/mcp-scan-service.command.test.ts denies an owned-domain mismatch before command claim or collector proxy; packages/db/src/repos/operations.test.ts rejects cross-tenant canonical observation and case access."
+    },
+    {
+      "requirement": "stale evidence does not signal",
+      "evidence": "docs/domain-operations/evidence/gate-3/fix-05-stale-evidence.json and apps/collector/src/jobs/operational-condition-finalizer.test.ts prove stale TLS evidence has EVIDENCE_STALE setup state with no observer or notification."
+    },
+    {
+      "requirement": "duplicate case_open and stale expectedVersion",
+      "evidence": "apps/web/hono/lib/mcp-case-command-service.failure.test.ts proves same-key case-open replay avoids a second canonical-service call and returns only CASE_VERSION_STALE for an optimistic concurrency conflict; packages/db/src/repos/operations.test.ts proves audit-event creation."
+    },
+    {
+      "requirement": "scan idempotency and rate limiting",
+      "evidence": "apps/web/hono/lib/mcp-scan-service.command.test.ts proves replay-before-proxy, durable rate-limit failure, cross-tenant denial, and rejected-proxy completion; mcp-scan-rate-limit.test.ts proves the collector-aligned incremental token-bucket refill."
+    },
+    {
+      "requirement": "application-service parity and no exception leakage",
+      "evidence": "MCP case commands and UI case routes both use OperationalConditionService; MCP scan and UI collection both use proxyToCollector. apps/web/hono/lib/mcp-dispatch.test.ts maps unexpected exceptions to generic -32603, while command tests persist generic failures without internal messages."
+    }
+  ],
+  "validation": {
+    "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+    "result": "2721 passed, 41 skipped"
+  },
+  "safety": {
+    "liveDns": false,
+    "providerWrites": false,
+    "productionWrites": false,
+    "mcpProviderWrites": false
+  },
+  "remainingExternalBlockers": [
+    "Controlled live-loop proof and authoritative mutation evidence require issue #4 prerequisites.",
+    "Isolated PostgreSQL migration/concurrency verification requires an isolated DATABASE_URL."
+  ]
+}
