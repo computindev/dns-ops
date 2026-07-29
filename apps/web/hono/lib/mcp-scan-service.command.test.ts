@@ -106,4 +106,32 @@ describe('McpScanService command controls', () => {
       'FAILED'
     );
   });
+
+  it('persists a collector-proxy rejection rather than leaving the claimed command pending', async () => {
+    mocks.findById.mockResolvedValue({
+      id: 'domain-1',
+      tenantId: 'tenant-1',
+      normalizedName: 'example.com',
+    });
+    mocks.claim.mockResolvedValue({ state: 'CLAIMED', command: { id: 'command-1' } });
+    mocks.proxyToCollector.mockRejectedValue(new Error('network failure'));
+    mocks.complete.mockResolvedValue(undefined);
+
+    await expect(
+      service().request({ domainId: 'domain-1', idempotencyKey: 'key-proxy-rejected' })
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: 'COLLECTOR_UNAVAILABLE', message: 'Collector unavailable' },
+      replayed: false,
+    });
+    expect(mocks.complete).toHaveBeenCalledWith(
+      'tenant-1',
+      'command-1',
+      expect.objectContaining({
+        error: expect.objectContaining({ code: 'COLLECTOR_UNAVAILABLE' }),
+      }),
+      undefined,
+      'FAILED'
+    );
+  });
 });

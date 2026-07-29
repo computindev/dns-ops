@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { DomainRepository, type IDatabaseAdapter, McpCommandRepository } from '@dns-ops/db';
 import type { Context } from 'hono';
 import type { Env } from '../types.js';
-import { proxyToCollector } from './collector-proxy.js';
+import { type ProxyResult, proxyToCollector } from './collector-proxy.js';
 import { type AuthenticatedMcpPrincipal, requireMcpScope } from './mcp-auth.js';
 import { consumeMcpScanQuota } from './mcp-scan-rate-limit.js';
 
@@ -68,15 +68,32 @@ export class McpScanService {
       );
       return result;
     }
-    const proxied = await proxyToCollector(this.context, {
-      path: '/api/collect/domain',
-      method: 'POST',
-      body: JSON.stringify({
-        domain: domain.normalizedName,
-        zoneManagement: domain.zoneManagement,
-        triggeredBy: this.principal.actorId,
-      }),
-    });
+    let proxied: Response | ProxyResult;
+    try {
+      proxied = await proxyToCollector(this.context, {
+        path: '/api/collect/domain',
+        method: 'POST',
+        body: JSON.stringify({
+          domain: domain.normalizedName,
+          zoneManagement: domain.zoneManagement,
+          triggeredBy: this.principal.actorId,
+        }),
+      });
+    } catch {
+      const result = {
+        ok: false,
+        error: { code: 'COLLECTOR_UNAVAILABLE', message: 'Collector unavailable' },
+        replayed: false,
+      };
+      await commands.complete(
+        this.principal.tenantId,
+        claim.command.id,
+        result,
+        undefined,
+        'FAILED'
+      );
+      return result;
+    }
     if (proxied instanceof Response) {
       const result = {
         ok: false,
