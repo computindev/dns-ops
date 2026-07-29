@@ -28,3 +28,10 @@ export { probeMXHosts, probeSMTPStarttls } from './smtp-starttls.js';
 export type { SSRFCheckResult } from './ssrf-guard.js';
 // SSRF Guard
 export { checkResolvedIP, checkSSRF, resolveAndCheck, validateUrl } from './ssrf-guard.js';
+export type {
+  TLSCertificateCollectionOptions,
+  TLSConnector,
+  TLSProbeSocket,
+  TLSSocketFactory,
+} from './tls-certificate.js';
+export { collectTlsCertificateEvidence } from './tls-certificate.js';

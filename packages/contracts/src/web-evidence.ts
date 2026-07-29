@@ -35,6 +35,7 @@ export interface RdapExpirationEvidence {
 export interface TLSCertificateEvidence {
   kind: 'TLS_CERTIFICATE';
   hostname: string;
+  resolvedAddress: string;
   port: number;
   protocol: string;
   cipher: string;
