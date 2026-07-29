@@ -12,6 +12,7 @@ export * from './enums.js';
 export * from './env.js';
 export * from './evaluation.js';
 export * from './guidance.js';
+export * from './live-fault-harness.js';
 export * from './mail.js';
 export * from './operations.js';
 export * from './requests.js';
