@@ -69,6 +69,17 @@ function assertPolicy(
 export class OperationalBaselineRepository {
   constructor(private db: IDatabaseAdapter) {}
 
+  async listActive(tenantId: string, domainId: string): Promise<OperationalConditionBaseline[]> {
+    return this.db.selectWhere(
+      operationalConditionBaselines,
+      requiredAnd(
+        eq(operationalConditionBaselines.tenantId, tenantId),
+        eq(operationalConditionBaselines.domainId, domainId),
+        isNull(operationalConditionBaselines.supersededAt)
+      )
+    );
+  }
+
   async findActive(
     tenantId: string,
     domainId: string,
