@@ -23,6 +23,10 @@ export { FleetReportRepository } from './fleet-report.js';
 export { DkimSelectorRepository, MailEvidenceRepository } from './mail-evidence.js';
 export { ObservationRepository } from './observation.js';
 export {
+  type AcceptOperationalBaseline,
+  OperationalBaselineRepository,
+} from './operational-baseline.js';
+export {
   type ObserveOperationalCondition,
   type OperationalConditionResult,
   OperationalConditionService,

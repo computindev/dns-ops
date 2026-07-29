@@ -16,10 +16,13 @@ import type {
   EvaluationCoverage,
   ExternalEvidenceData,
   InternalSignalKind,
+  OperationalConditionBaselinePolicy,
   UnknownResolution,
 } from '@dns-ops/contracts';
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -618,6 +621,7 @@ export const auditActionEnum = pgEnum('audit_action', [
   'alert_resolved',
   'alert_suppressed',
   'domain_profile_updated',
+  'operational_baseline_accepted',
 ]);
 
 export const auditEvents = pgTable(
@@ -769,6 +773,45 @@ export const internalCaseStatusEnum = pgEnum('internal_case_status', [
   'RESOLVED',
   'DISMISSED',
 ]);
+
+export const operationalConditionBaselines = pgTable(
+  'operational_condition_baselines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    domainId: uuid('domain_id').notNull(),
+    kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
+    discriminator: varchar('discriminator', { length: 64 }).notNull(),
+    sourceSnapshotId: uuid('source_snapshot_id')
+      .notNull()
+      .references(() => snapshots.id),
+    policy: jsonb('policy').notNull().$type<OperationalConditionBaselinePolicy>(),
+    maxEvidenceAgeSeconds: integer('max_evidence_age_seconds').notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
+    acceptedBy: varchar('accepted_by', { length: 100 }).notNull(),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    supersededBy: varchar('superseded_by', { length: 100 }),
+  },
+  (table) => ({
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'operational_baseline_domain_tenant_fk',
+    }).onDelete('cascade'),
+    activeConditionUnique: uniqueIndex('operational_baseline_active_condition_unique')
+      .on(table.tenantId, table.domainId, table.kind, table.discriminator)
+      .where(sql`${table.supersededAt} IS NULL`),
+    tenantIdx: index('operational_baseline_tenant_idx').on(table.tenantId),
+    sourceSnapshotIdx: index('operational_baseline_snapshot_idx').on(table.sourceSnapshotId),
+    maxEvidenceAgePositive: check(
+      'operational_baseline_max_evidence_age_positive',
+      sql`${table.maxEvidenceAgeSeconds} > 0`
+    ),
+  })
+);
+
+export type OperationalConditionBaseline = typeof operationalConditionBaselines.$inferSelect;
+export type NewOperationalConditionBaseline = typeof operationalConditionBaselines.$inferInsert;
 
 export const internalSignals = pgTable(
   'internal_signals',
