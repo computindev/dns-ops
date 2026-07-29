@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "eea9ca4a00b6a1599cbfed35916920fd6bcaf206",
+  "currentSha": "4b611bc1296c186a3c6a452c21d331a71a941acd",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -33,24 +33,27 @@
     "Domain 360 exposes a tenant-safe Needs setup/evidence lane; UNKNOWN cannot render as healthy and authentication cache transitions clear active observers",
     "Production and client mutation remain prohibited",
     "Accepted TLS and SPF operational baselines are append-only, tenant/domain/snapshot scoped, audited, and cannot be inferred from scans",
-    "A pure evaluator classifies stale, failed, UNKNOWN, missing, or incomplete TLS evidence as setup/evidence and emits canonical observations only for an accepted fresh TLS policy violation or accepted SPF baseline regression"
+    "A pure evaluator classifies stale, failed, UNKNOWN, missing, or incomplete TLS evidence as setup/evidence and emits canonical observations only for an accepted fresh TLS policy violation or accepted SPF baseline regression",
+    "Synchronous and queued collection now run the canonical finalizer after persistence; accepted SPF regression baselines use only the canonical signal alert path",
+    "TLS baseline freshness and missing-baseline state are exposed as setup/evidence in Domain 360",
+    "MCP Phase 1 has a tested static token-hash principal parser and an exact closed ten-tool contract; endpoint dispatch and deterministic harness remain pending"
   ],
   "passingChecks": [
     {
       "command": "bun run lint",
-      "result": "8 of 8 workspace tasks passed after actionable setup/evidence UI"
+      "result": "8 of 8 workspace tasks passed after baseline-aware canonical and MCP foundation work"
     },
     {
       "command": "bun run typecheck",
-      "result": "14 of 14 workspace tasks passed after actionable setup/evidence UI"
+      "result": "14 of 14 workspace tasks passed after baseline-aware canonical and MCP foundation work"
     },
     {
       "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-      "result": "2659 tests passed and 41 skipped after actionable setup/evidence UI"
+      "result": "2679 tests passed and 41 skipped after baseline-aware canonical and MCP foundation work"
     },
     {
       "command": "bun run build",
-      "result": "8 of 8 workspace tasks passed after actionable setup/evidence UI"
+      "result": "8 of 8 workspace tasks passed after baseline-aware canonical and MCP foundation work"
     },
     {
       "command": "bun run --filter @dns-ops/db check-drift",
@@ -104,10 +107,10 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Wire persisted baseline-aware evaluation to the canonical signal/case service",
-    "Expose tenant-scoped baseline acceptance and freshness in the profile/evidence API and Domain 360",
-    "Converge migrated SPF notifications on the canonical signal path and prove FIX-06",
-    "Add deterministic finalizer/deduplication fixtures and complete isolated migration verification"
+    "Add fully tenant-scoped canonical case operating API/UI and deterministic FIX-06 lifecycle fixture",
+    "Implement MCP endpoint dispatch for the exact ten-tool contract and its deterministic harness",
+    "Add non-live collector finalizer coverage for every collection entry point",
+    "Complete isolated PostgreSQL migration/concurrency verification and retain live Gate 3/4 blocks"
   ],
-  "updatedAt": "2026-07-29T16:27:00Z"
+  "updatedAt": "2026-07-29T16:41:00Z"
 }

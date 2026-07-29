@@ -246,7 +246,7 @@ describe('Alert Delivery Integration', () => {
     const finding: MockFinding = {
       id: overrides.id || `finding-${Math.random().toString(36).slice(2)}`,
       snapshotId: SNAPSHOT_ID,
-      type: 'mail.no-spf-record',
+      type: 'mail.no-dmarc-record',
       severity: overrides.severity || 'high',
       title: overrides.title || 'Missing SPF Record',
       description: 'Domain has no SPF record',

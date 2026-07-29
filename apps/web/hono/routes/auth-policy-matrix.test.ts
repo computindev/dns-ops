@@ -232,6 +232,7 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   // =============================================================================
   // Tenant-scoped domain profile declaration
   { path: '/api/domains/:domain/profile', method: 'PUT', policy: 'auth-write' },
+  { path: '/api/domains/:domain/baselines', method: 'POST', policy: 'auth-write' },
   // Domain collection (write operation)
   { path: '/api/collect/domain', method: 'POST', policy: 'auth-write' },
   // Mail collection (write operation)
