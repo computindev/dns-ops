@@ -25,6 +25,29 @@ describe('DomainEvidencePanel evidence classification', () => {
     ).toMatchObject({ reason: 'EVIDENCE_STALE', action: 'RUN_FRESH_SCAN' });
   });
 
+  it('places stale and unbaselined TLS evidence in setup rather than current evidence', () => {
+    const stale = {
+      id: 'probe-stale',
+      probeType: 'tls_cert',
+      status: 'success',
+      success: true,
+      errorMessage: null,
+      freshness: 'STALE' as const,
+      probeData: { status: 'OBSERVED' as const },
+    };
+    const missing = { ...stale, freshness: 'MISSING_BASELINE' as const };
+    expect(unknownForEvidence(stale)).toMatchObject({
+      reason: 'EVIDENCE_STALE',
+      action: 'RUN_FRESH_SCAN',
+    });
+    expect(unknownForEvidence(missing)).toMatchObject({
+      reason: 'MISSING_BASELINE',
+      action: 'ACCEPT_BASELINE',
+    });
+    expect(isCurrentEvidence(stale)).toBe(false);
+    expect(isCurrentEvidence(missing)).toBe(false);
+  });
+
   it('never classifies an UNKNOWN payload as current evidence', () => {
     expect(
       isCurrentEvidence({

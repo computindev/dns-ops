@@ -58,10 +58,41 @@ domainProfileRoutes.get('/:domain/evidence', async (c) => {
   const probes = await new ProbeObservationRepository(c.get('db')).findBySnapshotId(
     snapshots[0].id
   );
+  const baselines = await new OperationalBaselineRepository(c.get('db')).listActive(
+    tenantId,
+    domain.id
+  );
+  const now = Date.now();
+  const evidence = probes
+    .filter((probe) => ['rdap', 'tls_cert', 'http'].includes(probe.probeType))
+    .map((probe) => {
+      const data = probe.probeData as {
+        check?: string;
+        evidence?: { hostname?: string; port?: number };
+      } | null;
+      if (data?.check !== 'TLS_CERTIFICATE' || !data.evidence?.hostname || !data.evidence.port) {
+        return { ...probe, freshness: 'NOT_BASELINE_GATED' as const };
+      }
+      const discriminator = `${data.evidence.hostname}:${data.evidence.port}`.toLowerCase();
+      const baseline = baselines.find(
+        (candidate) =>
+          candidate.kind === 'TLS_CERTIFICATE_REGRESSION' &&
+          candidate.discriminator === discriminator
+      );
+      if (!baseline) return { ...probe, freshness: 'MISSING_BASELINE' as const };
+      return {
+        ...probe,
+        freshness:
+          now - probe.probedAt.getTime() > baseline.maxEvidenceAgeSeconds * 1000
+            ? ('STALE' as const)
+            : ('CURRENT' as const),
+      };
+    });
   return c.json({
     domain: domain.normalizedName,
     snapshotId: snapshots[0].id,
-    evidence: probes.filter((probe) => ['rdap', 'tls_cert', 'http'].includes(probe.probeType)),
+    activeBaselineIds: baselines.map((baseline) => baseline.id),
+    evidence,
   });
 });
 

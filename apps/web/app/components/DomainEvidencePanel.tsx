@@ -21,6 +21,7 @@ export type EvidenceResponse = {
     status: string;
     success: boolean;
     errorMessage: string | null;
+    freshness?: 'CURRENT' | 'STALE' | 'MISSING_BASELINE' | 'NOT_BASELINE_GATED';
     probeData?: { check?: string; status?: 'OBSERVED' | 'UNKNOWN'; unknown?: Unknown };
   }>;
 };
@@ -37,12 +38,34 @@ export function deduplicateSetup(setup: Unknown[]): Unknown[] {
 }
 
 export function isCurrentEvidence(item: EvidenceResponse['evidence'][number]): boolean {
-  return item.success && item.probeData?.status !== 'UNKNOWN' && !item.probeData?.unknown;
+  return (
+    item.success &&
+    item.probeData?.status !== 'UNKNOWN' &&
+    !item.probeData?.unknown &&
+    item.freshness !== 'STALE' &&
+    item.freshness !== 'MISSING_BASELINE'
+  );
 }
 
 export function unknownForEvidence(
   item: EvidenceResponse['evidence'][number]
 ): Unknown | undefined {
+  if (item.freshness === 'MISSING_BASELINE') {
+    return {
+      reason: 'MISSING_BASELINE',
+      explanation: `${item.probeType} evidence needs an accepted baseline before it can be considered current.`,
+      action: 'ACCEPT_BASELINE',
+      actionLabel: 'Accept baseline',
+    };
+  }
+  if (item.freshness === 'STALE') {
+    return {
+      reason: 'EVIDENCE_STALE',
+      explanation: `${item.probeType} evidence is older than its accepted baseline policy allows.`,
+      action: 'RUN_FRESH_SCAN',
+      actionLabel: 'Run a fresh scan',
+    };
+  }
   if (item.probeData?.unknown) return item.probeData.unknown;
   if (item.probeData?.status !== 'UNKNOWN') return undefined;
   return {
