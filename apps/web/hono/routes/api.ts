@@ -23,6 +23,7 @@ import {
 } from '../middleware/validation.js';
 import type { Env } from '../types.js';
 import { alertRoutes } from './alerts.js';
+import { caseRoutes } from './cases.js';
 import { delegationRoutes } from './delegation.js';
 import { domainProfileRoutes } from './domain-profile.js';
 import { findingsRoutes } from './findings.js';
@@ -173,6 +174,7 @@ apiRoutes.route('/snapshots', snapshotRoutes);
 apiRoutes.use('/migrate/*', requireAdminAccess);
 apiRoutes.route('/migrate', migrateRoutes);
 apiRoutes.route('/domains', domainProfileRoutes);
+apiRoutes.route('/cases', caseRoutes);
 apiRoutes.route('/portfolio', portfolioRoutes);
 apiRoutes.route('/ruleset-versions', rulesetVersionRoutes);
 apiRoutes.route('/monitoring', monitoringRoutes);

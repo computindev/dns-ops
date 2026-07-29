@@ -135,6 +135,8 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   // Tenant-scoped domain profile and setup/evidence reads
   { path: '/api/domains/:domain/profile', method: 'GET', policy: 'auth-read' },
   { path: '/api/domains/:domain/evidence', method: 'GET', policy: 'auth-read' },
+  { path: '/api/cases', method: 'GET', policy: 'auth-read' },
+  { path: '/api/cases/:caseId', method: 'GET', policy: 'auth-read' },
   // Delegation routes
   { path: '/api/snapshot/:snapshotId/delegation', method: 'GET', policy: 'auth-read' },
   { path: '/api/domain/:domain/delegation/latest', method: 'GET', policy: 'auth-read' },
@@ -233,6 +235,7 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   // Tenant-scoped domain profile declaration
   { path: '/api/domains/:domain/profile', method: 'PUT', policy: 'auth-write' },
   { path: '/api/domains/:domain/baselines', method: 'POST', policy: 'auth-write' },
+  { path: '/api/cases/:caseId/disposition', method: 'PATCH', policy: 'auth-write' },
   // Domain collection (write operation)
   { path: '/api/collect/domain', method: 'POST', policy: 'auth-write' },
   // Mail collection (write operation)

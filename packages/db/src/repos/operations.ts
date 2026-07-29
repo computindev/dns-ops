@@ -351,6 +351,59 @@ export class OperationalConditionService {
     return snapshot;
   }
 
+  async getCase(
+    tenantId: string,
+    caseId: string
+  ): Promise<{
+    case: InternalCase;
+    signal: InternalSignal;
+    events: (typeof internalCaseEvents.$inferSelect)[];
+  } | null> {
+    const cases = await this.db.selectWhere(internalCases, eq(internalCases.id, caseId));
+    const internalCase = cases.find((candidate) => candidate.tenantId === tenantId);
+    if (!internalCase) return null;
+    const signals = await this.db.selectWhere(
+      internalSignals,
+      eq(internalSignals.id, internalCase.signalId)
+    );
+    const signal = signals.find((candidate) => candidate.tenantId === tenantId);
+    if (!signal) return null;
+    const events = await this.db.selectWhere(
+      internalCaseEvents,
+      eq(internalCaseEvents.caseId, caseId)
+    );
+    return {
+      case: internalCase,
+      signal,
+      events: events
+        .filter((event) => event.tenantId === tenantId)
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()),
+    };
+  }
+
+  async listCases(
+    tenantId: string,
+    domainId?: string
+  ): Promise<Array<{ case: InternalCase; signal: InternalSignal }>> {
+    const [cases, signals] = await Promise.all([
+      this.db.selectWhere(internalCases, eq(internalCases.tenantId, tenantId)),
+      this.db.selectWhere(internalSignals, eq(internalSignals.tenantId, tenantId)),
+    ]);
+    const signalsById = new Map(
+      signals
+        .filter((signal) => !domainId || signal.domainId === domainId)
+        .map((signal) => [signal.id, signal])
+    );
+    return cases
+      .map((internalCase) => ({
+        case: internalCase,
+        signal: signalsById.get(internalCase.signalId),
+      }))
+      .filter((item): item is { case: InternalCase; signal: InternalSignal } =>
+        Boolean(item.signal)
+      );
+  }
+
   async setCaseDisposition(input: {
     tenantId: string;
     caseId: string;
