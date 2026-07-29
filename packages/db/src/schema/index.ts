@@ -766,6 +766,7 @@ export const internalSignalKindEnum = pgEnum('internal_signal_kind', [
   'MAIL_DNS_CONFIGURATION_REGRESSION',
 ]);
 export const internalSignalStatusEnum = pgEnum('internal_signal_status', ['ACTIVE', 'RESOLVED']);
+export const mcpCommandStatusEnum = pgEnum('mcp_command_status', ['PENDING', 'COMPLETED']);
 export const internalCaseStatusEnum = pgEnum('internal_case_status', [
   'OPEN',
   'ACKNOWLEDGED',
@@ -812,6 +813,35 @@ export const operationalConditionBaselines = pgTable(
 
 export type OperationalConditionBaseline = typeof operationalConditionBaselines.$inferSelect;
 export type NewOperationalConditionBaseline = typeof operationalConditionBaselines.$inferInsert;
+
+export const mcpCommands = pgTable(
+  'mcp_commands',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    operation: varchar('operation', { length: 100 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 200 }).notNull(),
+    requestFingerprint: varchar('request_fingerprint', { length: 64 }).notNull(),
+    status: mcpCommandStatusEnum('status').notNull().default('PENDING'),
+    resourceId: uuid('resource_id'),
+    response: jsonb('response').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tenantOperationKeyUnique: uniqueIndex('mcp_command_tenant_operation_key_unique').on(
+      table.tenantId,
+      table.actorId,
+      table.operation,
+      table.idempotencyKey
+    ),
+    tenantIdx: index('mcp_command_tenant_idx').on(table.tenantId),
+  })
+);
+
+export type McpCommand = typeof mcpCommands.$inferSelect;
+export type NewMcpCommand = typeof mcpCommands.$inferInsert;
 
 export const internalSignals = pgTable(
   'internal_signals',

@@ -21,6 +21,7 @@ export { FindingRepository } from './finding.js';
 export { FleetReportRepository } from './fleet-report.js';
 // Mail evidence repositories
 export { DkimSelectorRepository, MailEvidenceRepository } from './mail-evidence.js';
+export { type McpCommandClaim, McpCommandRepository } from './mcp-command.js';
 export { ObservationRepository } from './observation.js';
 export {
   type AcceptOperationalBaseline,
