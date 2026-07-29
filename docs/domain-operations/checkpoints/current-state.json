@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "a26e542228ffaa266f0bf532533da0709dbc8aca",
+  "currentSha": "8800a40bdbf8f89d725bc3366c49b83daab4c1d0",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -37,6 +37,7 @@
     "Synchronous and queued collection now run the canonical finalizer after persistence; accepted SPF regression baselines use only the canonical signal alert path",
     "TLS baseline freshness and missing-baseline state are exposed as setup/evidence in Domain 360",
     "MCP has a tested static tokenSha256 principal map with enabled principals, UUID tenant binding, least-privilege scopes, durable idempotency, and dispatch for all ten approved tools through shared services",
+    "The only external MCP transport is POST /mcp, mounted in TanStack's server-only SSR entrypoint; it was smoke-tested from the built Node server with a static hashed principal",
     "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records"
   ],
   "passingChecks": [
@@ -108,10 +109,9 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Provide the required external /mcp deployment path without putting server-only dependencies in the client bundle",
     "Build the deterministic MCP harness for all ten tool outcomes, scope/tenant negatives, parity, idempotency, and rate-limit evidence",
     "Add the remaining case UI and deterministic FIX-06 end-to-end lifecycle fixture",
     "Complete isolated PostgreSQL migration/concurrency verification and retain live Gate 3/4 blocks"
   ],
-  "updatedAt": "2026-07-29T17:50:00Z"
+  "updatedAt": "2026-07-29T18:02:00Z"
 }
