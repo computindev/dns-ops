@@ -48,7 +48,8 @@
     "FIX-05 proves stale TLS evidence remains setup/evidence with no canonical observation or delivery; FIX-06 proves duplicate canonical observations create one signal/case/alert and delivery occurs only on create and reopen",
     "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records",
     "Isolated browser smoke now passes nine Playwright checks against a migrated disposable PostgreSQL database; development migration discovery works when the app cwd is apps/web",
-    "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added"
+    "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added",
+    "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval"
   ],
   "passingChecks": [
     {
@@ -105,7 +106,8 @@
     "Mutable-record allowlist",
     "Previous TTL values",
     "Baseline, rollback, and token revocation owner",
-    "Test-host deployment mutation mechanism for LIVE-01 and LIVE-02 where provider DNS changes are insufficient"
+    "Test-host deployment mutation mechanism for LIVE-01 and LIVE-02 where provider DNS changes are insufficient",
+    "Founder calibration and approval of the six required operational playbooks"
   ],
   "materialDecisions": [
     "SPF remains first-level only",
@@ -128,8 +130,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain issue #4 provider/test-host manifest, live-fixture authority, and manual baseline; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
+    "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-29T19:02:00Z"
+  "updatedAt": "2026-07-29T19:05:00Z"
 }

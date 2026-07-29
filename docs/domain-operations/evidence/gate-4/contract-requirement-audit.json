@@ -1,0 +1,78 @@
+{
+  "auditId": "PHASE-0-1-CONTRACT-REQUIREMENT-AUDIT",
+  "recordedAt": "2026-07-29T19:05:00Z",
+  "contract": "docs/domain-operations/phase-0-1-execution-contract-v4.1.md",
+  "amendment": "docs/domain-operations/amendments/2026-07-28-autonomous-completion-override.md",
+  "verdict": "BLOCKED_BY_EXTERNAL_AUTHORITY",
+  "completed": [
+    {
+      "requirement": "Gate 1 repository truth, authority, and legacy-path map",
+      "evidence": [
+        "docs/domain-operations/checkpoints/day-0-gate-1.md",
+        "docs/domain-operations/checkpoints/current-state.json"
+      ]
+    },
+    {
+      "requirement": "Gate 2 correctness: explicit rule failures, authoritative uncertainty, first-level SPF limitation, RFC 9989 discovery, and guidance-only remediation",
+      "evidence": [
+        "docs/domain-operations/evidence/gate-2/fix-01-rule-failure.json",
+        "docs/domain-operations/evidence/gate-2/fix-02-authoritative-evidence.json",
+        "docs/domain-operations/evidence/gate-2/fix-03-spf-first-level.json",
+        "docs/domain-operations/evidence/gate-2/fix-04-rfc9989-dmarc-discovery.json",
+        "docs/domain-operations/evidence/gate-2/fix-05-guidance-only-remediation.json"
+      ]
+    },
+    {
+      "requirement": "Actionable UNKNOWN/setup UX, canonical signals/cases/alerts, duplicate prevention, fresh-evidence resolution, reopen behavior, and playbook drafts",
+      "evidence": [
+        "docs/domain-operations/evidence/gate-3/signal-case-foundation.json",
+        "docs/domain-operations/evidence/gate-3/fix-05-stale-evidence.json",
+        "docs/domain-operations/evidence/gate-3/fix-06-canonical-dedup.json",
+        "docs/playbooks/"
+      ]
+    },
+    {
+      "requirement": "Exactly ten static-token-hash MCP tools with tenant/scope/negative/idempotency/parity coverage",
+      "evidence": [
+        "docs/domain-operations/evidence/gate-3/mcp-harness-matrix.json"
+      ]
+    },
+    {
+      "requirement": "Exact non-live validation, isolated migration/concurrency, browser smoke, and independent non-live review",
+      "evidence": [
+        "docs/domain-operations/evidence/gate-4/isolated-postgres-migration-concurrency.json",
+        "docs/domain-operations/evidence/gate-4/isolated-browser-smoke.json",
+        "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-post-isolation.json",
+        "docs/domain-operations/evidence/gate-4/clean-checkout-attestation.json"
+      ]
+    }
+  ],
+  "blocked": [
+    {
+      "requirement": "A concrete, isolated controlled provider/test-host fault harness and LIVE-01 through LIVE-03",
+      "reason": "Provider kind, authorized test asset manifest, exact mutation allowlist, test-host deployment mechanism, TTL history, rollback procedure, and revocation owner are absent. A generic unimplemented provider adapter would violate the no-stubs policy.",
+      "evidence": "docs/domain-operations/evidence/gate-3/provider-harness-readiness.json"
+    },
+    {
+      "requirement": "Measured manual-work baseline and comparison showing at least four named checks automated or materially shortened",
+      "reason": "Founder has not supplied observed frequency, time, domains, or current-evidence values in the Day 0 worksheet.",
+      "evidence": "docs/domain-operations/day-0-worksheet.md"
+    },
+    {
+      "requirement": "Founder selection/classification of the initial portfolio and approval/calibration of all six playbooks",
+      "reason": "The Day 0 worksheet portfolio rows and playbook approval cells are incomplete; these are founder declarations and cannot be inferred.",
+      "evidence": "docs/domain-operations/day-0-worksheet.md"
+    },
+    {
+      "requirement": "Final Gate 4 PASS review",
+      "reason": "The contract requires final live artifacts, manual baseline comparison, playbook approval, and a fresh review after those inputs. Current review is correctly BLOCKED, not PASS.",
+      "evidence": "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-post-isolation.json"
+    }
+  ],
+  "scopeConfirmations": [
+    "No production or client mutation occurred.",
+    "DNS Ops and MCP retain no provider-write capability.",
+    "Recursive SPF, DMARC RUA/RUF ingestion, a formal graph, an agent, Buzz, OAuth, and commercial features remain excluded."
+  ],
+  "nextAction": "Obtain the founder-controlled inputs listed in issue #4, implement the concrete isolated fault harness for the selected provider/test host, execute the three controlled live scenarios with rollback artifacts, then repeat the final clean-checkout review."
+}
