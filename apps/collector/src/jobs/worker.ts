@@ -358,6 +358,22 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
         error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
       });
     }
+    try {
+      await finalizePersistedCanonicalConditions(db, {
+        snapshotId: result.snapshotId,
+        tenantId,
+        domainId: domain.id,
+        domainName: domain.normalizedName,
+      });
+    } catch (finalizationError) {
+      logger.warn('Canonical condition finalization failed (non-fatal)', {
+        snapshotId: result.snapshotId,
+        error:
+          finalizationError instanceof Error
+            ? finalizationError.message
+            : String(finalizationError),
+      });
+    }
 
     await job.updateProgress(100);
 
