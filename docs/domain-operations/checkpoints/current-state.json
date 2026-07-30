@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "61f2c85fcff2b44e0dc57b7a0ce0f85e395d2b75",
+  "currentSha": "c0f4a6e6ed0a993db6f41d5dd7a2b5b6b0332f68",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -52,7 +52,7 @@
     "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval",
     "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability",
     "A tested fault-run artifact contract validates the runbook evidence shape and rejects malformed/redaction-unsafe artifacts without a provider client, secret, or network operation",
-    "RECOVERY_REQUIRED artifacts now require structured provider, artifact-bound zone, artifact-target record/desired-value, safe non-executable provider-operation references, and chronological restoration evidence with an application timestamp rather than unstructured recovery prose",
+    "RECOVERY_REQUIRED artifacts now require structured provider, artifact-bound zone, artifact-target record/desired-value, safe non-executable provider-operation references, and chronological restoration evidence with an application timestamp; completed PASS artifacts require both application and restoration timestamps",
     "The contract-to-evidence audit is reconciled with the completed fail-closed policy and latest exact-SHA independent review; only founder-controlled live/manual inputs remain blocked"
   ],
   "passingChecks": [
@@ -137,5 +137,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-30T01:35:00Z"
+  "updatedAt": "2026-07-30T01:40:00Z"
 }
