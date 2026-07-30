@@ -356,13 +356,36 @@ describe('controlled live-fault harness policy', () => {
         ...artifact(),
         result: 'RECOVERY_REQUIRED',
       })
-    ).toThrow('recoveryInstructions are required');
+    ).toThrow('recovery is required');
+
+    const recovery = {
+      provider: 'example-provider',
+      zoneId: 'zone-123',
+      records: [
+        {
+          name: 'mail.faults.example.test',
+          type: 'TXT' as const,
+          desiredValue: 'v=spf1 -all',
+        },
+      ],
+      operatorCommands: ['restore-record: 200'],
+    };
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery,
+      })
+    ).not.toThrow();
 
     expect(() =>
       validateFaultRunArtifact({
         ...artifact(),
         result: 'RECOVERY_REQUIRED',
-        recoveryInstructions: 'Use the secret abc123',
+        recovery: {
+          ...recovery,
+          operatorCommands: ['Use API key sk_live_abc123'],
+        },
       })
     ).toThrow('must not contain credential material');
 
@@ -370,8 +393,11 @@ describe('controlled live-fault harness policy', () => {
       validateFaultRunArtifact({
         ...artifact(),
         result: 'RECOVERY_REQUIRED',
-        recoveryInstructions: 'Use API key sk_live_abc123 to restore the record',
+        recovery: {
+          ...recovery,
+          records: [],
+        },
       })
-    ).toThrow('must not contain credential material');
+    ).toThrow('recovery.records must contain at least one record');
   });
 });

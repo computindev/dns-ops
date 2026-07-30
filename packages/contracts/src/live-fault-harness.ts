@@ -51,6 +51,19 @@ export type FaultRunResult = (typeof FAULT_RUN_RESULTS)[number];
  * Redacted, durable evidence emitted by the future isolated provider harness.
  * It intentionally permits only a credential fingerprint, never a token value.
  */
+export interface FaultRecoveryArtifact {
+  provider: string;
+  zoneId: string;
+  records: readonly FaultRecoveryRecord[];
+  operatorCommands: readonly string[];
+}
+
+export interface FaultRecoveryRecord {
+  name: string;
+  type: ControlledFaultRecordType;
+  desiredValue: string;
+}
+
 export interface FaultRunArtifact {
   runId: string;
   mutationId: LiveFaultMutationId;
@@ -68,7 +81,7 @@ export interface FaultRunArtifact {
   caseIds: readonly string[];
   auditEventIds: readonly string[];
   result: FaultRunResult;
-  recoveryInstructions?: string;
+  recovery?: FaultRecoveryArtifact;
 }
 
 interface ValidatedControlledFaultPolicy {
@@ -124,13 +137,13 @@ const faultRunArtifactKeys = new Set([
   'caseIds',
   'auditEventIds',
   'result',
-  'recoveryInstructions',
+  'recovery',
 ]);
+const faultRecoveryKeys = new Set(['provider', 'zoneId', 'records', 'operatorCommands']);
+const faultRecoveryRecordKeys = new Set(['name', 'type', 'desiredValue']);
 const maximumAllowlistEntries = 64;
 const maximumArtifactItems = 128;
 const maximumArtifactSummaryLength = 1_024;
-const redactedArtifactPattern =
-  /(?:authorization|x-auth-token|x-api-key|(?:access|api|provider)[_-]?token|(?:set-)?cookie|password|secret)\s*[:=]|bearer\s+/i;
 const artifactIdentifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$/;
 const providerResponsePattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
 const isoTimestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
@@ -410,17 +423,6 @@ function normalizeControlledFaultMutationRequest(
   };
 }
 
-function validateArtifactSummary(value: unknown, label: string): void {
-  const summary = assertCanonicalArtifactText(value, label);
-  if (
-    summary.length > maximumArtifactSummaryLength ||
-    /[\r\n]/.test(summary) ||
-    redactedArtifactPattern.test(summary)
-  ) {
-    throw new Error(`${label} must be a bounded redacted summary`);
-  }
-}
-
 function validateArtifactIdentifier(value: unknown, label: string): void {
   const identifier = assertCanonicalArtifactText(value, label);
   if (!artifactIdentifierPattern.test(identifier) || credentialMaterialPattern.test(identifier)) {
@@ -445,10 +447,54 @@ function validateProviderResponseList(value: unknown): void {
   }
 }
 
-function validateRecoveryInstructions(value: unknown): void {
-  validateArtifactSummary(value, 'recoveryInstructions');
-  if (credentialMaterialPattern.test(value as string)) {
-    throw new Error('recoveryInstructions must not contain credential material');
+function validateRecoveryText(value: unknown, label: string, maximumLength: number): void {
+  const text = assertCanonicalArtifactText(value, label);
+  if (text.length > maximumLength || /[\r\n]/.test(text) || credentialMaterialPattern.test(text)) {
+    throw new Error(`${label} must be bounded and must not contain credential material`);
+  }
+}
+
+function validateRecoveryArtifact(value: unknown): void {
+  const fields = readPlainDataObject(value, faultRecoveryKeys);
+  validateArtifactIdentifier(readDataField(fields, 'provider'), 'recovery.provider');
+  validateArtifactIdentifier(readDataField(fields, 'zoneId'), 'recovery.zoneId');
+
+  const records = readDataArray(
+    readDataField(fields, 'records'),
+    'recovery.records',
+    maximumAllowlistEntries
+  );
+  if (records.length === 0) {
+    throw new Error('recovery.records must contain at least one record');
+  }
+  for (const record of records) {
+    const recordFields = readPlainDataObject(record, faultRecoveryRecordKeys);
+    const name = assertCanonicalArtifactText(
+      readDataField(recordFields, 'name'),
+      'recovery.records name'
+    );
+    const normalizedName = normalizeRecordName(name, 'recovery.records name');
+    if (name !== normalizedName) {
+      throw new Error('recovery.records names must be lowercase DNS names without a trailing dot');
+    }
+    normalizeRecordType(readDataField(recordFields, 'type'), 'recovery.records type');
+    validateRecoveryText(
+      readDataField(recordFields, 'desiredValue'),
+      'recovery.records desiredValue',
+      4_096
+    );
+  }
+
+  const commands = readDataArray(
+    readDataField(fields, 'operatorCommands'),
+    'recovery.operatorCommands',
+    maximumArtifactItems
+  );
+  if (commands.length === 0) {
+    throw new Error('recovery.operatorCommands must contain at least one command');
+  }
+  for (const command of commands) {
+    validateRecoveryText(command, 'recovery.operatorCommands', maximumArtifactSummaryLength);
   }
 }
 
@@ -536,12 +582,15 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   if (!FAULT_RUN_RESULTS.includes(result as FaultRunResult)) {
     throw new Error('result is not permitted');
   }
-  const recoveryInstructions = readDataField(fields, 'recoveryInstructions');
-  if (result === 'RECOVERY_REQUIRED' && recoveryInstructions === undefined) {
-    throw new Error('recoveryInstructions are required when result is RECOVERY_REQUIRED');
+  const recovery = readDataField(fields, 'recovery');
+  if (result === 'RECOVERY_REQUIRED' && recovery === undefined) {
+    throw new Error('recovery is required when result is RECOVERY_REQUIRED');
   }
-  if (recoveryInstructions !== undefined) {
-    validateRecoveryInstructions(recoveryInstructions);
+  if (result !== 'RECOVERY_REQUIRED' && recovery !== undefined) {
+    throw new Error('recovery is only permitted when result is RECOVERY_REQUIRED');
+  }
+  if (recovery !== undefined) {
+    validateRecoveryArtifact(recovery);
   }
 }
 

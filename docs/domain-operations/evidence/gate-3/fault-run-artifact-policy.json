@@ -1,12 +1,13 @@
 {
   "evidenceId": "GATE3-FAULT-RUN-ARTIFACT-POLICY",
-  "recordedAt": "2026-07-29T20:00:00Z",
+  "recordedAt": "2026-07-30T01:06:00Z",
   "source": "packages/contracts/src/live-fault-harness.ts",
   "status": "NON_LIVE_SAFETY_INFRASTRUCTURE_COMPLETE",
   "implements": [
     "The runbook FaultRunArtifact contract for LIVE-01 through LIVE-03 evidence",
     "Runtime validation of plain enumerable data, bounded arrays, SHA-256 baseline/credential fingerprints, canonical DNS target names, UTC calendar-valid timestamps, and recovery-result requirements",
-    "Redacted provider-response operation/status summaries only, plus identifier and recovery-instruction checks that reject credential/header/token/API/private-key material"
+    "Redacted provider-response operation/status summaries only, plus identifier checks that reject credential/header/token/API/private-key material",
+    "A structured RECOVERY_REQUIRED payload with provider, zone, exact recovery records/desired values, and safe operator commands"
   ],
   "verification": {
     "command": "bunx vitest run packages/contracts/src/live-fault-harness.test.ts",
@@ -29,7 +30,7 @@
     "Replacement of issue #4 authorization, assets, allowlist, TTL, and rollback prerequisites"
   ],
   "review": {
-    "result": "Iterative independent review found and remediation covered response/header, timestamp, canonical-input, zone-identifier, target-name, recovery-prose, policy/request zone, and opaque credential-shaped identifier leakage boundaries. Final re-review found no remaining code-level security or correctness blocker."
+    "result": "Iterative independent review found and remediation covered response/header, timestamp, canonical-input, zone-identifier, target-name, recovery-prose, policy/request zone, opaque credential-shaped identifier, and incomplete recovery-payload boundaries. Final re-review found no remaining code-level security or correctness blocker."
   },
   "nextAction": "A selected-provider harness must emit this validated artifact only after its explicit allowlist policy passes; it remains blocked on the issue #4 manifest and authority."
 }

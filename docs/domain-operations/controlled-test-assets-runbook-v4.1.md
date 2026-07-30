@@ -100,7 +100,16 @@ export type FaultRunArtifact = {
   caseIds: string[];
   auditEventIds: string[];
   result: "PASS" | "FAIL" | "RECOVERY_REQUIRED";
-  recoveryInstructions?: string;
+  recovery?: {
+    provider: string;
+    zoneId: string;
+    records: Array<{
+      name: string;
+      type: "A" | "AAAA" | "CNAME" | "TXT";
+      desiredValue: string;
+    }>;
+    operatorCommands: string[];
+  };
 };
 ```
 
