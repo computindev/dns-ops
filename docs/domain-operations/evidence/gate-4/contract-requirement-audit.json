@@ -1,6 +1,6 @@
 {
   "auditId": "PHASE-0-1-CONTRACT-REQUIREMENT-AUDIT",
-  "recordedAt": "2026-07-29T19:35:00Z",
+  "recordedAt": "2026-07-30T01:40:00Z",
   "contract": "docs/domain-operations/phase-0-1-execution-contract-v4.1.md",
   "amendment": "docs/domain-operations/amendments/2026-07-28-autonomous-completion-override.md",
   "verdict": "BLOCKED_BY_EXTERNAL_AUTHORITY",
@@ -53,6 +53,7 @@
         "docs/domain-operations/evidence/gate-4/isolated-browser-smoke.json",
         "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-post-isolation.json",
         "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-29-live-policy.json",
+        "docs/domain-operations/evidence/gate-4/fresh-review-2026-07-30-final-artifact-validation.json",
         "docs/domain-operations/evidence/gate-4/clean-checkout-attestation.json"
       ]
     }
