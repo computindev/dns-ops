@@ -148,7 +148,7 @@ const artifactIdentifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$/;
 const providerResponsePattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
 const isoTimestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
 const credentialMaterialPattern =
-  /(?:token|secret|password|credential|authorization|bearer|api[ _-]?key|private[ _-]?key|sk_(?:live|test)_)/i;
+  /(?:token|secret|password|credential|authorization|bearer|cookie|session|api[ _-]?key|private[ _-]?key|sk_(?:live|test)_)/i;
 
 type DataDescriptorMap = Record<string, PropertyDescriptor>;
 

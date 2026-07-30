@@ -395,6 +395,17 @@ describe('controlled live-fault harness policy', () => {
         result: 'RECOVERY_REQUIRED',
         recovery: {
           ...recovery,
+          operatorCommands: ['Cookie: session=must-not-be-stored'],
+        },
+      })
+    ).toThrow('must not contain credential material');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery: {
+          ...recovery,
           records: [],
         },
       })
