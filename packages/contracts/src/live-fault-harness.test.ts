@@ -340,6 +340,13 @@ describe('controlled live-fault harness policy', () => {
     expect(() =>
       validateFaultRunArtifact({
         ...artifact(),
+        restoredAt: '2026-07-29T18:59:59Z',
+      })
+    ).toThrow('restoredAt must not be earlier than appliedAt');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
         baselineHash: ` ${fingerprint}`,
       })
     ).toThrow('surrounding whitespace');

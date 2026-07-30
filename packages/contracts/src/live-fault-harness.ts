@@ -520,7 +520,7 @@ function validateRecoveryArtifact(
   }
 }
 
-function validateIsoTimestamp(value: unknown, label: string): void {
+function validateIsoTimestamp(value: unknown, label: string): number {
   const timestamp = assertCanonicalArtifactText(value, label);
   const match = isoTimestampPattern.exec(timestamp);
   if (!match) {
@@ -529,12 +529,11 @@ function validateIsoTimestamp(value: unknown, label: string): void {
 
   const fraction = (match[2] ?? '').padEnd(3, '0');
   const canonicalTimestamp = `${match[1]}.${fraction}Z`;
-  if (
-    Number.isNaN(Date.parse(timestamp)) ||
-    new Date(timestamp).toISOString() !== canonicalTimestamp
-  ) {
+  const milliseconds = Date.parse(timestamp);
+  if (Number.isNaN(milliseconds) || new Date(milliseconds).toISOString() !== canonicalTimestamp) {
     throw new Error(`${label} must be a calendar-valid ISO-8601 UTC timestamp`);
   }
+  return milliseconds;
 }
 
 /**
@@ -586,9 +585,18 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   }
 
   const appliedAt = readDataField(fields, 'appliedAt');
-  if (appliedAt !== undefined) validateIsoTimestamp(appliedAt, 'appliedAt');
+  const appliedAtMilliseconds =
+    appliedAt === undefined ? undefined : validateIsoTimestamp(appliedAt, 'appliedAt');
   const restoredAt = readDataField(fields, 'restoredAt');
-  if (restoredAt !== undefined) validateIsoTimestamp(restoredAt, 'restoredAt');
+  const restoredAtMilliseconds =
+    restoredAt === undefined ? undefined : validateIsoTimestamp(restoredAt, 'restoredAt');
+  if (
+    appliedAtMilliseconds !== undefined &&
+    restoredAtMilliseconds !== undefined &&
+    restoredAtMilliseconds < appliedAtMilliseconds
+  ) {
+    throw new Error('restoredAt must not be earlier than appliedAt');
+  }
 
   validateProviderResponseList(readDataField(fields, 'providerResponses'));
   validateArtifactIdList(
