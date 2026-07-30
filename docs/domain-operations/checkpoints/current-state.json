@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "d268f18c6905a2f9f520fd844a0647d48990e292",
+  "currentSha": "ff5373eced4e96579f4d39747d2920c3a5e192f4",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -52,7 +52,7 @@
     "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval",
     "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability",
     "A tested fault-run artifact contract validates the runbook evidence shape and rejects malformed/redaction-unsafe artifacts without a provider client, secret, or network operation",
-    "RECOVERY_REQUIRED artifacts now require structured provider, zone, record/desired-value, and safe operator-command details rather than unstructured recovery prose",
+    "RECOVERY_REQUIRED artifacts now require structured provider, artifact-bound zone, artifact-target record/desired-value, and safe operator-command details rather than unstructured recovery prose",
     "The contract-to-evidence audit is reconciled with the completed fail-closed policy and latest exact-SHA independent review; only founder-controlled live/manual inputs remain blocked"
   ],
   "passingChecks": [
@@ -137,5 +137,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-07-30T01:07:00Z"
+  "updatedAt": "2026-07-30T01:13:00Z"
 }
