@@ -590,6 +590,9 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   const restoredAt = readDataField(fields, 'restoredAt');
   const restoredAtMilliseconds =
     restoredAt === undefined ? undefined : validateIsoTimestamp(restoredAt, 'restoredAt');
+  if (restoredAtMilliseconds !== undefined && appliedAtMilliseconds === undefined) {
+    throw new Error('restoredAt requires appliedAt');
+  }
   if (
     appliedAtMilliseconds !== undefined &&
     restoredAtMilliseconds !== undefined &&

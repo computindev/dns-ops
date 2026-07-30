@@ -344,6 +344,12 @@ describe('controlled live-fault harness policy', () => {
       })
     ).toThrow('restoredAt must not be earlier than appliedAt');
 
+    expect(() => {
+      const artifactWithoutApplication = artifact();
+      delete artifactWithoutApplication.appliedAt;
+      validateFaultRunArtifact(artifactWithoutApplication);
+    }).toThrow('restoredAt requires appliedAt');
+
     expect(() =>
       validateFaultRunArtifact({
         ...artifact(),
