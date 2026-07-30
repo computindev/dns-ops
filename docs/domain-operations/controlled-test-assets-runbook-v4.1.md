@@ -113,7 +113,9 @@ export type FaultRunArtifact = {
 };
 ```
 
-Secrets and full provider response headers must be redacted.
+Secrets and full provider response headers must be redacted. For `RECOVERY_REQUIRED`, the recovery zone must equal the artifact zone and every recovery record must be one of the artifact's declared targets.
+
+`operatorCommands` are audited, human-readable recovery instructions only. A harness must never execute them as shell text. The future `recover` command must resolve a provider-specific, allowlisted operation from the structured provider/zone/record data and reject any tuple outside its approved policy.
 
 ---
 

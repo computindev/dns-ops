@@ -399,5 +399,32 @@ describe('controlled live-fault harness policy', () => {
         },
       })
     ).toThrow('recovery.records must contain at least one record');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery: {
+          ...recovery,
+          zoneId: 'other-zone',
+        },
+      })
+    ).toThrow('recovery.zoneId must match the fault artifact zoneId');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery: {
+          ...recovery,
+          records: [
+            {
+              ...recovery.records[0],
+              name: 'outside.faults.example.test',
+            },
+          ],
+        },
+      })
+    ).toThrow('recovery.records names must be declared fault artifact targets');
   });
 });

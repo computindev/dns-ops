@@ -454,10 +454,21 @@ function validateRecoveryText(value: unknown, label: string, maximumLength: numb
   }
 }
 
-function validateRecoveryArtifact(value: unknown): void {
+function validateRecoveryArtifact(
+  value: unknown,
+  artifactZoneId: string,
+  artifactTargetNames: readonly string[]
+): void {
   const fields = readPlainDataObject(value, faultRecoveryKeys);
   validateArtifactIdentifier(readDataField(fields, 'provider'), 'recovery.provider');
-  validateArtifactIdentifier(readDataField(fields, 'zoneId'), 'recovery.zoneId');
+  const recoveryZoneId = assertCanonicalArtifactText(
+    readDataField(fields, 'zoneId'),
+    'recovery.zoneId'
+  );
+  validateArtifactIdentifier(recoveryZoneId, 'recovery.zoneId');
+  if (recoveryZoneId !== artifactZoneId) {
+    throw new Error('recovery.zoneId must match the fault artifact zoneId');
+  }
 
   const records = readDataArray(
     readDataField(fields, 'records'),
@@ -476,6 +487,9 @@ function validateRecoveryArtifact(value: unknown): void {
     const normalizedName = normalizeRecordName(name, 'recovery.records name');
     if (name !== normalizedName) {
       throw new Error('recovery.records names must be lowercase DNS names without a trailing dot');
+    }
+    if (!artifactTargetNames.includes(normalizedName)) {
+      throw new Error('recovery.records names must be declared fault artifact targets');
     }
     normalizeRecordType(readDataField(recordFields, 'type'), 'recovery.records type');
     validateRecoveryText(
@@ -523,7 +537,8 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   const fields = readPlainDataObject(artifact, faultRunArtifactKeys);
   validateArtifactIdentifier(readDataField(fields, 'runId'), 'runId');
   normalizeMutationId(readDataField(fields, 'mutationId'), 'mutationId');
-  validateArtifactIdentifier(readDataField(fields, 'zoneId'), 'zoneId');
+  const artifactZoneId = assertCanonicalArtifactText(readDataField(fields, 'zoneId'), 'zoneId');
+  validateArtifactIdentifier(artifactZoneId, 'zoneId');
 
   const targetNames = readDataArray(
     readDataField(fields, 'targetNames'),
@@ -590,7 +605,7 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
     throw new Error('recovery is only permitted when result is RECOVERY_REQUIRED');
   }
   if (recovery !== undefined) {
-    validateRecoveryArtifact(recovery);
+    validateRecoveryArtifact(recovery, artifactZoneId, normalizedTargetNames);
   }
 }
 
