@@ -623,6 +623,15 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   if (result !== 'RECOVERY_REQUIRED' && recovery !== undefined) {
     throw new Error('recovery is only permitted when result is RECOVERY_REQUIRED');
   }
+  if (
+    result === 'PASS' &&
+    (appliedAtMilliseconds === undefined || restoredAtMilliseconds === undefined)
+  ) {
+    throw new Error('PASS requires appliedAt and restoredAt');
+  }
+  if (result === 'RECOVERY_REQUIRED' && appliedAtMilliseconds === undefined) {
+    throw new Error('RECOVERY_REQUIRED requires appliedAt');
+  }
   if (recovery !== undefined) {
     validateRecoveryArtifact(recovery, artifactZoneId, normalizedTargetNames);
   }

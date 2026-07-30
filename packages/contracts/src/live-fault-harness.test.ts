@@ -350,6 +350,12 @@ describe('controlled live-fault harness policy', () => {
       validateFaultRunArtifact(artifactWithoutApplication);
     }).toThrow('restoredAt requires appliedAt');
 
+    expect(() => {
+      const artifactWithoutRestoration = artifact();
+      delete artifactWithoutRestoration.restoredAt;
+      validateFaultRunArtifact(artifactWithoutRestoration);
+    }).toThrow('PASS requires appliedAt and restoredAt');
+
     expect(() =>
       validateFaultRunArtifact({
         ...artifact(),
