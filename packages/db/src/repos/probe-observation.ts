@@ -45,7 +45,7 @@ export class ProbeObservationRepository {
    */
   async findBySnapshotAndType(
     snapshotId: string,
-    probeType: 'smtp_starttls' | 'mta_sts' | 'tls_cert' | 'http'
+    probeType: 'smtp_starttls' | 'mta_sts' | 'tls_cert' | 'http' | 'rdap'
   ): Promise<ProbeObservation[]> {
     const results = await this.db.selectWhere(
       probeObservations,

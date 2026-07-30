@@ -23,7 +23,9 @@ import {
 } from '../middleware/validation.js';
 import type { Env } from '../types.js';
 import { alertRoutes } from './alerts.js';
+import { caseRoutes } from './cases.js';
 import { delegationRoutes } from './delegation.js';
+import { domainProfileRoutes } from './domain-profile.js';
 import { findingsRoutes } from './findings.js';
 import { fleetReportRoutes } from './fleet-report.js';
 import { legacyToolsRoutes } from './legacy-tools.js';
@@ -171,6 +173,8 @@ apiRoutes.route('/mail', providerTemplateRoutes);
 apiRoutes.route('/snapshots', snapshotRoutes);
 apiRoutes.use('/migrate/*', requireAdminAccess);
 apiRoutes.route('/migrate', migrateRoutes);
+apiRoutes.route('/domains', domainProfileRoutes);
+apiRoutes.route('/cases', caseRoutes);
 apiRoutes.route('/portfolio', portfolioRoutes);
 apiRoutes.route('/ruleset-versions', rulesetVersionRoutes);
 apiRoutes.route('/monitoring', monitoringRoutes);

@@ -229,7 +229,7 @@ function baseState(): MockState {
 
 describe('Simulation routes', () => {
   describe('POST /api/simulate', () => {
-    it('simulates fixes for all actionable findings by snapshotId', async () => {
+    it('returns guidance without executable mutations for generic findings', async () => {
       const state = baseState();
       const app = createApp(state);
 
@@ -242,36 +242,43 @@ describe('Simulation routes', () => {
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
         domain: string;
-        proposedChanges: Array<{
-          action: string;
-          name: string;
-          type: string;
-          findingType: string;
+        proposedChanges: unknown[];
+        guidanceOnlySuggestions: Array<{
+          kind: string;
+          playbookId: string;
+          executableMutation: null;
         }>;
+        mode: string;
         summary: {
           changesProposed: number;
-          findingsResolved: number;
+          guidanceProvided: number;
+          currentFindings: number;
         };
-        resolvedFindings: Array<{ type: string }>;
       };
 
+      expect(json.mode).toBe('GUIDANCE_ONLY');
       expect(json.domain).toBe('example.com');
-      expect(json.proposedChanges.length).toBeGreaterThan(0);
-
-      // Should propose SPF fix
-      const spfChange = json.proposedChanges.find((c) => c.findingType === 'mail.no-spf-record');
-      expect(spfChange).toBeDefined();
-      expect(spfChange?.action).toBe('add');
-      expect(spfChange?.type).toBe('TXT');
-
-      // Should propose DMARC fix
-      const dmarcChange = json.proposedChanges.find(
-        (c) => c.findingType === 'mail.no-dmarc-record'
+      expect(json.proposedChanges).toEqual([]);
+      expect(json.guidanceOnlySuggestions).toHaveLength(2);
+      expect(json.guidanceOnlySuggestions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'GUIDANCE_ONLY',
+            playbookId: 'mail.spf.provider-confirmation',
+            executableMutation: null,
+          }),
+          expect.objectContaining({
+            kind: 'GUIDANCE_ONLY',
+            playbookId: 'mail.dmarc.monitoring-readiness',
+            executableMutation: null,
+          }),
+        ])
       );
-      expect(dmarcChange).toBeDefined();
-
-      // Should resolve those findings
-      expect(json.summary.findingsResolved).toBeGreaterThan(0);
+      expect(json.summary).toMatchObject({
+        changesProposed: 0,
+        guidanceProvided: 2,
+        currentFindings: expect.any(Number),
+      });
     });
 
     it('simulates a single finding by findingId', async () => {
@@ -286,12 +293,14 @@ describe('Simulation routes', () => {
 
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
-        proposedChanges: Array<{ findingType: string }>;
+        proposedChanges: unknown[];
+        guidanceOnlySuggestions: Array<{ playbookId: string }>;
       };
 
-      // Only SPF change should be proposed (single finding mode)
-      expect(json.proposedChanges.length).toBe(1);
-      expect(json.proposedChanges[0].findingType).toBe('mail.no-spf-record');
+      expect(json.proposedChanges).toEqual([]);
+      expect(json.guidanceOnlySuggestions).toEqual([
+        expect.objectContaining({ playbookId: 'mail.spf.provider-confirmation' }),
+      ]);
     });
 
     it('accepts specific findingTypes filter', async () => {
@@ -309,11 +318,14 @@ describe('Simulation routes', () => {
 
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
-        proposedChanges: Array<{ findingType: string }>;
+        proposedChanges: unknown[];
+        guidanceOnlySuggestions: Array<{ playbookId: string }>;
       };
 
-      expect(json.proposedChanges.length).toBe(1);
-      expect(json.proposedChanges[0].findingType).toBe('mail.no-dmarc-record');
+      expect(json.proposedChanges).toEqual([]);
+      expect(json.guidanceOnlySuggestions).toEqual([
+        expect.objectContaining({ playbookId: 'mail.dmarc.monitoring-readiness' }),
+      ]);
     });
 
     it('returns 404 for missing finding', async () => {
@@ -358,7 +370,7 @@ describe('Simulation routes', () => {
       expect(response.status).toBe(400);
     });
 
-    it('includes provider detection in result', async () => {
+    it('does not present heuristic provider detection as confirmation', async () => {
       const state = baseState();
       const app = createApp(state);
 
@@ -372,10 +384,10 @@ describe('Simulation routes', () => {
       const json = (await response.json()) as {
         detectedProvider: string;
       };
-      expect(json.detectedProvider).toBeDefined();
+      expect(json.detectedProvider).toBe('unknown');
     });
 
-    it('returns diff between current and projected findings', async () => {
+    it('returns current findings without projected-resolution semantics', async () => {
       const state = baseState();
       const app = createApp(state);
 
@@ -386,24 +398,15 @@ describe('Simulation routes', () => {
       });
 
       expect(response.status).toBe(200);
-      const json = (await response.json()) as {
+      const json = (await response.json()) as Record<string, unknown> & {
         currentFindings: Array<{ type: string }>;
-        projectedFindings: Array<{ type: string }>;
-        resolvedFindings: Array<{ type: string }>;
-        remainingFindings: Array<{ type: string }>;
-        newFindings: Array<{ type: string }>;
-        summary: {
-          findingsBefore: number;
-          findingsAfter: number;
-        };
+        summary: { currentFindings: number };
       };
 
-      expect(json.currentFindings).toBeDefined();
-      expect(json.projectedFindings).toBeDefined();
-      expect(json.resolvedFindings).toBeDefined();
-      expect(json.remainingFindings).toBeDefined();
-      expect(json.newFindings).toBeDefined();
-      expect(json.summary.findingsBefore).toBeGreaterThan(0);
+      expect(json.currentFindings.length).toBeGreaterThan(0);
+      expect(json.summary.currentFindings).toBe(json.currentFindings.length);
+      expect(json.projectedFindings).toBeUndefined();
+      expect(json.resolvedFindings).toBeUndefined();
     });
   });
 
@@ -416,6 +419,12 @@ describe('Simulation routes', () => {
 
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
+        mode: string;
+        guidanceSupportedTypes: Array<{
+          type: string;
+          description: string;
+          risk: string;
+        }>;
         actionableTypes: Array<{
           type: string;
           description: string;
@@ -423,6 +432,8 @@ describe('Simulation routes', () => {
         }>;
       };
 
+      expect(json.mode).toBe('GUIDANCE_ONLY');
+      expect(json.guidanceSupportedTypes).toEqual(json.actionableTypes);
       expect(json.actionableTypes.length).toBeGreaterThan(0);
       expect(json.actionableTypes.find((t) => t.type === 'mail.no-spf-record')).toBeDefined();
       expect(json.actionableTypes.find((t) => t.type === 'mail.no-dmarc-record')).toBeDefined();

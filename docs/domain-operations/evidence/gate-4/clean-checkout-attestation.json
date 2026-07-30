@@ -1,0 +1,21 @@
+{
+  "evidenceId": "GATE4-CLEAN-CHECKOUT-ATTESTATION",
+  "recordedAt": "2026-07-29T18:55:00Z",
+  "reviewedSha": "47e6c4a8b7c3875d6064638405a10426ce7f9a04",
+  "checkout": {
+    "type": "detached disposable git worktree",
+    "path": "/tmp/dnsops-gate4-clean",
+    "statusCommand": "git -C /tmp/dnsops-gate4-clean status --short --branch",
+    "result": "clean detached HEAD",
+    "diffCheckCommand": "git -C /tmp/dnsops-gate4-clean diff --check",
+    "diffCheckResult": "passed"
+  },
+  "notes": [
+    "A fresh reviewer initially generated an untracked .pi-subagents artifact in the disposable checkout; it was removed before this attestation.",
+    "The primary developer worktree intentionally retains excluded agent artifacts unstaged; this attestation demonstrates a separate clean checkout at the same reviewed SHA."
+  ],
+  "remainingBlockers": [
+    "Controlled LIVE-01 through LIVE-03 prerequisites in issue #4.",
+    "Manual-work baseline and founder classification evidence in issue #4."
+  ]
+}

@@ -12,7 +12,11 @@ import {
   RecordSetRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
-import { type RuleContext, SimulationEngine } from '@dns-ops/rules';
+import {
+  getGuidanceSupportedFindingTypes,
+  type RuleContext,
+  SimulationEngine,
+} from '@dns-ops/rules';
 import { Hono } from 'hono';
 import { requireAuth } from '../middleware/authorization.js';
 import { getWebLogger } from '../middleware/error-tracking.js';
@@ -136,51 +140,55 @@ simulationRoutes.post('/', requireAuth, async (c) => {
 /**
  * GET /api/simulate/actionable-types
  *
- * Returns the list of finding types that the simulation engine can generate fixes for.
+ * Legacy alias returning finding types with non-executable guidance playbooks.
  */
 simulationRoutes.get('/actionable-types', requireAuth, (c) => {
+  const guidanceSupportedTypes = [
+    {
+      type: 'mail.no-spf-record',
+      description: 'Missing SPF record',
+      risk: 'low',
+    },
+    {
+      type: 'mail.no-dmarc-record',
+      description: 'Missing DMARC record',
+      risk: 'low',
+    },
+    {
+      type: 'mail.no-mx-record',
+      description: 'Missing MX record',
+      risk: 'medium',
+    },
+    {
+      type: 'mail.no-mta-sts',
+      description: 'Missing MTA-STS record',
+      risk: 'low',
+    },
+    {
+      type: 'mail.no-tls-rpt',
+      description: 'Missing TLS-RPT record',
+      risk: 'low',
+    },
+    {
+      type: 'mail.no-dkim-queried',
+      description: 'No DKIM selectors discovered',
+      risk: 'low',
+    },
+    {
+      type: 'mail.spf-malformed',
+      description: 'Malformed SPF record',
+      risk: 'medium',
+    },
+    {
+      type: 'dns.cname-coexistence-conflict',
+      description: 'CNAME coexistence violation',
+      risk: 'high',
+    },
+  ];
   return c.json({
-    actionableTypes: [
-      {
-        type: 'mail.no-spf-record',
-        description: 'Missing SPF record',
-        risk: 'low',
-      },
-      {
-        type: 'mail.no-dmarc-record',
-        description: 'Missing DMARC record',
-        risk: 'low',
-      },
-      {
-        type: 'mail.no-mx-record',
-        description: 'Missing MX record',
-        risk: 'medium',
-      },
-      {
-        type: 'mail.no-mta-sts',
-        description: 'Missing MTA-STS record',
-        risk: 'low',
-      },
-      {
-        type: 'mail.no-tls-rpt',
-        description: 'Missing TLS-RPT record',
-        risk: 'low',
-      },
-      {
-        type: 'mail.no-dkim-queried',
-        description: 'No DKIM selectors discovered',
-        risk: 'low',
-      },
-      {
-        type: 'mail.spf-malformed',
-        description: 'Malformed SPF record',
-        risk: 'medium',
-      },
-      {
-        type: 'dns.cname-coexistence-conflict',
-        description: 'CNAME coexistence violation',
-        risk: 'high',
-      },
-    ],
+    mode: 'GUIDANCE_ONLY',
+    guidanceSupportedTypes,
+    actionableTypes: guidanceSupportedTypes,
+    supportedTypeIds: getGuidanceSupportedFindingTypes(),
   });
 });

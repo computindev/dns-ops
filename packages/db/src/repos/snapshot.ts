@@ -5,6 +5,7 @@
  * Snapshots represent point-in-time collections of DNS data.
  */
 
+import type { EvaluationCoverage } from '@dns-ops/contracts';
 import { eq } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import { type NewSnapshot, type Snapshot, snapshots } from '../schema/index.js';
@@ -129,6 +130,31 @@ export class SnapshotRepository {
    */
   async updateRulesetVersion(id: string, rulesetVersionId: string): Promise<Snapshot | undefined> {
     return this.db.updateOne(snapshots, { rulesetVersionId }, eq(snapshots.id, id));
+  }
+
+  /**
+   * Persist whether every enabled rule completed. Evaluation failures degrade a
+   * complete snapshot to partial so downstream API, UI, and MCP consumers cannot
+   * interpret zero findings as healthy.
+   */
+  async updateEvaluationCoverage(
+    id: string,
+    evaluation: EvaluationCoverage
+  ): Promise<Snapshot | undefined> {
+    const existing = await this.findById(id);
+    if (!existing) return undefined;
+
+    return this.db.updateOne(
+      snapshots,
+      {
+        resultState:
+          evaluation.state === 'PARTIAL' && existing.resultState === 'complete'
+            ? 'partial'
+            : existing.resultState,
+        metadata: { ...(existing.metadata ?? {}), evaluation },
+      },
+      eq(snapshots.id, id)
+    );
   }
 
   /**

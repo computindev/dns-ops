@@ -9,7 +9,7 @@
 
 import * as dnsPacket from 'dns-packet';
 import { describe, expect, it } from 'vitest';
-import { decodeDnsResponse } from './dnssec-resolver.js';
+import { decodeDnsResponse, encodeDnsQuery } from './dnssec-resolver.js';
 
 function encodeResponse(
   answers: dnsPacket.Answer[] = [],
@@ -31,6 +31,24 @@ function encodeResponse(
   }
   return buf;
 }
+
+describe('encodeDnsQuery', () => {
+  it('sets recursion desired for recursive resolver queries', () => {
+    const packet = dnsPacket.decode(
+      encodeDnsQuery({ name: 'example.com', type: 'A' }, { recursionDesired: true })
+    );
+
+    expect((packet.flags ?? 0) & (dnsPacket.RECURSION_DESIRED as number)).not.toBe(0);
+  });
+
+  it('does not set recursion desired for authoritative queries', () => {
+    const packet = dnsPacket.decode(
+      encodeDnsQuery({ name: 'example.com', type: 'A' }, { recursionDesired: false })
+    );
+
+    expect((packet.flags ?? 0) & (dnsPacket.RECURSION_DESIRED as number)).toBe(0);
+  });
+});
 
 describe('decodeDnsResponse', () => {
   describe('real TTL + data formatting per record type', () => {

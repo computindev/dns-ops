@@ -192,12 +192,13 @@ describe('generateAlertsFromFindings', () => {
       severity?: 'critical' | 'high' | 'medium' | 'low' | 'info';
       reviewOnly?: boolean;
       title?: string;
+      type?: string;
     } = {}
   ) {
     return {
       id: overrides.id || `finding-${Math.random().toString(36).slice(2)}`,
       snapshotId: SNAPSHOT_ID,
-      type: 'mail.no-spf-record',
+      type: overrides.type || 'monitoring.collection-failed',
       severity: overrides.severity || 'high',
       title: overrides.title || 'Missing SPF Record',
       description: 'Domain has no SPF record',
@@ -211,6 +212,50 @@ describe('generateAlertsFromFindings', () => {
   // =============================================================================
 
   describe('Basic functionality', () => {
+    it('does not create direct alerts for unclassified conditions', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+      });
+      mockData.findings.push(createMockFinding({ type: 'unclassified.condition' }));
+
+      const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
+
+      expect(results).toEqual([]);
+      expect(mockData.alerts).toEqual([]);
+    });
+
+    it('excludes migrated SPF absence from direct legacy alerts', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+      });
+      mockData.findings.push(createMockFinding({ type: 'mail.no-spf-record' }));
+
+      const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
+
+      expect(results).toEqual([]);
+      expect(mockData.alerts).toEqual([]);
+    });
+
+    it('retains direct alerts for unmigrated mail findings', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+      });
+      mockData.findings.push(createMockFinding({ type: 'mail.no-dmarc-record' }));
+
+      const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
+
+      expect(results).toHaveLength(1);
+    });
+
     it('should generate alerts for high severity findings', async () => {
       const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
 

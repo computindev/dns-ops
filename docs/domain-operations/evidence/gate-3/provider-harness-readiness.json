@@ -1,0 +1,31 @@
+{
+  "evidenceId": "GATE3-PROVIDER-HARNESS-READINESS",
+  "recordedAt": "2026-07-29T19:02:00Z",
+  "status": "BLOCKED_BY_TEST_ASSET",
+  "auditScope": "Controlled LIVE-01 through LIVE-03 harness readiness under V4.1 and the autonomous-completion amendment.",
+  "facts": [
+    "The repository has no provider fault-injection command runner, provider SDK adapter, DNSOPS_TEST runtime configuration, or provider API client; it now has a tested pure allowlist-policy module only.",
+    "The existing MCP harness is deterministic application-contract coverage and is not a provider mutation harness.",
+    "The amendment authorizes a no-secret, explicit-allowlist harness but continues to block provider credentials and controlled live mutations until founder inputs are supplied."
+  ],
+  "requiredExternalInputs": [
+    "Authorized non-production test domain, web host, mail subdomain, and zone ID",
+    "Provider kind and a scoped runtime-secret name plus non-secret fingerprint",
+    "Exact mutable hostnames, record types, and LIVE-01/02/03 mutation mapping",
+    "Previous TTLs and a baseline/rollback procedure",
+    "Test-host deployment mutation mechanism for redirect/indexability where the provider alone cannot perform it",
+    "Baseline, rollback, and token-revocation owner"
+  ],
+  "whyImplementationCannotProceed": [
+    "Provider zone/record identity, readback, TTL, restoration, and audit behavior are provider-specific.",
+    "LIVE-01 and LIVE-02 may require a test-host deployment mechanism, which is not identified.",
+    "A provider-agnostic command runner with unimplemented adapters would be a prohibited stub and could not honestly expose prepare/apply/verify/restore/recover behavior."
+  ],
+  "safeCompletedWork": [
+    "The controlled-test runbook defines the required allowlist, artifact, TTL, authoritative-evidence, restoration, and recovery contract.",
+    "The tested packages/contracts/src/live-fault-harness.ts policy rejects secret-bearing configuration and exact tuple escapes without implementing any provider client.",
+    "No DNS Ops application or MCP provider-write capability was added.",
+    "No credential was requested, read, logged, or used."
+  ],
+  "nextAction": "After Issue #4 supplies the provider and asset manifest, implement and test the concrete isolated harness, then run LIVE-01 through LIVE-03 only through that harness."
+}

@@ -1,0 +1,32 @@
+{
+  "evidenceId": "GATE3-BOUNDED-TLS-EVIDENCE",
+  "recordedAt": "2026-07-29T13:03:26Z",
+  "implementationBaseSha": "812361ae96724bdee091b53e084222cadf6cdd66",
+  "scope": "Deterministic bounded HTTPS TLS certificate evidence; no live portfolio scan",
+  "assertions": [
+    "Every resolver result must be a zone-free public IP and all results pass SSRF validation",
+    "One deterministic address is used directly while the registered hostname remains SNI",
+    "One permissive observational handshake captures the same certificate for chain and hostname evaluation",
+    "Chain authorization comes from TLSSocket.authorized with handshake hostname checking disabled",
+    "Hostname authorization is evaluated separately with tls.checkServerIdentity",
+    "Invalid certificates remain determined evidence rather than disappearing as successful or absent",
+    "Certificate identity, issuer, SANs, validity dates, protocol, cipher, and SHA-256 fingerprint are typed",
+    "SAN parsing is quote-aware and discards malformed or fabricated names",
+    "One cumulative deadline covers DNS and handshake; normal, error, and abort paths destroy the socket",
+    "Target identity is checked at the connector boundary and failures remain actionable UNKNOWN",
+    "No test performs live DNS or TLS and no signal, alert, case, or finding is created"
+  ],
+  "validation": {
+    "focused": "9 TLS collector tests passed; independent review CLEAN",
+    "lint": "8 of 8 workspace tasks passed",
+    "typecheck": "14 of 14 workspace tasks passed",
+    "deterministicSuite": "2627 passed, 41 skipped; 148 files passed, 3 skipped",
+    "build": "8 of 8 workspace tasks passed",
+    "schemaDrift": "NO DRIFT"
+  },
+  "safety": {
+    "liveNetworkUsedByTests": false,
+    "providerWritesAdded": false,
+    "liveMutations": false
+  }
+}

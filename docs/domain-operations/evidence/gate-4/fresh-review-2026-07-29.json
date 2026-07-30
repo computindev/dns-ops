@@ -1,0 +1,32 @@
+{
+  "verdict": "BLOCKED",
+  "reviewedSha": "29dee9b93f72f14989790c12ed9a0e36b33481d5",
+  "reviewedAt": "2026-07-29T18:28:00Z",
+  "evidence": [
+    "The scan proxy-rejection path catches an unexpected proxy failure and completes the claimed command as FAILED with COLLECTOR_UNAVAILABLE.",
+    "apps/web/hono/lib/mcp-scan-service.command.test.ts proves rejected-proxy completion, cross-tenant denial before proxy, replay without a second proxy request, and rate-limit failure persistence.",
+    "Repository validation at the reviewed implementation: bun run lint (8/8), RUN_LIVE_DNS_TESTS=0 bun run test (2720 passed, 41 skipped), bun run typecheck (14/14), bun run build (8/8), and db drift check (clean)."
+  ],
+  "falsificationAttempts": [
+    "Rejected proxyToCollector after a command claim; the persisted result is COLLECTOR_UNAVAILABLE/FAILED rather than PENDING.",
+    "Attempted cross-tenant scan domain access, repeat scan replay, and rate-limit exhaustion through deterministic command tests.",
+    "Reviewed static token-hash principal derivation, tool scope checks, closed ten-tool contract, and canonical command persistence."
+  ],
+  "findings": [
+    {
+      "severity": "BLOCKER",
+      "title": "External Gate 3 and Gate 4 prerequisites remain unavailable",
+      "evidence": "Controlled test assets, scoped provider secret confirmation, allowlist, TTL values, baseline/rollback/revocation authority, measured manual-work baseline, and isolated PostgreSQL DATABASE_URL are still pending in the checkpoint."
+    },
+    {
+      "severity": "LOW",
+      "title": "Review workspace contains excluded agent artifacts",
+      "evidence": ".pi/self-learning-memory and .pi-subagents are deliberately excluded from product commits; a fresh clean checkout is still required for final Gate 4 acceptance."
+    }
+  ],
+  "residualUncertainty": [
+    "Controlled live mutations, authoritative DNS freshness proof, and the live resolve/reopen loop cannot be reproduced without approved non-production assets and authority.",
+    "Migration and concurrent persistence behavior cannot be independently verified without an isolated PostgreSQL database."
+  ],
+  "recommendedNextAction": "Obtain the recorded external prerequisites, run controlled LIVE-01 through LIVE-03 plus isolated PostgreSQL migration/concurrency verification from a clean checkout, then repeat the fresh Gate 4 review."
+}

@@ -1,0 +1,30 @@
+{
+  "evidenceId": "GATE3-BOUNDED-HTTP-WEB-EVIDENCE",
+  "recordedAt": "2026-07-29T14:42:36Z",
+  "implementationBaseSha": "14c3ca3290f4db0ca65e134685779643045c277e",
+  "scope": "Deterministic bounded HTTP reachability, redirect topology, and homepage indexability collection; no live portfolio scan",
+  "assertions": [
+    "Exactly four homepage starts are collected: HTTP/HTTPS multiplied by apex/www",
+    "Redirects are manual, bounded, and every hop validates all resolved public IP addresses",
+    "Automatic redirect following, arbitrary initial paths, credentials, fragments, and IP-literal targets are rejected",
+    "Unsafe or token-bearing redirect targets stop probing and require manual review without retaining the target URL",
+    "Response bodies are released on normal, malformed redirect, bound, content-type, and parser-error paths",
+    "Indexability reads only HTML/XHTML with a bounded body and records normalized X-Robots-Tag, robots meta, and canonical evidence",
+    "A failed indexability parse does not discard already observed reachability or redirect evidence",
+    "Probe failures are actionable UNKNOWN setup/evidence states and do not create findings, signals, alerts, or cases"
+  ],
+  "validation": {
+    "focused": "9 HTTP collector tests passed; independent review CLEAN",
+    "lint": "8 of 8 workspace tasks passed",
+    "typecheck": "14 of 14 workspace tasks passed",
+    "deterministicSuite": "2636 passed, 41 skipped; 149 files passed, 3 skipped",
+    "build": "8 of 8 workspace tasks passed",
+    "schemaDrift": "NO DRIFT"
+  },
+  "residualRisk": "HTTP fetch independently resolves the hostname after safe-address preflight; DNS address pinning remains future hardening and this collector does not claim complete rebinding prevention.",
+  "safety": {
+    "liveNetworkUsedByTests": false,
+    "providerWritesAdded": false,
+    "liveMutations": false
+  }
+}

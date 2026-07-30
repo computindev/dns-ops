@@ -11,8 +11,19 @@
  * - RulesetVersion: Version tracking for rules
  */
 
+import type {
+  AuthoritativeEvidenceCoverage,
+  EvaluationCoverage,
+  ExternalEvidenceData,
+  InternalSignalKind,
+  OperationalConditionBaselinePolicy,
+  UnknownResolution,
+} from '@dns-ops/contracts';
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -95,10 +106,47 @@ export const domains = pgTable(
     // Composite unique index: allows same domain name per tenant
     // NULL tenant_id is allowed (system domains) - PostgreSQL treats NULLs as distinct
     nameTenantIdx: uniqueIndex('domain_name_tenant_idx').on(table.normalizedName, table.tenantId),
+    idTenantIdx: uniqueIndex('domain_id_tenant_idx').on(table.id, table.tenantId),
     tenantIdx: index('domain_tenant_idx').on(table.tenantId),
     zoneMgmtIdx: index('domain_zone_management_idx').on(table.zoneManagement),
   })
 );
+
+export const domainPurposeEnum = pgEnum('domain_purpose', [
+  'WEB',
+  'MAIL',
+  'WEB_AND_MAIL',
+  'REDIRECT',
+  'PARKED',
+  'UNKNOWN',
+]);
+
+export const domainCriticalityEnum = pgEnum('domain_criticality', ['HIGH', 'NORMAL', 'LOW']);
+
+export const domainProfiles = pgTable(
+  'domain_profiles',
+  {
+    domainId: uuid('domain_id').primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    purpose: domainPurposeEnum('purpose').notNull().default('UNKNOWN'),
+    responsibleActorId: varchar('responsible_actor_id', { length: 100 }),
+    criticality: domainCriticalityEnum('criticality').notNull().default('NORMAL'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantIdx: index('domain_profile_tenant_idx').on(table.tenantId),
+    purposeIdx: index('domain_profile_purpose_idx').on(table.purpose),
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'domain_profile_domain_tenant_fk',
+    }).onDelete('cascade'),
+  })
+);
+
+export type DomainProfile = typeof domainProfiles.$inferSelect;
+export type NewDomainProfile = typeof domainProfiles.$inferInsert;
 
 // =============================================================================
 // RULESET VERSION TABLE
@@ -183,6 +231,10 @@ export const snapshots = pgTable(
         hasDnskey?: boolean;
         hasDs?: boolean;
       };
+      // Rules evaluation coverage. A partial evaluation must remain visible even
+      // when no findings were produced by the failed check.
+      evaluation?: EvaluationCoverage;
+      authoritativeEvidence?: AuthoritativeEvidenceCoverage;
     }>(),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -568,6 +620,9 @@ export const auditActionEnum = pgEnum('audit_action', [
   'alert_acknowledged',
   'alert_resolved',
   'alert_suppressed',
+  'domain_profile_updated',
+  'operational_baseline_accepted',
+  'mcp_case_disposition_set',
 ]);
 
 export const auditEvents = pgTable(
@@ -700,6 +755,184 @@ export type MonitoredDomain = typeof monitoredDomains.$inferSelect;
 export type NewMonitoredDomain = typeof monitoredDomains.$inferInsert;
 
 // =============================================================================
+// INTERNAL SIGNALS AND CASES (Phase 0-1 canonical operating loop)
+// =============================================================================
+
+export const internalSignalKindEnum = pgEnum('internal_signal_kind', [
+  'DOMAIN_EXPIRING_SOON',
+  'TLS_CERTIFICATE_REGRESSION',
+  'HTTP_ENDPOINT_UNAVAILABLE',
+  'REDIRECT_TOPOLOGY_REGRESSION',
+  'HOMEPAGE_INDEXABILITY_REGRESSION',
+  'MAIL_DNS_CONFIGURATION_REGRESSION',
+]);
+export const internalSignalStatusEnum = pgEnum('internal_signal_status', ['ACTIVE', 'RESOLVED']);
+export const mcpCommandStatusEnum = pgEnum('mcp_command_status', [
+  'PENDING',
+  'COMPLETED',
+  'FAILED',
+]);
+export const internalCaseStatusEnum = pgEnum('internal_case_status', [
+  'OPEN',
+  'ACKNOWLEDGED',
+  'BLOCKED',
+  'RESOLVED',
+  'DISMISSED',
+]);
+
+export const operationalConditionBaselines = pgTable(
+  'operational_condition_baselines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    domainId: uuid('domain_id').notNull(),
+    kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
+    discriminator: varchar('discriminator', { length: 64 }).notNull(),
+    sourceSnapshotId: uuid('source_snapshot_id')
+      .notNull()
+      .references(() => snapshots.id),
+    policy: jsonb('policy').notNull().$type<OperationalConditionBaselinePolicy>(),
+    maxEvidenceAgeSeconds: integer('max_evidence_age_seconds').notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
+    acceptedBy: varchar('accepted_by', { length: 100 }).notNull(),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    supersededBy: varchar('superseded_by', { length: 100 }),
+  },
+  (table) => ({
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'operational_baseline_domain_tenant_fk',
+    }).onDelete('cascade'),
+    activeConditionUnique: uniqueIndex('operational_baseline_active_condition_unique')
+      .on(table.tenantId, table.domainId, table.kind, table.discriminator)
+      .where(sql`${table.supersededAt} IS NULL`),
+    tenantIdx: index('operational_baseline_tenant_idx').on(table.tenantId),
+    sourceSnapshotIdx: index('operational_baseline_snapshot_idx').on(table.sourceSnapshotId),
+    maxEvidenceAgePositive: check(
+      'operational_baseline_max_evidence_age_positive',
+      sql`${table.maxEvidenceAgeSeconds} > 0`
+    ),
+  })
+);
+
+export type OperationalConditionBaseline = typeof operationalConditionBaselines.$inferSelect;
+export type NewOperationalConditionBaseline = typeof operationalConditionBaselines.$inferInsert;
+
+export const mcpCommands = pgTable(
+  'mcp_commands',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    operation: varchar('operation', { length: 100 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 200 }).notNull(),
+    requestFingerprint: varchar('request_fingerprint', { length: 64 }).notNull(),
+    status: mcpCommandStatusEnum('status').notNull().default('PENDING'),
+    resourceId: uuid('resource_id'),
+    response: jsonb('response').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tenantOperationKeyUnique: uniqueIndex('mcp_command_tenant_operation_key_unique').on(
+      table.tenantId,
+      table.actorId,
+      table.operation,
+      table.idempotencyKey
+    ),
+    tenantIdx: index('mcp_command_tenant_idx').on(table.tenantId),
+  })
+);
+
+export type McpCommand = typeof mcpCommands.$inferSelect;
+export type NewMcpCommand = typeof mcpCommands.$inferInsert;
+
+export const internalSignals = pgTable(
+  'internal_signals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    domainId: uuid('domain_id')
+      .notNull()
+      .references(() => domains.id, { onDelete: 'cascade' }),
+    kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
+    conditionKey: varchar('condition_key', { length: 500 }).notNull(),
+    status: internalSignalStatusEnum('status').notNull().default('ACTIVE'),
+    firstSeenSnapshotId: uuid('first_seen_snapshot_id').references(() => snapshots.id),
+    lastSeenSnapshotId: uuid('last_seen_snapshot_id').references(() => snapshots.id),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tenantConditionUnique: uniqueIndex('internal_signal_tenant_condition_unique').on(
+      table.tenantId,
+      table.conditionKey
+    ),
+    tenantIdx: index('internal_signal_tenant_idx').on(table.tenantId),
+    domainIdx: index('internal_signal_domain_idx').on(table.domainId),
+    statusIdx: index('internal_signal_status_idx').on(table.status),
+  })
+);
+
+export const internalCases = pgTable(
+  'internal_cases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    signalId: uuid('signal_id')
+      .notNull()
+      .references(() => internalSignals.id, { onDelete: 'cascade' }),
+    status: internalCaseStatusEnum('status').notNull().default('OPEN'),
+    /** Numeric optimistic-concurrency version exposed to operator/MCP disposition updates. */
+    version: integer('version').notNull().default(1),
+    disposition: text('disposition'),
+    note: text('note'),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedBy: varchar('acknowledged_by', { length: 100 }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    verificationSnapshotId: uuid('verification_snapshot_id').references(() => snapshots.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    signalUnique: uniqueIndex('internal_case_signal_unique').on(table.signalId),
+    tenantIdx: index('internal_case_tenant_idx').on(table.tenantId),
+    statusIdx: index('internal_case_status_idx').on(table.status),
+  })
+);
+
+export const internalCaseEvents = pgTable(
+  'internal_case_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    caseId: uuid('case_id')
+      .notNull()
+      .references(() => internalCases.id, { onDelete: 'cascade' }),
+    tenantId: uuid('tenant_id').notNull(),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    fromStatus: internalCaseStatusEnum('from_status'),
+    toStatus: internalCaseStatusEnum('to_status').notNull(),
+    note: text('note'),
+    disposition: text('disposition'),
+    verificationSnapshotId: uuid('verification_snapshot_id').references(() => snapshots.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    caseIdx: index('internal_case_event_case_idx').on(table.caseId),
+    tenantIdx: index('internal_case_event_tenant_idx').on(table.tenantId),
+  })
+);
+
+export type InternalSignal = typeof internalSignals.$inferSelect;
+export type NewInternalSignal = typeof internalSignals.$inferInsert;
+export type InternalCase = typeof internalCases.$inferSelect;
+export type NewInternalCase = typeof internalCases.$inferInsert;
+export type InternalCaseEvent = typeof internalCaseEvents.$inferSelect;
+export type NewInternalCaseEvent = typeof internalCaseEvents.$inferInsert;
+
+// =============================================================================
 // ALERTS (Bead 15)
 // =============================================================================
 
@@ -739,6 +972,7 @@ export const alerts = pgTable(
 
     // Trigger
     triggeredByFindingId: uuid('triggered_by_finding_id').references(() => findings.id),
+    signalId: uuid('signal_id').references(() => internalSignals.id),
 
     // Status
     status: alertStatusEnum('status').notNull().default('pending'),
@@ -764,6 +998,7 @@ export const alerts = pgTable(
     statusIdx: index('alert_status_idx').on(table.status),
     tenantIdx: index('alert_tenant_idx').on(table.tenantId),
     dedupIdx: index('alert_dedup_idx').on(table.dedupKey),
+    signalUnique: uniqueIndex('alert_signal_unique').on(table.signalId),
     createdIdx: index('alert_created_idx').on(table.createdAt),
   })
 );
@@ -866,7 +1101,13 @@ export type NewFleetReport = typeof fleetReports.$inferInsert;
 // PROBE OBSERVATIONS TABLE
 // =============================================================================
 
-export const probeTypeEnum = pgEnum('probe_type', ['smtp_starttls', 'mta_sts', 'tls_cert', 'http']);
+export const probeTypeEnum = pgEnum('probe_type', [
+  'smtp_starttls',
+  'mta_sts',
+  'tls_cert',
+  'http',
+  'rdap',
+]);
 
 export const probeStatusEnum = pgEnum('probe_status', [
   'success',
@@ -908,7 +1149,19 @@ export interface MTASTSProbeData {
   certificateValid?: boolean;
 }
 
-export type ProbeData = SMTPProbeData | MTASTSProbeData;
+export interface ExternalEvidenceProbeData {
+  check:
+    | 'RDAP_EXPIRATION'
+    | 'TLS_CERTIFICATE'
+    | 'HTTP_REACHABILITY'
+    | 'REDIRECT_TOPOLOGY'
+    | 'HOMEPAGE_INDEXABILITY';
+  status: 'OBSERVED' | 'UNKNOWN';
+  evidence?: ExternalEvidenceData;
+  unknown?: UnknownResolution;
+}
+
+export type ProbeData = SMTPProbeData | MTASTSProbeData | ExternalEvidenceProbeData;
 
 export const probeObservations = pgTable(
   'probe_observations',

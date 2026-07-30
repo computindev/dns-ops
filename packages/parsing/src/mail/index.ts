@@ -4,6 +4,8 @@
  * Parse SPF, DMARC, and DKIM records.
  */
 
+import type { FirstLevelSpfAssessment } from '@dns-ops/contracts';
+
 // =============================================================================
 // SPF Parsing
 // =============================================================================
@@ -31,8 +33,9 @@ export interface SPFModifier {
  * Parse an SPF TXT record
  */
 export function parseSPF(txtData: string): SPFRecord | null {
-  // Check if this is an SPF record
-  if (!txtData.includes('v=spf1')) {
+  const normalized = txtData.trim();
+  // SPF version must be the first term, not an arbitrary substring.
+  if (!/^v=spf1(?:\s|$)/.test(normalized)) {
     return null;
   }
 
@@ -107,20 +110,49 @@ function parseMechanism(part: string): SPFMechanism | null {
   };
 }
 
+const DIRECT_DNS_LOOKUP_MECHANISMS = new Set(['include', 'a', 'mx', 'ptr', 'exists']);
+const VALID_SPF_MECHANISMS = new Set(['all', 'include', 'a', 'mx', 'ptr', 'ip4', 'ip6', 'exists']);
+
+/** Count only terms visible in the published record that trigger DNS lookups. */
+export function countDirectSpfLookupTerms(record: SPFRecord): number {
+  const mechanisms = record.mechanisms.filter((mechanism) =>
+    DIRECT_DNS_LOOKUP_MECHANISMS.has(mechanism.type)
+  ).length;
+  const redirects = record.modifiers.filter((modifier) => modifier.name === 'redirect').length;
+  return mechanisms + redirects;
+}
+
 /**
- * Count DNS lookups in an SPF record
+ * Assess only the directly published SPF record. Includes and redirect targets
+ * remain unresolved dependencies; this never claims recursive ten-term budget
+ * compliance or sender authorization.
  */
-export function countSPFLookups(record: SPFRecord): number {
-  let count = 0;
-  const lookupMechanisms = ['include', 'a', 'mx', 'ptr', 'exists', 'redirect'];
+export function assessFirstLevelSpf(record: SPFRecord): FirstLevelSpfAssessment {
+  const includeDomains = record.mechanisms
+    .filter((mechanism) => mechanism.type === 'include' && mechanism.value)
+    .map((mechanism) => mechanism.value as string);
+  const redirects = record.modifiers.filter((modifier) => modifier.name === 'redirect');
+  const invalidMechanism = record.mechanisms.some(
+    (mechanism) => !VALID_SPF_MECHANISMS.has(mechanism.type)
+  );
+  const missingIncludeTarget = record.mechanisms.some(
+    (mechanism) => mechanism.type === 'include' && !mechanism.value
+  );
+  const invalidRedirect = redirects.length > 1 || redirects.some((redirect) => !redirect.value);
 
-  for (const mech of record.mechanisms) {
-    if (lookupMechanisms.includes(mech.type)) {
-      count++;
-    }
-  }
-
-  return count;
+  return {
+    scope: 'FIRST_LEVEL_ONLY',
+    directDnsLookupTerms: countDirectSpfLookupTerms(record),
+    includeDomains,
+    redirectDomain: redirects[0]?.value,
+    status:
+      invalidMechanism || missingIncludeTarget || invalidRedirect
+        ? 'DIRECT_SYNTAX_INVALID'
+        : 'DIRECT_SYNTAX_VALID',
+    completeEvaluation: false,
+    limitation:
+      'Only the published SPF record was inspected. Include and redirect targets were not evaluated; recursive lookup-budget, cycle, void-lookup, nested validity, and sender-authorization claims are unavailable.',
+  };
 }
 
 // =============================================================================
@@ -131,6 +163,9 @@ export interface DMARCRecord {
   version: string;
   policy: 'none' | 'quarantine' | 'reject';
   subdomainPolicy?: 'none' | 'quarantine' | 'reject';
+  nonExistentSubdomainPolicy?: 'none' | 'quarantine' | 'reject';
+  publicSuffix?: 'y' | 'n' | 'u';
+  testing?: 'y' | 'n';
   percentage?: number;
   rua?: string[]; // Aggregate report URIs
   ruf?: string[]; // Forensic report URIs
@@ -142,44 +177,69 @@ export interface DMARCRecord {
   raw: string;
 }
 
+function isValidDmarcUri(candidate: string): boolean {
+  const uri = candidate.trim();
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9\-._~:/?#[\]@$&'()*+;=%]*$/.test(uri)) {
+    return false;
+  }
+  return !/%(?![0-9A-Fa-f]{2})/.test(uri);
+}
+
 /**
  * Parse a DMARC TXT record
  */
 export function parseDMARC(txtData: string): DMARCRecord | null {
-  // Check if this is a DMARC record
-  if (!txtData.includes('v=DMARC1')) {
-    return null;
-  }
+  if (!/^v[\t ]*=[\t ]*DMARC1(?:[\t ]*;|[\t ]*$)/.test(txtData)) return null;
 
   const record: Partial<DMARCRecord> = {
     version: 'DMARC1',
     raw: txtData,
   };
-
+  let invalidPolicyTag = false;
+  const seenPolicyTags = new Set<string>();
+  const policies = new Set(['none', 'quarantine', 'reject']);
   const parts = txtData.split(/\s*;\s*/).filter(Boolean);
 
   for (const part of parts) {
     const [key, ...valueParts] = part.split('=');
+    const name = key.trim().toLowerCase();
     const value = valueParts.join('=').trim();
 
-    switch (key.trim()) {
+    switch (name) {
       case 'v':
-        record.version = value;
+        if (value !== 'DMARC1') return null;
         break;
       case 'p':
-        record.policy = value as 'none' | 'quarantine' | 'reject';
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else record.policy = value as DMARCRecord['policy'];
+        seenPolicyTags.add(name);
         break;
       case 'sp':
-        record.subdomainPolicy = value as 'none' | 'quarantine' | 'reject';
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else record.subdomainPolicy = value as DMARCRecord['subdomainPolicy'];
+        seenPolicyTags.add(name);
+        break;
+      case 'np':
+        if (seenPolicyTags.has(name) || !policies.has(value)) invalidPolicyTag = true;
+        else {
+          record.nonExistentSubdomainPolicy = value as DMARCRecord['nonExistentSubdomainPolicy'];
+        }
+        seenPolicyTags.add(name);
+        break;
+      case 'psd':
+        if (value === 'y' || value === 'n' || value === 'u') record.publicSuffix = value;
+        break;
+      case 't':
+        if (value === 'y' || value === 'n') record.testing = value;
         break;
       case 'pct':
         record.percentage = parseInt(value, 10);
         break;
       case 'rua':
-        record.rua = value.split(',').map((s) => s.trim());
+        record.rua = value.split(',').map((item) => item.trim());
         break;
       case 'ruf':
-        record.ruf = value.split(',').map((s) => s.trim());
+        record.ruf = value.split(',').map((item) => item.trim());
         break;
       case 'fo':
         record.fo = value;
@@ -199,9 +259,10 @@ export function parseDMARC(txtData: string): DMARCRecord | null {
     }
   }
 
-  // Policy is required
-  if (!record.policy) {
-    return null;
+  if (invalidPolicyTag || !record.policy) {
+    const validRua = record.rua?.some(isValidDmarcUri);
+    if (!validRua) return null;
+    record.policy = 'none';
   }
 
   return record as DMARCRecord;

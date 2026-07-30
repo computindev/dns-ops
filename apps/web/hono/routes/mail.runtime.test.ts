@@ -13,6 +13,8 @@ import { mailRoutes } from './mail.js';
 interface MockState {
   remediationRequests: Array<Record<string, unknown>>;
   auditEvents: Array<Record<string, unknown>>;
+  snapshots?: Array<Record<string, unknown>>;
+  domains?: Array<Record<string, unknown>>;
 }
 
 function getTableName(table: unknown): string {
@@ -44,6 +46,8 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       const tableName = getTableName(table);
       if (tableName === 'remediation_requests') return [...state.remediationRequests];
       if (tableName === 'audit_events') return [...state.auditEvents];
+      if (tableName === 'snapshots') return [...(state.snapshots ?? [])];
+      if (tableName === 'domains') return [...(state.domains ?? [])];
       return [];
     }),
     selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
@@ -64,6 +68,8 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       const param = getConditionParam(condition);
       if (tableName === 'remediation_requests')
         return state.remediationRequests.find((row) => row.id === param);
+      if (tableName === 'snapshots') return state.snapshots?.find((row) => row.id === param);
+      if (tableName === 'domains') return state.domains?.find((row) => row.id === param);
       return undefined;
     }),
     insert: vi.fn(async (table: unknown, values: Record<string, unknown>) => {
@@ -317,6 +323,158 @@ describe('mailRoutes remediation runtime', () => {
       expect(state.auditEvents).toHaveLength(1);
       expect(state.auditEvents[0]?.action).toBe('remediation_request_updated');
       expect(state.auditEvents[0]?.previousValue).toMatchObject({ status: 'open' });
+    });
+
+    it('requires fresh complete evidence before resolution', async () => {
+      const state: MockState = {
+        remediationRequests: [
+          {
+            id: 'rem-1',
+            tenantId: 'tenant-1',
+            domain: 'example.com',
+            status: 'open',
+            priority: 'high',
+            createdAt: new Date(Date.now() - 60_000),
+          },
+        ],
+        auditEvents: [],
+      };
+      const app = createApp(state);
+
+      const response = await app.request('/api/mail/remediation/rem-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved' }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: 'FRESH_EVIDENCE_REQUIRED' });
+    });
+
+    it('resolves only with a newer complete same-tenant snapshot', async () => {
+      const snapshotId = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+      const state: MockState = {
+        remediationRequests: [
+          {
+            id: 'rem-1',
+            tenantId: 'tenant-1',
+            domain: 'example.com',
+            status: 'open',
+            priority: 'high',
+            assignedTo: null,
+            notes: null,
+            createdAt: new Date(Date.now() - 60_000),
+          },
+        ],
+        snapshots: [
+          {
+            id: snapshotId,
+            domainId: 'domain-1',
+            domainName: 'example.com',
+            resultState: 'complete',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+            createdAt: new Date(),
+          },
+        ],
+        domains: [{ id: 'domain-1', tenantId: 'tenant-1', name: 'example.com' }],
+        auditEvents: [],
+      };
+      const app = createApp(state);
+
+      const response = await app.request('/api/mail/remediation/rem-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved', verificationSnapshotId: snapshotId }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(state.auditEvents[0]?.newValue).toMatchObject({ verificationSnapshotId: snapshotId });
+    });
+
+    it('rejects evidence captured before the current reopened lifecycle', async () => {
+      const snapshotId = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+      const state: MockState = {
+        remediationRequests: [
+          {
+            id: 'rem-1',
+            tenantId: 'tenant-1',
+            domain: 'example.com',
+            status: 'open',
+            priority: 'high',
+            createdAt: new Date(Date.now() - 120_000),
+            updatedAt: new Date(),
+          },
+        ],
+        snapshots: [
+          {
+            id: snapshotId,
+            domainId: 'domain-1',
+            domainName: 'example.com',
+            resultState: 'complete',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+            createdAt: new Date(Date.now() - 30_000),
+          },
+        ],
+        domains: [{ id: 'domain-1', tenantId: 'tenant-1', name: 'example.com' }],
+        auditEvents: [],
+      };
+
+      const response = await createApp(state).request('/api/mail/remediation/rem-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved', verificationSnapshotId: snapshotId }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: 'FRESH_EVIDENCE_REQUIRED' });
+    });
+
+    it.each([
+      ['stale', { createdAt: new Date(0) }, 'tenant-1', 409],
+      [
+        'partial',
+        { resultState: 'partial', metadata: { evaluation: { state: 'PARTIAL', errors: [] } } },
+        'tenant-1',
+        409,
+      ],
+      ['wrong-domain', { domainName: 'other.example' }, 'tenant-1', 409],
+      ['cross-tenant', {}, 'other-tenant', 404],
+    ] as const)('rejects %s verification evidence', async (_label, snapshotOverrides, domainTenant, expectedStatus) => {
+      const snapshotId = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+      const state: MockState = {
+        remediationRequests: [
+          {
+            id: 'rem-1',
+            tenantId: 'tenant-1',
+            domain: 'example.com',
+            status: 'open',
+            priority: 'high',
+            createdAt: new Date(Date.now() - 60_000),
+          },
+        ],
+        snapshots: [
+          {
+            id: snapshotId,
+            domainId: 'domain-1',
+            domainName: 'example.com',
+            resultState: 'complete',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+            createdAt: new Date(),
+            ...snapshotOverrides,
+          },
+        ],
+        domains: [{ id: 'domain-1', tenantId: domainTenant, name: 'example.com' }],
+        auditEvents: [],
+      };
+      const response = await createApp(state).request('/api/mail/remediation/rem-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved', verificationSnapshotId: snapshotId }),
+      });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(state.auditEvents).toHaveLength(0);
+      expect(state.remediationRequests[0]?.status).toBe('open');
     });
 
     it('returns 404 for nonexistent request', async () => {

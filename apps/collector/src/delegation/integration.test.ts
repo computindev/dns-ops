@@ -181,11 +181,18 @@ function patchResolver(target: unknown, resultsByQuery: Map<string, DNSQueryResu
     async (query: { name: string; type: string }, vantage: VantageInfo) => {
       const key = `${query.name}:${query.type}:${vantage.identifier}`;
       const fallbackKey = `${query.name}:${query.type}`;
-      return (
+      const canned =
         resultsByQuery.get(key) ??
         resultsByQuery.get(fallbackKey) ??
-        buildSuccessResult(query.name, query.type, [], vantage)
-      );
+        buildSuccessResult(query.name, query.type, [], vantage);
+      return {
+        ...canned,
+        vantage,
+        flags:
+          vantage.type === 'authoritative'
+            ? { aa: true, tc: false, rd: false, ra: false, ad: false, cd: false }
+            : canned.flags,
+      };
     }
   );
 }
