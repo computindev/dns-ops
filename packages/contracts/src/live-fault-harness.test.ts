@@ -406,6 +406,33 @@ describe('controlled live-fault harness policy', () => {
         result: 'RECOVERY_REQUIRED',
         recovery: {
           ...recovery,
+          records: [
+            {
+              ...recovery.records[0],
+              desiredValue: 'ghp_abcdefghijklmnopqrstuvwxyz1234567890',
+            },
+          ],
+        },
+      })
+    ).toThrow('must not contain credential material');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery: {
+          ...recovery,
+          operatorCommands: ['restore record manually'],
+        },
+      })
+    ).toThrow('must contain approved operation references');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        result: 'RECOVERY_REQUIRED',
+        recovery: {
+          ...recovery,
           records: [],
         },
       })

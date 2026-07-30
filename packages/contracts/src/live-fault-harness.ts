@@ -148,7 +148,8 @@ const artifactIdentifierPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$/;
 const providerResponsePattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
 const isoTimestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
 const credentialMaterialPattern =
-  /(?:token|secret|password|credential|authorization|bearer|cookie|session|api[ _-]?key|private[ _-]?key|sk_(?:live|test)_)/i;
+  /(?:token|secret|password|credential|authorization|bearer|cookie|session|api[ _-]?key|private[ _-]?key|sk_(?:live|test)_|gh[pousr]_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-zA-Z0-9-]{10,}|eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})/i;
+const recoveryOperationPattern = /^[a-z][a-z0-9._-]{0,63}: (?:[1-5]\d\d|[A-Z][A-Z0-9_]{1,63})$/;
 
 type DataDescriptorMap = Record<string, PropertyDescriptor>;
 
@@ -454,6 +455,13 @@ function validateRecoveryText(value: unknown, label: string, maximumLength: numb
   }
 }
 
+function validateRecoveryOperationReference(value: unknown): void {
+  validateRecoveryText(value, 'recovery.operatorCommands', maximumArtifactSummaryLength);
+  if (!recoveryOperationPattern.test(value as string)) {
+    throw new Error('recovery.operatorCommands must contain approved operation references');
+  }
+}
+
 function validateRecoveryArtifact(
   value: unknown,
   artifactZoneId: string,
@@ -508,7 +516,7 @@ function validateRecoveryArtifact(
     throw new Error('recovery.operatorCommands must contain at least one command');
   }
   for (const command of commands) {
-    validateRecoveryText(command, 'recovery.operatorCommands', maximumArtifactSummaryLength);
+    validateRecoveryOperationReference(command);
   }
 }
 
