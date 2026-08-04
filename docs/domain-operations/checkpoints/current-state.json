@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "745f685fa8a714a14827d25b288596213885e82e",
+  "currentSha": "797d8a2d365d49fb61bd4c02b2dcb5a8b0a006f4",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
@@ -10,6 +10,7 @@
     "Gate 1 repository truth was accepted by Antonio",
     "Day 0 manual baseline, portfolio classification, playbook approvals, and controlled test assets remain incomplete",
     "Antonio authorized creation and delegation of dnsops-test.computin.dev as an isolated child zone; the computin.dev apex and existing MX, SPF, DKIM, and DMARC records remain excluded",
+    "Wrangler OAuth was stopped before authentication because it requested broad unrelated write scopes; child-zone provisioning requires a human Cloudflare-dashboard action and a subsequently scoped child-zone token",
     "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
     "PR #3 is open and ready for review; no merge or deployment is authorized",
     "FIX-01 proves a throwing rule becomes persisted partial UNKNOWN coverage rather than a clean result",
@@ -138,5 +139,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-08-04T15:52:46Z"
+  "updatedAt": "2026-08-04T15:55:00Z"
 }

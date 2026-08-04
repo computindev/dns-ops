@@ -30,9 +30,9 @@
   },
   "executionBoundary": {
     "provider": "Cloudflare",
-    "wranglerAuthentication": "not authenticated; wrangler whoami instructed the operator to run wrangler login",
+    "wranglerAuthentication": "not authenticated. A wrangler login attempt was stopped before authentication because its OAuth request included broad unrelated write scopes; it is not an approved provisioning credential.",
     "credentialHandling": "No token value was requested, read, logged, or committed.",
-    "permittedNextMutation": "Create the child Cloudflare zone and add only its delegation NS records at dnsops-test.computin.dev after an authenticated operator session is available."
+    "permittedNextMutation": "An authenticated human operator creates the child Cloudflare zone and adds only its delegation NS records at dnsops-test.computin.dev, then provisions a child-zone-only DNS token for the future harness."
   },
   "remainingInputs": [
     "Cloudflare authenticated session or an approved harness runtime-secret reference after the child zone exists",
