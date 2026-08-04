@@ -23,7 +23,16 @@
     "credentialValueRecorded": false
   },
   "scopeCaveat": "The successful token verification and asorin.ai readback prove usable access to this zone. Cloudflare Dashboard configuration remains the authority for confirming its intended least-privilege policy; no token value is stored in this repository.",
+  "railwayFixture": {
+    "projectId": "0e240f31-311a-4140-9dbf-c18c485d9820",
+    "projectName": "dnsops-live-fixtures",
+    "environmentId": "e6c3a4d7-2cce-4e2a-8d81-9b7e433dcd1d",
+    "serviceId": "4197eca1-a820-4f2f-8706-46cba7a0740d",
+    "serviceName": "controlled-live-web",
+    "status": "PROVISIONED_NOT_DEPLOYED_PENDING_LOCAL_CONTROL_SECRET"
+  },
   "remainingInputs": [
+    "A locally stored DNSOPS_FIXTURE_CONTROL_TOKEN for the Railway fixture; its value must not be sent to chat or Git",
     "A non-production web-host deployment mechanism for LIVE-01 redirect and LIVE-02 indexability mutations",
     "Exact test hostnames, DNS record allowlist, initial values, and previous TTLs",
     "DNSOPS_TEST_MAIL_SUBDOMAIN and an explicit no-real-mail dependency assertion for that hostname",
