@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { protectedToken, loadManifest, policyFromManifest, requireLive03Preconditions } from '../tools/controlled-live-harness/runner.mjs';
+const secret = (value = 'x') => { const p = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'secret'); writeFileSync(p, `export CLOUDFLARE_API_TOKEN='${value}'\n`); chmodSync(p, 0o600); return p; };
+const manifest = () => loadManifest();
+test('requires a protected secret file', () => assert.equal(protectedToken(secret(), 'CLOUDFLARE_API_TOKEN'), 'x'));
+test('derives LIVE-03 authorization from the manifest and pins token fingerprint', () => { const m = manifest(); assert.throws(() => policyFromManifest(m, 'x'), /fingerprint/); });
+test('LIVE-03 rejects missing evidence even after policy authorization', () => { const m = { ...manifest(), providerCredentialFingerprint: 'sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881' }; assert.throws(() => requireLive03Preconditions({ manifest: m, token: 'x', evidence: { spfRecords: 1, ttl: 60, mxRecords: 0 } }), /missing required/); });
