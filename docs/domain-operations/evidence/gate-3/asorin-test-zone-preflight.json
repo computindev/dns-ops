@@ -1,0 +1,37 @@
+{
+  "evidenceId": "GATE3-ASORIN-TEST-ZONE-PREFLIGHT",
+  "recordedAt": "2026-08-04T16:36:46Z",
+  "status": "READ_ONLY_PREFLIGHT_PASS_PENDING_HOST_DEPLOYMENT_AUTHORIZATION",
+  "founderAuthorization": {
+    "testDomain": "asorin.ai",
+    "declaration": "asorin.ai has no production traffic, clients, or real mail dependency and is authorized as the complete controlled-test zone.",
+    "rollbackAndRevocationOwner": "Antonio"
+  },
+  "cloudflareReadOnlyVerification": {
+    "zoneId": "7391960081e72b26c9c5066133013ab2",
+    "zoneStatus": "active",
+    "paused": false,
+    "authoritativeNameservers": [
+      "mcgrory.ns.cloudflare.com",
+      "olivia.ns.cloudflare.com"
+    ],
+    "tokenVerificationSucceeded": true,
+    "zoneReadSucceeded": true,
+    "dnsRecordReadSucceeded": true,
+    "recordCountObserved": 0,
+    "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+    "credentialValueRecorded": false
+  },
+  "scopeCaveat": "The successful token verification and asorin.ai readback prove usable access to this zone. Cloudflare Dashboard configuration remains the authority for confirming its intended least-privilege policy; no token value is stored in this repository.",
+  "remainingInputs": [
+    "A non-production web-host deployment mechanism for LIVE-01 redirect and LIVE-02 indexability mutations",
+    "Exact test hostnames, DNS record allowlist, initial values, and previous TTLs",
+    "DNSOPS_TEST_MAIL_SUBDOMAIN and an explicit no-real-mail dependency assertion for that hostname",
+    "Manual-work baseline, portfolio classification, and playbook approval"
+  ],
+  "prohibitedActionsUntilRemainingInputsExist": [
+    "DNS record mutations",
+    "Provider harness apply/restore operations",
+    "LIVE-01 through LIVE-03 execution"
+  ]
+}

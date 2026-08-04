@@ -2,14 +2,15 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "797d8a2d365d49fb61bd4c02b2dcb5a8b0a006f4",
+  "currentSha": "066db569b3e8a31004df33891556f86bb48cf8d2",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
   "whatIsTrue": [
     "Gate 1 repository truth was accepted by Antonio",
     "Day 0 manual baseline, portfolio classification, playbook approvals, and controlled test assets remain incomplete",
-    "Antonio authorized creation and delegation of dnsops-test.computin.dev as an isolated child zone; the computin.dev apex and existing MX, SPF, DKIM, and DMARC records remain excluded",
+    "The prior dnsops-test.computin.dev delegation proposal is superseded without provider mutation; Antonio authorized asorin.ai as the complete isolated controlled-test zone with no production, client, or real-mail dependency",
+    "Cloudflare read-only preflight verified an active asorin.ai zone with zero DNS records observed and a protected local credential that can read that zone without recording its value",
     "Wrangler OAuth was stopped before authentication because it requested broad unrelated write scopes; child-zone provisioning requires a human Cloudflare-dashboard action and a subsequently scoped child-zone token",
     "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
     "PR #3 is open and ready for review; no merge or deployment is authorized",
@@ -107,7 +108,7 @@
   "pendingExternalInputs": [
     "Measured manual-check baseline",
     "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
-    "Provisioned dnsops-test.computin.dev child zone, test web host, test mail subdomain, and Cloudflare execution environment",
+    "A non-production asorin.ai web-host deployment mechanism, test hostnames, exact DNS allowlist, initial values, and previous TTLs",
     "Scoped provider-token secret name and fingerprint confirmation",
     "Mutable-record allowlist",
     "Previous TTL values",
@@ -139,5 +140,5 @@
     "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
     "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
   ],
-  "updatedAt": "2026-08-04T15:55:00Z"
+  "updatedAt": "2026-08-04T16:36:46Z"
 }

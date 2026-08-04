@@ -125,10 +125,11 @@ These must be non-production and have no client or real mail dependency.
 
 ## Authorized test-zone preflight
 
-- Founder authorization recorded 2026-08-04: create and delegate `dnsops-test.computin.dev` as an isolated child zone; Antonio owns rollback and credential revocation.
-- Explicitly excluded: the `computin.dev` apex and all existing MX, SPF, DKIM, and DMARC records.
-- Read-only preflight evidence: `docs/domain-operations/evidence/gate-3/computin-test-zone-delegation-preflight.json`.
-- The child zone and its scoped credential do not yet exist; do not run provider mutations until the remaining safety confirmations are complete.
+- The prior `dnsops-test.computin.dev` delegation proposal is superseded; no provider mutation or delegation was performed.
+- Founder authorization recorded 2026-08-04: use `asorin.ai` as the complete isolated controlled-test zone; Antonio owns rollback and credential revocation.
+- Founder declaration: `asorin.ai` has no production traffic, client dependency, or real mail dependency.
+- Cloudflare read-only preflight evidence: `docs/domain-operations/evidence/gate-3/asorin-test-zone-preflight.json`.
+- The zone is active with no DNS records observed. Do not run provider mutations until the remaining safety confirmations are complete.
 
 ## Safety confirmations
 
