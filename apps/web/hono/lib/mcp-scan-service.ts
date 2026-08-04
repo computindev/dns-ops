@@ -97,7 +97,10 @@ export class McpScanService {
     if (proxied instanceof Response) {
       const result = {
         ok: false,
-        error: { code: 'COLLECTOR_UNAVAILABLE', message: 'Collector unavailable' },
+        error: {
+          code: `COLLECTOR_${proxied.status}`,
+          message: proxied.status >= 500 ? 'Collector unavailable' : 'Collector rejected scan request',
+        },
         replayed: false,
       };
       await commands.complete(

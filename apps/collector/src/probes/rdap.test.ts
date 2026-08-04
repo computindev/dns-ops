@@ -49,7 +49,17 @@ describe('collectRdapExpirationEvidence', () => {
       }),
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher.mock.calls.every((call) => call[1].redirect === 'error')).toBe(true);
+    expect(fetcher.mock.calls.every((call) => call[1].redirect === 'manual')).toBe(true);
+    for (const [url, init] of fetcher.mock.calls) {
+      const lookup = (init as RequestInit & { lookup?: (...args: never[]) => unknown }).lookup;
+      expect(lookup).toBeTypeOf('function');
+      const address = await new Promise<string>((resolve, reject) =>
+        lookup?.(new URL(url).hostname, {}, (error: Error | null, value: string) =>
+          error ? reject(error) : resolve(value)
+        )
+      );
+      expect(address).toBe('93.184.216.34');
+    }
   });
 
   it('keeps a successful response without an expiration event actionable UNKNOWN', async () => {
@@ -98,6 +108,82 @@ describe('collectRdapExpirationEvidence', () => {
     if (result.status !== 'UNKNOWN') throw new Error('Expected UNKNOWN fixture');
     expect(result.unknown.explanation).toContain('Unsafe RDAP address');
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('preflights and pins redirects for bootstrap and registry requests', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://bootstrap.example/dns.json' },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse(bootstrap))
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: 'https://registry.example/domain/example.com' },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          objectClassName: 'domain',
+          ldhName: 'example.com',
+          events: [{ eventAction: 'expiration', eventDate: '2030-01-01T00:00:00Z' }],
+        })
+      );
+    const resolver = vi.fn(async (hostname: string) =>
+      hostname === 'bootstrap.example' || hostname === 'registry.example'
+        ? ['1.1.1.1']
+        : ['93.184.216.34']
+    );
+
+    const result = await collectRdapExpirationEvidence('example.com', {
+      fetcher,
+      resolveHostname: resolver,
+    });
+
+    expect(result.status).toBe('OBSERVED');
+    expect(resolver.mock.calls.map(([hostname]) => hostname)).toEqual([
+      'data.iana.org',
+      'bootstrap.example',
+      'rdap.example',
+      'registry.example',
+    ]);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://data.iana.org/rdap/dns.json',
+      'https://bootstrap.example/dns.json',
+      'https://rdap.example/domain/example.com',
+      'https://registry.example/domain/example.com',
+    ]);
+    for (const [url, init] of fetcher.mock.calls) {
+      const lookup = (init as RequestInit & { lookup?: (...args: never[]) => unknown }).lookup;
+      const address = await new Promise<string>((resolve, reject) =>
+        lookup?.(new URL(url).hostname, {}, (error: Error | null, value: string) =>
+          error ? reject(error) : resolve(value)
+        )
+      );
+      expect(address).toBe(
+        ['bootstrap.example', 'registry.example'].includes(new URL(url).hostname)
+          ? '1.1.1.1'
+          : '93.184.216.34'
+      );
+    }
+  });
+
+  it.each([
+    ['resolver-alias.example'],
+    ['fe80::1%eth0'],
+  ])('rejects invalid resolver answer %s before connecting', async (answer) => {
+    const fetcher = vi.fn();
+    const result = await collectRdapExpirationEvidence('example.com', {
+      fetcher,
+      resolveHostname: async () => [answer],
+    });
+
+    expect(result.status).toBe('UNKNOWN');
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('enforces response-size and JSON bounds', async () => {

@@ -1,11 +1,17 @@
+import { request as httpRequest, type RequestOptions } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
 import type { EvidenceCheckResult, RdapExpirationEvidence } from '@dns-ops/contracts';
 import { checkResolvedIP, validateUrl } from './ssrf-guard.js';
 
 const IANA_DNS_BOOTSTRAP_URL = 'https://data.iana.org/rdap/dns.json';
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024;
+const DEFAULT_MAX_REDIRECTS = 5;
 
-type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
+type PinnedRequestInit = RequestInit & { lookup?: RequestOptions['lookup'] };
+type Fetcher = (input: string, init: PinnedRequestInit) => Promise<Response>;
 type Resolver = (hostname: string) => Promise<string[]>;
 
 function abortError(): Error {
@@ -76,11 +82,11 @@ async function defaultResolver(hostname: string): Promise<string[]> {
   return (await dns.lookup(hostname, { all: true })).map(({ address }) => address);
 }
 
-async function assertSafeHttps(
+async function safeHttpsEndpoint(
   url: string,
   resolveHostname: Resolver,
   signal: AbortSignal
-): Promise<URL> {
+): Promise<{ url: URL; addresses: string[] }> {
   const checked = validateUrl(url);
   if (!checked.allowed || !checked.url || checked.url.protocol !== 'https:') {
     throw new Error(`Unsafe RDAP URL: ${checked.reason ?? 'HTTPS is required'}`);
@@ -89,15 +95,59 @@ async function assertSafeHttps(
     throw new Error('Unsafe RDAP URL credentials or fragment');
   }
 
-  const addresses = await abortable(resolveHostname(checked.url.hostname), signal);
+  const resolved = await abortable(resolveHostname(checked.url.hostname), signal);
+  const addresses = [...new Set(resolved)].sort();
   if (addresses.length === 0) throw new Error('RDAP hostname did not resolve');
   for (const address of addresses) {
+    if (isIP(address) === 0 || address.includes('%')) {
+      throw new Error(`RDAP resolver returned a non-IP address: ${address}`);
+    }
     const addressCheck = checkResolvedIP(address);
     if (!addressCheck.allowed) {
       throw new Error(`Unsafe RDAP address ${address}: ${addressCheck.reason}`);
     }
   }
-  return checked.url;
+  return { url: checked.url, addresses };
+}
+
+function staticLookup(address: string): NonNullable<RequestOptions['lookup']> {
+  const family = isIP(address);
+  return ((_hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
+    const all = typeof options === 'object' && options !== null && 'all' in options && options.all;
+    if (all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  }) as NonNullable<RequestOptions['lookup']>;
+}
+
+function defaultFetcher(input: string, init: PinnedRequestInit): Promise<Response> {
+  const url = new URL(input);
+  const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request(
+      url,
+      {
+        method: init.method ?? 'GET',
+        headers: Object.fromEntries(new Headers(init.headers)),
+        lookup: init.lookup,
+        signal: init.signal ?? undefined,
+      },
+      (incoming) => {
+        const status = incoming.statusCode ?? 500;
+        const body = [101, 204, 205, 304].includes(status)
+          ? null
+          : (Readable.toWeb(incoming) as BodyInit);
+        resolve(
+          new Response(body, {
+            status,
+            statusText: incoming.statusMessage,
+            headers: incoming.headers as HeadersInit,
+          })
+        );
+      }
+    );
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
 }
 
 async function readBoundedBody(
@@ -140,23 +190,41 @@ async function fetchBoundedJson(
   resolveHostname: Resolver,
   signal: AbortSignal,
   maxResponseBytes: number
-): Promise<{ status: number; value: unknown }> {
-  await assertSafeHttps(url, resolveHostname, signal);
-  const response = await abortable(
-    fetcher(url, {
-      signal,
-      redirect: 'error',
-      headers: {
-        Accept: 'application/rdap+json, application/json',
-        'User-Agent': 'DNS-Ops-RDAP/1.0',
-      },
-    }),
-    signal
-  );
+): Promise<{ status: number; value: unknown; url: string }> {
+  let current = url;
+  let response: Response | undefined;
+  for (let redirects = 0; redirects <= DEFAULT_MAX_REDIRECTS; redirects++) {
+    const endpoint = await safeHttpsEndpoint(current, resolveHostname, signal);
+    response = await abortable(
+      fetcher(endpoint.url.toString(), {
+        signal,
+        redirect: 'manual',
+        headers: {
+          Accept: 'application/rdap+json, application/json',
+          'User-Agent': 'DNS-Ops-RDAP/1.0',
+        },
+        lookup: staticLookup(endpoint.addresses[0]),
+      }),
+      signal
+    );
+    if (response.status < 300 || response.status > 399) {
+      current = endpoint.url.toString();
+      break;
+    }
+    const location = response.headers.get('location');
+    void response.body?.cancel().catch(() => undefined);
+    if (!location) throw new Error(`RDAP redirect ${response.status} lacks Location`);
+    if (redirects === DEFAULT_MAX_REDIRECTS) {
+      throw new Error(`RDAP redirect limit of ${DEFAULT_MAX_REDIRECTS} exceeded`);
+    }
+    current = new URL(location, endpoint.url).toString();
+    response = undefined;
+  }
+  if (!response) throw new Error('RDAP response did not reach a final endpoint');
   const body = await readBoundedBody(response, maxResponseBytes, signal);
   if (!response.ok) throw new Error(`RDAP HTTP ${response.status}`);
   try {
-    return { status: response.status, value: JSON.parse(body) };
+    return { status: response.status, value: JSON.parse(body), url: current };
   } catch {
     throw new Error('RDAP response is not valid JSON');
   }
@@ -249,7 +317,7 @@ export async function collectRdapExpirationEvidence(
   registeredDomain: string,
   options: RdapCollectionOptions = {}
 ): Promise<EvidenceCheckResult<RdapExpirationEvidence>> {
-  const fetcher = options.fetcher ?? fetch;
+  const fetcher = options.fetcher ?? defaultFetcher;
   const resolveHostname = options.resolveHostname ?? defaultResolver;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -308,7 +376,7 @@ export async function collectRdapExpirationEvidence(
     const evidence: RdapExpirationEvidence = {
       kind: 'RDAP_EXPIRATION',
       domain,
-      sourceUrl,
+      sourceUrl: domainResult.url,
       responseStatus: domainResult.status,
       events,
       expirationDate: expiration?.date,

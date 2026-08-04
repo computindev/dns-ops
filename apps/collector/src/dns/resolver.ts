@@ -32,7 +32,7 @@ export class DNSResolver {
         success,
         responseCode: result.responseCode,
         flags: result.flags,
-        answers: result.answers,
+        answers: result.answers.filter((answer) => answer.type === query.type),
         authority: result.authority,
         additional: result.additional,
         responseTime: Date.now() - startTime,

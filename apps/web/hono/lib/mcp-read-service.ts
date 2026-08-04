@@ -44,6 +44,8 @@ export class McpReadService {
 
   async domainPosture(domainId: string) {
     requireMcpScope(this.principal, 'DOMAIN_READ');
+    requireMcpScope(this.principal, 'SIGNAL_READ');
+    requireMcpScope(this.principal, 'CASE_READ');
     const domain = await this.ownedDomain(domainId);
     const snapshots = await new SnapshotRepository(this.db).findByDomain(domain.id, 1);
     const latestSnapshot = snapshots[0] ?? null;

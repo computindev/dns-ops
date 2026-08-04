@@ -1,4 +1,7 @@
+import { request as httpRequest, type RequestOptions } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
 import type {
   EvidenceCheckResult,
   HomepageIndexabilityEvidence,
@@ -12,7 +15,8 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_MAX_BODY_BYTES = 128 * 1024;
 
-type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
+type PinnedRequestInit = RequestInit & { lookup?: RequestOptions['lookup'] };
+type Fetcher = (input: string, init: PinnedRequestInit) => Promise<Response>;
 type Resolver = (hostname: string) => Promise<string[]>;
 
 export interface HttpWebCollectionOptions {
@@ -108,6 +112,46 @@ async function safeAddresses(
   return addresses;
 }
 
+function staticLookup(address: string): NonNullable<RequestOptions['lookup']> {
+  const family = isIP(address);
+  return ((_hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
+    const all = typeof options === 'object' && options !== null && 'all' in options && options.all;
+    if (all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  }) as NonNullable<RequestOptions['lookup']>;
+}
+
+function defaultFetcher(input: string, init: PinnedRequestInit): Promise<Response> {
+  const url = new URL(input);
+  const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request(
+      url,
+      {
+        method: init.method ?? 'GET',
+        headers: Object.fromEntries(new Headers(init.headers)),
+        lookup: init.lookup,
+        signal: init.signal ?? undefined,
+      },
+      (incoming) => {
+        const status = incoming.statusCode ?? 500;
+        const body = [101, 204, 205, 304].includes(status)
+          ? null
+          : (Readable.toWeb(incoming) as BodyInit);
+        resolve(
+          new Response(body, {
+            status,
+            statusText: incoming.statusMessage,
+            headers: incoming.headers as HeadersInit,
+          })
+        );
+      }
+    );
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
+}
+
 function redirectContainsSensitiveQuery(url: URL): boolean {
   return [...url.searchParams.keys()].some((key) =>
     /(?:access[_-]?token|auth(?:entication)?|code|key|password|secret|session|signature|sig|token)/i.test(
@@ -152,6 +196,7 @@ async function fetchHop(
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
         'User-Agent': 'DNS-Ops-HTTP-Evidence/1.0',
       },
+      lookup: staticLookup(addresses[0]),
     }),
     signal
   );
@@ -342,7 +387,7 @@ export async function collectHttpWebEvidence(
   options: HttpWebCollectionOptions = {}
 ): Promise<HttpWebCollectionResult> {
   const hostname = validateRegisteredHostname(registeredHostname);
-  const fetcher = options.fetcher ?? fetch;
+  const fetcher = options.fetcher ?? defaultFetcher;
   const resolver = options.resolveHostname ?? defaultResolver;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;

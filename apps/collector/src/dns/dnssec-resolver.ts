@@ -119,12 +119,15 @@ export function decodeDnsResponse(response: Buffer, queryType: string): DnsRespo
 
   const flags = packetIn.flags || 0;
 
-  const answers: DNSAnswer[] = (packetIn.answers || []).map((r) => ({
-    name: String(r.name || ''),
-    type: queryType,
-    ttl: Number(r.ttl || 0),
-    data: formatRecordData(r.data, queryType),
-  }));
+  const answers: DNSAnswer[] = (packetIn.answers || []).map((r) => {
+    const type = String(r.type ?? queryType);
+    return {
+      name: String(r.name || ''),
+      type,
+      ttl: Number(r.ttl || 0),
+      data: formatRecordData(r.data, type),
+    };
+  });
 
   const mapOther = (records: DecodedRecord[] | undefined): DNSAnswer[] =>
     (records || []).map((r) => ({

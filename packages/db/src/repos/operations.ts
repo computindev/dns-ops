@@ -188,8 +188,7 @@ class InternalCaseRepository {
       requiredAnd(
         eq(internalCases.id, current.id),
         eq(internalCases.status, current.status),
-        eq(internalCases.version, current.version),
-        eq(internalCases.updatedAt, current.updatedAt)
+        eq(internalCases.version, current.version)
       )
     );
     if (!transitioned) throw operationConflict('Case changed during transition');

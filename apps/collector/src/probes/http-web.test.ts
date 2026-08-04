@@ -79,6 +79,19 @@ describe('collectHttpWebEvidence', () => {
       }),
     });
     expect(fetcher.mock.calls.every(([, init]) => init.redirect === 'manual')).toBe(true);
+    for (const [url, init] of fetcher.mock.calls) {
+      const lookup = (init as RequestInit & { lookup?: (...args: never[]) => unknown }).lookup;
+      expect(lookup).toBeTypeOf('function');
+      const resolved = await new Promise<{ address: string; family: number }>((resolve, reject) =>
+        lookup?.(
+          new URL(url).hostname,
+          {},
+          (error: Error | null, address: string, family: number) =>
+            error ? reject(error) : resolve({ address, family })
+        )
+      );
+      expect(resolved).toEqual({ address: '93.184.216.34', family: 4 });
+    }
   });
 
   it('permits a bounded redirect path but still validates each redirect hostname', async () => {
@@ -241,6 +254,20 @@ describe('collectHttpWebEvidence', () => {
       fetcher,
       resolveHostname: async () => ['alias.internal.example'],
     });
+    expect(result.starts.every((entry) => entry.reachability.status === 'UNKNOWN')).toBe(true);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['resolver-alias.example'],
+    ['fe80::1%eth0'],
+  ])('rejects invalid resolver answer %s before connecting', async (answer) => {
+    const fetcher = vi.fn();
+    const result = await collectHttpWebEvidence('example.com', {
+      fetcher,
+      resolveHostname: async () => [answer],
+    });
+
     expect(result.starts.every((entry) => entry.reachability.status === 'UNKNOWN')).toBe(true);
     expect(fetcher).not.toHaveBeenCalled();
   });
