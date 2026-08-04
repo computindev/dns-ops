@@ -1,0 +1,32 @@
+{
+  "evidenceId": "GATE4-ISOLATED-BROWSER-SMOKE",
+  "recordedAt": "2026-07-29T18:51:00Z",
+  "implementationSha": "093301e",
+  "environment": {
+    "type": "ephemeral local Docker PostgreSQL plus Playwright Chromium",
+    "productionDatabase": false,
+    "containerRemovedAfterVerification": true
+  },
+  "setup": [
+    "Applied all application migrations using the web migration runner against the isolated database.",
+    "Ran the web server on an override port with deterministic development tenant/actor headers.",
+    "Installed the local Playwright Chromium runtime; it is not a repository artifact."
+  ],
+  "command": "PORT=3100 BASE_URL=http://localhost:3100 DATABASE_URL=<isolated> COLLECTOR_URL=http://127.0.0.1:3001 bun run e2e -- e2e/smoke.spec.ts",
+  "result": "9 browser smoke tests passed",
+  "coverage": [
+    "home page and navigation to Domain 360",
+    "domain tabs, delegation panel, refresh control, and portfolio workspace",
+    "mobile and tablet layouts",
+    "web migration resolution when the development working directory is apps/web"
+  ],
+  "limitations": [
+    "The smoke fixture intentionally has no collector process; collector proxy network errors during refresh attempts do not fail the browser UI assertions.",
+    "This is non-live UI smoke evidence, not controlled provider mutation evidence."
+  ],
+  "safety": {
+    "providerWrites": false,
+    "liveDns": false,
+    "productionWrites": false
+  }
+}

@@ -4,7 +4,12 @@
  * API endpoints for mail diagnostics and remediation workflows.
  */
 
-import { AuditEventRepository, RemediationRepository } from '@dns-ops/db';
+import {
+  AuditEventRepository,
+  DomainRepository,
+  RemediationRepository,
+  SnapshotRepository,
+} from '@dns-ops/db';
 import { Hono } from 'hono';
 import { getRequestEnvConfig } from '../config/env.js';
 import { getFeedbackMetrics } from '../lib/metrics.js';
@@ -302,6 +307,7 @@ export const mailRoutes = new Hono<Env>()
       status: enumValue('status', REMEDIATION_STATUSES, false),
       assignedTo: optionalString('assignedTo', { maxLength: 100 }),
       notes: optionalString('notes', { maxLength: 5000 }),
+      verificationSnapshotId: uuid('verificationSnapshotId', false),
     });
 
     if (!validation.success) {
@@ -315,6 +321,53 @@ export const mailRoutes = new Hono<Env>()
     }
 
     const status = validation.data.status ?? existing.status;
+    const isClosing = status === 'resolved' || status === 'closed';
+    let verificationSnapshotId: string | undefined;
+
+    if (isClosing && status !== existing.status) {
+      verificationSnapshotId = validation.data.verificationSnapshotId;
+      if (!verificationSnapshotId) {
+        return c.json(
+          {
+            error: 'A fresh complete snapshot is required to resolve or close remediation work',
+            code: 'FRESH_EVIDENCE_REQUIRED',
+          },
+          409
+        );
+      }
+
+      const snapshot = await new SnapshotRepository(db).findById(verificationSnapshotId);
+      if (!snapshot || snapshot.domainName.toLowerCase() !== existing.domain.toLowerCase()) {
+        return c.json(
+          {
+            error: 'Verification snapshot does not match this remediation domain',
+            code: 'INVALID_EVIDENCE',
+          },
+          409
+        );
+      }
+      const snapshotDomain = await new DomainRepository(db).findById(snapshot.domainId);
+      if (!snapshotDomain || snapshotDomain.tenantId !== tenantId) {
+        return c.json({ error: 'Verification snapshot not found', code: 'INVALID_EVIDENCE' }, 404);
+      }
+      const evaluation = snapshot.metadata?.evaluation;
+      const activeLifecycleStartedAt = existing.updatedAt ?? existing.createdAt;
+      if (
+        snapshot.createdAt <= activeLifecycleStartedAt ||
+        snapshot.resultState !== 'complete' ||
+        evaluation?.state !== 'COMPLETE'
+      ) {
+        return c.json(
+          {
+            error:
+              'Verification snapshot must be newer than the request and have complete evaluation coverage',
+            code: 'FRESH_EVIDENCE_REQUIRED',
+          },
+          409
+        );
+      }
+    }
+
     const remediation = await existingRepo.updateStatus(id, tenantId, status, {
       assignedTo: validation.data.assignedTo,
       notes: validation.data.notes,
@@ -340,6 +393,7 @@ export const mailRoutes = new Hono<Env>()
         status: remediation.status,
         assignedTo: remediation.assignedTo,
         notes: remediation.notes,
+        verificationSnapshotId,
       },
       ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip'),
       userAgent: c.req.header('user-agent'),

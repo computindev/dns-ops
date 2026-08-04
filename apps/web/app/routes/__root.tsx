@@ -1,4 +1,4 @@
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import {
   createRootRoute,
   HeadContent,
@@ -11,6 +11,12 @@ import {
 } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import {
+  clearAuthenticatedQueryCache,
+  didPrincipalChange,
+  isAuthenticationCacheEpochKey,
+  notifyAuthenticationChange,
+} from '../lib/evidence-query-cache.js';
 import '../styles/app.css';
 
 export const Route = createRootRoute({
@@ -31,7 +37,17 @@ function AuthNav() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const isLoggingOut = useRef(false);
+  const principalRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (isAuthenticationCacheEpochKey(event.key)) void clearAuthenticatedQueryCache(queryClient);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [queryClient]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: only pathname matters for re-checking auth
   useEffect(() => {
@@ -40,14 +56,25 @@ function AuthNav() {
       isLoggingOut.current = false;
       return;
     }
+    void clearAuthenticatedQueryCache(queryClient);
     fetch('/api/auth/me', { credentials: 'include' })
       .then((res) => res.json())
       .then((raw) => {
         const data = raw as Record<string, unknown>;
         if (data.authenticated) {
+          const email = (data.email as string | undefined) || null;
+          const tenant = (data.tenant as string | undefined) || null;
+          const principal = `${tenant ?? ''}:${email ?? ''}`;
+          if (didPrincipalChange(principalRef.current, principal)) {
+            void clearAuthenticatedQueryCache(queryClient);
+            principalRef.current = principal;
+          }
           setIsAuthenticated(true);
-          setUserEmail((data.email as string | undefined) || null);
+          setUserEmail(email);
         } else {
+          if (didPrincipalChange(principalRef.current, null))
+            void clearAuthenticatedQueryCache(queryClient);
+          principalRef.current = null;
           setIsAuthenticated(false);
           setUserEmail(null);
         }
@@ -61,6 +88,8 @@ function AuthNav() {
       method: 'POST',
       credentials: 'include',
     });
+    await clearAuthenticatedQueryCache(queryClient);
+    notifyAuthenticationChange();
     flushSync(() => {
       setIsAuthenticated(false);
       setUserEmail(null);

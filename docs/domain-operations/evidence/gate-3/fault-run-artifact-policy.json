@@ -1,0 +1,37 @@
+{
+  "evidenceId": "GATE3-FAULT-RUN-ARTIFACT-POLICY",
+  "recordedAt": "2026-07-30T01:40:00Z",
+  "source": "packages/contracts/src/live-fault-harness.ts",
+  "status": "NON_LIVE_SAFETY_INFRASTRUCTURE_COMPLETE",
+  "implements": [
+    "The runbook FaultRunArtifact contract for LIVE-01 through LIVE-03 evidence",
+    "Runtime validation of plain enumerable data, bounded arrays, SHA-256 baseline/credential fingerprints, canonical DNS target names, UTC calendar-valid timestamps, and recovery-result requirements",
+    "Redacted provider-response operation/status summaries only, plus identifier checks that reject credential/header/token/API/private-key material",
+    "A structured RECOVERY_REQUIRED payload with provider, artifact-bound zone, exact artifact-target recovery records/desired values, safe non-executable provider-operation references, and chronological application/restoration timestamps with restoration requiring an application timestamp",
+    "A PASS artifact requires both application and restoration timestamps"
+  ],
+  "verification": {
+    "command": "bunx vitest run packages/contracts/src/live-fault-harness.test.ts",
+    "result": "9 passed",
+    "additional": [
+      "bunx biome check packages/contracts/src/live-fault-harness.ts packages/contracts/src/live-fault-harness.test.ts packages/contracts/src/index.ts passed",
+      "bun run --filter @dns-ops/contracts typecheck passed"
+    ]
+  },
+  "safety": {
+    "providerClient": false,
+    "providerToken": false,
+    "networkCalls": false,
+    "dnsOpsProviderWrites": false,
+    "mcpProviderWrites": false
+  },
+  "notClaimed": [
+    "A concrete provider adapter, runtime secret resolution, or live operator command",
+    "Provider mutation, restoration, LIVE-01/LIVE-02/LIVE-03 execution, or live artifact generation",
+    "Replacement of issue #4 authorization, assets, allowlist, TTL, and rollback prerequisites"
+  ],
+  "review": {
+    "result": "Iterative independent review found and remediation covered response/header, timestamp, canonical-input, zone-identifier, target-name, recovery-prose, policy/request zone, opaque credential-shaped identifier, incomplete recovery-payload, unrelated-zone/target recovery, cookie/session, opaque credential recovery-text, restoration-before-application, restoration-without-application, and completed-run-without-restoration-evidence boundaries. Final re-review found no remaining code-level security or correctness blocker."
+  },
+  "nextAction": "A selected-provider harness must emit this validated artifact only after its explicit allowlist policy passes; it remains blocked on the issue #4 manifest and authority."
+}

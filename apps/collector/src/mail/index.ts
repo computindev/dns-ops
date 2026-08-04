@@ -16,4 +16,11 @@ export {
   type SelectorProvenance,
 } from './checker.js';
 
-export { resolveTXT } from './dns.js';
+export {
+  applyDmarcAuthorDomainExistence,
+  DMARC_TREE_WALK_QUERY_LIMIT,
+  type DmarcDiscoveryQuery,
+  type DmarcPolicyDiscoveryResult,
+  discoverDmarcPolicy,
+} from './dmarc-discovery.js';
+export { resolveDomainExists, resolveTXT } from './dns.js';

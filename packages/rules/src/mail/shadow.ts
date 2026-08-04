@@ -111,7 +111,7 @@ export class ShadowComparator {
     // Compare SPF presence
     comparisons.push(this.compareSpfPresence(newSpfFinding, legacyOutput.spf));
 
-    // Compare SPF validity
+    // Compare directly published SPF syntax only; recursive validity is unavailable.
     comparisons.push(this.compareSpfValidity(newSpfFinding, legacyOutput.spf));
 
     // Compare DKIM presence
@@ -283,7 +283,7 @@ export class ShadowComparator {
         newValue: newValid,
         status: 'match',
         severity: 'info',
-        explanation: `Both agree: SPF is ${newValid ? 'valid' : 'invalid'}`,
+        explanation: `Both agree on directly published SPF syntax: ${newValid ? 'valid' : 'invalid'}. Nested dependencies were not evaluated.`,
       };
     }
 
@@ -293,7 +293,7 @@ export class ShadowComparator {
       newValue: newValid,
       status: 'mismatch',
       severity: 'high',
-      explanation: `MISMATCH: Legacy says ${legacyValid ? 'valid' : 'invalid'}, new says ${newValid ? 'valid' : 'invalid'}`,
+      explanation: `MISMATCH: Legacy reports ${legacyValid ? 'valid' : 'invalid'}, while the new first-level-only syntax check reports ${newValid ? 'valid' : 'invalid'}. Nested dependencies were not evaluated.`,
     };
   }
 

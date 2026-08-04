@@ -1,0 +1,39 @@
+{
+  "evidenceId": "GATE3-PROVIDER-HARNESS-POLICY",
+  "recordedAt": "2026-07-29T19:52:00Z",
+  "source": "packages/contracts/src/live-fault-harness.ts",
+  "status": "NON_LIVE_SAFETY_INFRASTRUCTURE_COMPLETE",
+  "implements": [
+    "Secret-free controlled-fault policy with only a provider credential SHA-256 fingerprint",
+    "Validation that test web/mail assets and every allowlisted record remain inside the designated test domain",
+    "Exact zone/name/record-type/LIVE mutation authorization",
+    "Fail-closed rejection of malformed/non-plain, accessor-backed, non-enumerable, or symbol-bearing objects and unknown or credential-bearing fields at both policy and allowlist-entry levels, sparse/oversized arrays, duplicate type/mutation values, malformed fingerprints, duplicate allowlist entries, and unallowlisted tuple requests"
+  ],
+  "verification": {
+    "command": "bunx vitest run packages/contracts/src/live-fault-harness.test.ts",
+    "result": "9 passed",
+    "additional": [
+      "bunx biome check packages/contracts/src/live-fault-harness.ts packages/contracts/src/live-fault-harness.test.ts packages/contracts/src/index.ts passed",
+      "bun run --filter @dns-ops/contracts typecheck passed",
+      "bun run lint, RUN_LIVE_DNS_TESTS=0 bun run test (2730 passed, 41 skipped), bun run typecheck, bun run build, and bun run --filter @dns-ops/db check-drift all passed"
+    ]
+  },
+  "safety": {
+    "providerClient": false,
+    "providerToken": false,
+    "dnsOpsProviderWrites": false,
+    "mcpProviderWrites": false,
+    "networkCalls": false
+  },
+  "review": {
+    "result": "Independent review found nested own-property, inherited-property, non-enumerable/symbol, accessor-time-of-check/time-of-use, sparse-array length denial-of-service, and unbounded dense-array boundaries. The policy now snapshots descriptor-validated enumerable data before authorization, rejects sparse arrays by descriptor count, bounds allowlist/type/mutation cardinality, and rejects duplicate values; focused regression tests cover the reported boundaries.",
+    "remainingFinding": "No concrete provider adapter exists until issue #4 supplies its provider/test-host manifest."
+  },
+  "notClaimed": [
+    "A concrete provider adapter or live operator commands",
+    "Credential resolution or provider API access",
+    "LIVE-01 through LIVE-03 execution",
+    "Replacement of the provider/test-host manifest and rollback authorization required by issue #4"
+  ],
+  "nextAction": "After the selected provider and test-host manifest are supplied, require its adapter to call authorizeControlledFaultMutation before every provider operation and implement the concrete runbook commands."
+}

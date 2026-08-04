@@ -1,0 +1,60 @@
+{
+  "evidenceId": "GATE2-REMEDIATION-GUIDANCE",
+  "recordedAt": "2026-07-29T03:56:46Z",
+  "implementationBaseSha": "4b4e1f863809e5e938905cc5ce2226524d6845a5",
+  "postFixAssertions": [
+    "Generic rule suggestions contain playbook references and non-executable prose rather than record values",
+    "Generic simulation returns mode GUIDANCE_ONLY, executable proposedChanges=[], and executableMutation=null",
+    "Heuristic provider detection is not presented as confirmed context",
+    "The legacy apply route always returns a typed GUIDANCE_ONLY refusal and never marks a suggestion applied",
+    "Historical applied state is described as acknowledgement rather than provider execution",
+    "Persisted legacy executable suggestion text is sanitized at findings, GET, dismiss, and apply response boundaries",
+    "Suggestion GET/apply/dismiss resolve finding->snapshot->domain and return 404 across tenant boundaries",
+    "Remediation resolution and closure require a same-domain, same-tenant, complete snapshot newer than the active lifecycle transition",
+    "Stale, partial, wrong-domain, cross-tenant, and replayed verification evidence cannot close remediation",
+    "Guidance UI exposes no Apply action, concrete record diff, projected result, or resolved-finding claim",
+    "SPF receives partial score credit only because recursive evaluation remains out of scope"
+  ],
+  "tests": {
+    "targeted": {
+      "command": "bunx vitest run apps/web/hono/routes/suggestions.test.ts apps/web/hono/routes/simulation.runtime.test.ts apps/web/hono/routes/mail.runtime.test.ts apps/web/hono/routes/findings.runtime.test.ts packages/rules/src/mail/rules.test.ts packages/rules/src/dns/rules.test.ts",
+      "result": "114 passed in 6 files before the final lifecycle/copy pass; all affected tests passed again afterward"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "typecheck": {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed"
+    },
+    "deterministicSuite": {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2571 passed, 41 skipped; 141 files passed, 3 skipped"
+    },
+    "build": {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "schemaDrift": {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "NO DRIFT"
+    }
+  },
+  "review": {
+    "method": "Three fresh-context independent review passes",
+    "finalResult": "CLEAN",
+    "resolvedFindings": [
+      "Legacy executable rows leaking through response boundaries",
+      "Cross-tenant suggestion read and dismiss access",
+      "Misleading apply and simulation contracts/copy",
+      "Unconfirmed provider presentation",
+      "Verification snapshot replay after remediation reopen"
+    ]
+  },
+  "safety": {
+    "providerWritesAdded": false,
+    "productionMutations": false,
+    "clientAssetMutations": false
+  }
+}

@@ -230,6 +230,7 @@ function makeDomain(overrides: Partial<MockDomain> = {}): MockDomain {
   return {
     id: 'dom-1',
     name: 'example.com',
+    tenantId: NORMALIZED_TENANT_ID,
     ...overrides,
   };
 }
@@ -583,6 +584,16 @@ describe('Monitoring Routes Tenant Isolation', () => {
       const checkedDomains = json.results.map((r: { domainId: string }) => r.domainId);
       expect(checkedDomains).toContain('dom-us');
       expect(checkedDomains).not.toContain('dom-other');
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/collect/domain'),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Internal-Secret': 'test-internal-secret',
+            'X-Tenant-Id': NORMALIZED_TENANT_ID,
+            'X-Actor-Id': 'monitoring-scheduler',
+          }),
+        })
+      );
     });
 
     it('DELETE /domains/:id/monitor should reject deletion of other tenant domain', async () => {

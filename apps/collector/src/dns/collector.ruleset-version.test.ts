@@ -59,6 +59,7 @@ vi.mock('@dns-ops/db', () => ({
   SnapshotRepository: vi.fn().mockImplementation(function () {
     this.create = vi.fn().mockResolvedValue({ id: 'snapshot-1' });
     this.updateRulesetVersion = vi.fn().mockResolvedValue(undefined);
+    this.updateEvaluationCoverage = vi.fn().mockResolvedValue(undefined);
   }),
   ObservationRepository: vi.fn().mockImplementation(function () {
     this.createMany = vi.fn().mockResolvedValue([]);
@@ -80,7 +81,12 @@ vi.mock('@dns-ops/db', () => ({
 
 vi.mock('@dns-ops/rules', () => ({
   RulesEngine: vi.fn().mockImplementation(function () {
-    this.evaluate = vi.fn().mockReturnValue({ findings: [CANNED_FINDING], suggestions: [] });
+    this.evaluate = vi.fn().mockReturnValue({
+      findings: [CANNED_FINDING],
+      suggestions: [],
+      errors: [],
+      complete: true,
+    });
   }),
   authoritativeFailureRule: {
     id: 'auth-failure',
@@ -207,5 +213,80 @@ describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {
       expect(f.rulesetVersionId).toBe(RULESET_VERSION_ID);
       expect(f.rulesetVersionId).not.toBeNull();
     }
+  });
+
+  it('FIX-01: persists partial evaluation coverage when a rule is UNKNOWN', async () => {
+    const { RulesEngine } = await import('@dns-ops/rules');
+    vi.mocked(RulesEngine).mockImplementationOnce(function () {
+      this.evaluate = vi.fn().mockReturnValue({
+        findings: [],
+        suggestions: [],
+        complete: false,
+        errors: [
+          {
+            code: 'RULE_EXECUTION_FAILED',
+            ruleId: 'test.throwing-rule',
+            message: 'Rule test.throwing-rule could not be evaluated',
+            status: 'UNKNOWN',
+            unknown: {
+              reason: 'CHECK_EVALUATION_FAILED',
+              explanation: 'The check failed before it produced a trustworthy result.',
+              action: 'RUN_FRESH_SCAN',
+              actionLabel: 'Run a fresh scan',
+              blocking: true,
+            },
+          },
+        ],
+      });
+    } as unknown as typeof RulesEngine);
+
+    const collector = new DNSCollector(baseConfig, mockDb);
+    vi.spyOn(
+      collector as unknown as { discoverAuthoritativeServers: () => Promise<string[]> },
+      'discoverAuthoritativeServers'
+    ).mockResolvedValue([]);
+    vi.spyOn(
+      collector as unknown as {
+        collectFromVantage: (
+          queries: unknown[],
+          vantage: { type: string; identifier: string }
+        ) => Promise<unknown[]>;
+      },
+      'collectFromVantage'
+    ).mockResolvedValue([
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+        responseCode: 0,
+      },
+    ]);
+
+    const collectionResult = await collector.collect();
+
+    expect(collectionResult.resultState).toBe('partial');
+
+    const { SnapshotRepository, FindingRepository } = await import('@dns-ops/db');
+    const snapshotInstances = vi.mocked(SnapshotRepository).mock.instances;
+    const snapshotRepo = snapshotInstances[snapshotInstances.length - 1] as {
+      updateEvaluationCoverage: ReturnType<typeof vi.fn>;
+    };
+    expect(snapshotRepo.updateEvaluationCoverage).toHaveBeenCalledWith(
+      'snapshot-1',
+      expect.objectContaining({
+        state: 'PARTIAL',
+        errors: [expect.objectContaining({ ruleId: 'test.throwing-rule', status: 'UNKNOWN' })],
+      })
+    );
+
+    const findingInstances = vi.mocked(FindingRepository).mock.instances;
+    const findingRepo = findingInstances[findingInstances.length - 1] as {
+      createMany: ReturnType<typeof vi.fn>;
+    };
+    expect(findingRepo.createMany).not.toHaveBeenCalled();
   });
 });

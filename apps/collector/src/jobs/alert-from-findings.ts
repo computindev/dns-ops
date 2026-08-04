@@ -9,6 +9,7 @@ import { AlertRepository, FindingRepository, MonitoredDomainRepository } from '@
 import { createLogger } from '@dns-ops/logging';
 import { sendAlertNotification } from '../notifications/webhook.js';
 import type { Env } from '../types.js';
+import { legacyConditionDisposition } from './condition-registry.js';
 
 const logger = createLogger({
   service: 'dns-ops-collector',
@@ -94,6 +95,8 @@ export async function generateAlertsFromFindings(
   const alertableFindings = findings
     .filter((f) => {
       if (skipReviewOnly && f.reviewOnly) return false;
+      // Migrated conditions can notify only through the canonical signal path.
+      if (legacyConditionDisposition(f.type).notificationPath !== 'LEGACY_ALERT') return false;
       return severityPriority[f.severity] <= minPriority;
     })
     .sort((a, b) => severityPriority[a.severity] - severityPriority[b.severity])

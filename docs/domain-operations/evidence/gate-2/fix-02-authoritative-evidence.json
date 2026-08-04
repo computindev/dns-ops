@@ -1,0 +1,51 @@
+{
+  "fixtureId": "FIX-02",
+  "recordedAt": "2026-07-28T23:01:23Z",
+  "implementationBaseSha": "831269c0639030c39caa6d26983a6476bffb6484",
+  "counterexamples": [
+    "Wire-format AA/RD/RA flags were decoded and then replaced by constants",
+    "Authoritative targets received recursion-desired queries",
+    "A/AAAA authoritative queries passed nameserver hostnames to Resolver.setServers",
+    "Managed collections could report complete without any AA proof"
+  ],
+  "postFixAssertions": [
+    "Every supported record type uses one wire-format resolver path",
+    "Recursive vantages set RD and authoritative vantages clear RD",
+    "Decoded AA, TC, RD, RA, AD, and CD flags are preserved",
+    "Nameserver hostnames are valid direct raw-query targets and no longer pass through Resolver.setServers",
+    "Managed collection is partial unless every captured authoritative response succeeds with AA=true",
+    "Missing or non-authoritative evidence is persisted as actionable UNKNOWN with RETRY_PROBE",
+    "The Domain UI renders authoritative UNKNOWN and a retry action"
+  ],
+  "tests": {
+    "targeted": {
+      "command": "bunx vitest run apps/collector/src/dns/dnssec-decode.test.ts apps/collector/src/dns/resolver.test.ts apps/collector/src/dns/collector.authoritative.test.ts apps/collector/src/dns/collector.ruleset-version.test.ts",
+      "result": "30 passed in 4 files"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "typecheck": {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed"
+    },
+    "deterministicSuite": {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2543 passed, 41 skipped; 139 files passed, 3 skipped"
+    },
+    "build": {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "schemaDrift": {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "NO DRIFT"
+    }
+  },
+  "notRun": [
+    "Live authoritative/provider mutation tests: founder-verified assets and credentials unavailable",
+    "Migration verification: isolated DATABASE_URL unavailable",
+    "Smoke and Playwright E2E: required services unavailable"
+  ]
+}

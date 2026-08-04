@@ -1,0 +1,145 @@
+{
+  "outcomeId": "dns-ops-phase-0-1",
+  "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
+  "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
+  "currentSha": "f207428a19eb364a9a281b0e080c4cc57a5017ba",
+  "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
+  "branch": "agent/domain-operations-phase-0-1-implementation",
+  "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
+  "whatIsTrue": [
+    "Gate 1 repository truth was accepted by Antonio",
+    "Day 0 manual baseline, portfolio classification, playbook approvals, and controlled test assets remain incomplete",
+    "The prior dnsops-test.computin.dev delegation proposal is superseded without provider mutation; Antonio authorized asorin.ai as the complete isolated controlled-test zone with no production, client, or real-mail dependency",
+    "Cloudflare read-only preflight verified an active asorin.ai zone with zero DNS records observed and a protected local credential that can read that zone without recording its value",
+    "A dedicated Railway project dnsops-live-fixtures and controlled-live-web service are deployed with an isolated runtime control secret; Railway custom-domain setup has returned exact Cloudflare records but no Cloudflare DNS mutation has been made",
+    "Wrangler OAuth was stopped before authentication because it requested broad unrelated write scopes; child-zone provisioning requires a human Cloudflare-dashboard action and a subsequently scoped child-zone token",
+    "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
+    "PR #3 is open and ready for review; no merge or deployment is authorized",
+    "FIX-01 proves a throwing rule becomes persisted partial UNKNOWN coverage rather than a clean result",
+    "Historical snapshots without coverage are actionable UNKNOWN",
+    "API and UI surfaces no longer treat zero findings as healthy unless coverage is explicitly complete",
+    "FIX-02 preserves wire DNS flags, disables recursion for authoritative targets, and requires AA proof for managed completeness",
+    "Unavailable authoritative evidence is actionable UNKNOWN rather than authoritative absence",
+    "FIX-03 exposes SPF as FIRST_LEVEL_ONLY with unresolved dependencies and no recursive budget claim",
+    "FIX-04 performs RFC 9989 DMARC policy discovery with an eight-query maximum and effective p/sp/np/t policy evidence",
+    "Gate 2 passed: generic remediation is guidance-only, legacy executable text is sanitized, and closure requires lifecycle-fresh evidence",
+    "Suggestion reads and writes are tenant-isolated through finding, snapshot, and domain ownership",
+    "The six canonical signal kinds, deduplicated signal/case/alert persistence, lifecycle audit, fresh-evidence resolution, and reopen foundation are implemented",
+    "SPF absence is MIGRATED exclusively to the baseline-gated canonical signal path; all other mail findings remain explicitly LEGACY_ONLY",
+    "Six non-executable operating playbooks document evidence, applicability, verification, and escalation boundaries",
+    "Minimal operator-declared domain profiles and typed RDAP/TLS/HTTP/redirect/indexability evidence contracts are implemented with database-enforced tenant ownership",
+    "Coverage/setup evidence remains separate from signals, cases, findings, and alerts",
+    "Bounded RDAP expiration collection uses IANA bootstrap, cumulative deadlines, streamed byte limits, exact-domain validation, strict event dates, and actionable UNKNOWN results",
+    "Bounded TLS evidence pins a validated public address while preserving SNI and independently records certificate chain and hostname authorization",
+    "Bounded HTTP evidence covers the HTTP/HTTPS apex/www matrix, manual redirect topology, and HTML-only homepage indexability with safe-stop handling for unsafe redirects",
+    "Tenant-scoped profile and latest external-evidence routes provide actionable setup state; profile mutation and audit history are atomic",
+    "Synchronous and scheduled collection paths now persist profile-gated RDAP/TLS/HTTP evidence with tenant, snapshot, hostname, feature-gate, timeout, and semaphore controls",
+    "Domain 360 exposes a tenant-safe Needs setup/evidence lane; UNKNOWN cannot render as healthy and authentication cache transitions clear active observers",
+    "Production and client mutation remain prohibited",
+    "Accepted TLS and SPF operational baselines are append-only, tenant/domain/snapshot scoped, audited, and cannot be inferred from scans",
+    "A pure evaluator classifies stale, failed, UNKNOWN, missing, or incomplete TLS evidence as setup/evidence and emits canonical observations only for an accepted fresh TLS policy violation or accepted SPF baseline regression",
+    "Synchronous and queued collection now run the canonical finalizer after persistence; accepted SPF regression baselines use only the canonical signal alert path",
+    "TLS baseline freshness and missing-baseline state are exposed as setup/evidence in Domain 360",
+    "MCP has a tested static tokenSha256 principal map with enabled principals, UUID tenant binding, least-privilege scopes, durable idempotency, and dispatch for all ten approved tools through shared services",
+    "The only external MCP transport is POST /mcp, mounted in TanStack's server-only SSR entrypoint; it was smoke-tested from the built Node server with a static hashed principal",
+    "New MCP scan commands have a tenant-scoped 10-per-minute limiter before proxying; completed idempotent replays bypass the quota and the collector remains the downstream rate-limit boundary",
+    "A claimed case-open command that encounters an operational-service failure is completed as a durable generic COMMAND_FAILED response rather than being stranded PENDING",
+    "Stale MCP case disposition commands return and durably persist only CASE_VERSION_STALE, with no database conflict detail in the command result",
+    "The deterministic scan-command harness proves cross-tenant domain denial occurs before claim/proxy, completed scan requests replay without a second collector call, and rate-limited commands persist a failed result without proxying",
+    "Independent MCP review identified and the implementation corrected a scan-quota mismatch: MCP now uses the collector's ten-token incremental-refill algorithm",
+    "A fresh independent Gate 4 review at 06ecb55 is BLOCKED only on documented external live/manual-baseline prerequisites; it found no code-level blocker for the fail-closed policy and ran from a clean detached checkout",
+    "The deterministic MCP harness matrix consolidates ten-tool typed transport, invalid input/ID, disabled/scope, tenant, stale evidence, duplicate/stale command, scan idempotency/rate, audit, parity, and exception-leakage evidence",
+    "FIX-05 proves stale TLS evidence remains setup/evidence with no canonical observation or delivery; FIX-06 proves duplicate canonical observations create one signal/case/alert and delivery occurs only on create and reopen",
+    "Tenant-scoped case listing/detail/history and optimistic disposition updates are available with lifecycle and general audit records",
+    "Isolated browser smoke now passes nine Playwright checks against a migrated disposable PostgreSQL database; development migration discovery works when the app cwd is apps/web",
+    "A provider-harness readiness audit confirms no provider mutation harness can be truthfully implemented before the provider and test-host mutation manifest are authorized; no stub or provider-write capability was added",
+    "A contract-to-evidence audit confirms all remaining requirements are founder-controlled: controlled live assets/authority, manual-work baseline, portfolio classification, and six-playbook calibration/approval",
+    "A tested secret-free controlled-live policy validates the test-domain boundary, SHA-256 credential fingerprint, and exact allowlisted zone/name/type/LIVE tuples; it has no network or provider-write capability",
+    "A tested fault-run artifact contract validates the runbook evidence shape and rejects malformed/redaction-unsafe artifacts without a provider client, secret, or network operation",
+    "RECOVERY_REQUIRED artifacts now require structured provider, artifact-bound zone, artifact-target record/desired-value, safe non-executable provider-operation references, and chronological restoration evidence with an application timestamp; completed PASS artifacts require both application and restoration timestamps",
+    "The contract-to-evidence audit is reconciled with the completed fail-closed policy and latest exact-SHA independent review; only founder-controlled live/manual inputs remain blocked"
+  ],
+  "passingChecks": [
+    {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed after the fail-closed controlled-live policy addition"
+    },
+    {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed after the fail-closed controlled-live policy addition"
+    },
+    {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2730 tests passed and 41 skipped after controlled-live policy and fault-run artifact coverage"
+    },
+    {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed after the fail-closed controlled-live policy addition"
+    },
+    {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "No schema drift after migrations 0015–0020 operational baselines, case versioning, MCP command idempotency, and schema-exported session tables"
+    },
+    {
+      "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-migrations",
+      "result": "Fresh isolated PostgreSQL migration verification passed: 32/32 tables and 32/32 enums"
+    },
+    {
+      "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-operations-concurrency",
+      "result": "Fresh isolated PostgreSQL verification passed for canonical-signal unique insert and internal-case version CAS concurrency"
+    },
+    {
+      "command": "PORT=3100 BASE_URL=http://localhost:3100 DATABASE_URL=<isolated> bun run e2e -- e2e/smoke.spec.ts",
+      "result": "9 Playwright browser smoke tests passed against an isolated migrated database"
+    }
+  ],
+  "failingChecks": [
+    {
+      "command": "bun run --filter @dns-ops/db build in clean standalone order",
+      "failure": "Contracts declarations were not built first",
+      "blocking": false
+    },
+    {
+      "command": "controlled provider fault-injection harness",
+      "failure": "No authorized provider kind, test-zone/test-host mutation manifest, scoped-secret fingerprint, allowlist, TTL history, or rollback owner has been supplied; a generic adapter would be a prohibited stub",
+      "blocking": true
+    }
+  ],
+  "trackingIssue": "https://github.com/computindev/dns-ops/issues/4",
+  "pendingExternalInputs": [
+    "Measured manual-check baseline",
+    "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
+    "A locally stored fixture-control secret, non-production asorin.ai deployment, exact DNS allowlist, initial values, and previous TTLs",
+    "Scoped provider-token secret name and fingerprint confirmation",
+    "Mutable-record allowlist",
+    "Previous TTL values",
+    "Baseline, rollback, and token revocation owner",
+    "Test-host deployment mutation mechanism for LIVE-01 and LIVE-02 where provider DNS changes are insufficient",
+    "Founder calibration and approval of the six required operational playbooks"
+  ],
+  "materialDecisions": [
+    "SPF remains first-level only",
+    "RFC 9989 DMARC discovery with an eight-query maximum is required",
+    "Coverage gaps never automatically create signals, alerts, or cases",
+    "Migrated conditions use one canonical signal path",
+    "Generic remediation is guidance-only without complete provider context",
+    "MCP uses a static token-hash principal map and exactly ten tools",
+    "The founder override removes time and context limits as automatic stop conditions",
+    "Incomplete Day 0 fields block live tests and final acceptance, not deterministic implementation"
+  ],
+  "deferredScope": [
+    "Recursive SPF evaluation",
+    "DMARC RUA and RUF ingestion",
+    "Formal hypothesis graph",
+    "Built-in reasoning agent",
+    "Buzz integration",
+    "OAuth and principal-management UI",
+    "Provider-write product capability",
+    "Client portal, billing, and commercial features"
+  ],
+  "nextActions": [
+    "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
+    "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
+  ],
+  "updatedAt": "2026-08-04T20:10:30Z"
+}

@@ -7,9 +7,9 @@
 
 # A. Decision record
 
-- Date:
-- Authority SHA supplied to agent:
-- Founder/operator:
+- Date: 2026-07-28
+- Authority SHA supplied to agent: `32dc8268ee8f38ce11513c3c9d2106bedf18f17a`
+- Founder/operator: Antonio
 - Maximum portfolio size: **30 domains**
 - Selected test DNS provider:
 - Selected non-production test zone:
@@ -122,6 +122,14 @@ These must be non-production and have no client or real mail dependency.
 | `DNSOPS_TEST_PROVIDER_KIND` |  |  |  |
 | Provider token secret name |  |  | Do not paste token value |
 | Token fingerprint |  |  |  |
+
+## Authorized test-zone preflight
+
+- The prior `dnsops-test.computin.dev` delegation proposal is superseded; no provider mutation or delegation was performed.
+- Founder authorization recorded 2026-08-04: use `asorin.ai` as the complete isolated controlled-test zone; Antonio owns rollback and credential revocation.
+- Founder declaration: `asorin.ai` has no production traffic, client dependency, or real mail dependency.
+- Cloudflare read-only preflight evidence: `docs/domain-operations/evidence/gate-3/asorin-test-zone-preflight.json`.
+- The zone is active with no DNS records observed. Do not run provider mutations until the remaining safety confirmations are complete.
 
 ## Safety confirmations
 

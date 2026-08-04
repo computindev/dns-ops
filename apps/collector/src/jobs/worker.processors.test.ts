@@ -46,6 +46,10 @@ vi.mock('./alert-from-findings.js', () => ({
   generateAndSendFindingAlerts: vi.fn().mockResolvedValue({ alerts: [], webhookSent: false }),
 }));
 
+vi.mock('./operational-condition-finalizer.js', () => ({
+  finalizePersistedCanonicalConditions: vi.fn().mockResolvedValue({ outcomes: [] }),
+}));
+
 vi.mock('./queue.js', () => ({
   getRedisConnection: vi.fn().mockReturnValue({}),
   scheduleMonitoringJob: vi.fn().mockResolvedValue('job-123'),

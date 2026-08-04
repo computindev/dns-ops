@@ -350,7 +350,16 @@ describe('DNS Collector Integration', () => {
     const resolver = (collector as unknown as { resolver: { query: unknown } }).resolver;
     resolver.query = vi.fn(async (query: { name: string; type: string }, vantage: VantageInfo) => {
       const key = `${query.name}:${query.type}`;
-      return resultsByQuery.get(key) ?? buildSuccessResult(query.name, query.type, [], vantage);
+      const canned =
+        resultsByQuery.get(key) ?? buildSuccessResult(query.name, query.type, [], vantage);
+      return {
+        ...canned,
+        vantage,
+        flags:
+          vantage.type === 'authoritative'
+            ? { aa: true, tc: false, rd: false, ra: false, ad: false, cd: false }
+            : canned.flags,
+      };
     });
 
     // Also suppress delegation collection to keep tests focused

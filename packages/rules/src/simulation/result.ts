@@ -79,10 +79,8 @@ export function simulationResult<T>(fn: () => T): ResultOrError<T, SimulationErr
   }
 }
 
-/**
- * Get actionable finding types that can be simulated
- */
-export function getActionableFindingTypes(): string[] {
+/** Finding types with a non-executable guidance playbook. */
+export function getGuidanceSupportedFindingTypes(): string[] {
   return [
     'mail.no-spf-record',
     'mail.no-dmarc-record',
@@ -95,12 +93,15 @@ export function getActionableFindingTypes(): string[] {
   ];
 }
 
-/**
- * Check if a finding type can be simulated
- */
-export function isActionableFindingType(findingType: string): boolean {
-  return getActionableFindingTypes().includes(findingType);
+/** Check whether a finding type has non-executable guidance. */
+export function hasGuidanceForFindingType(findingType: string): boolean {
+  return getGuidanceSupportedFindingTypes().includes(findingType);
 }
+
+/** @deprecated Use getGuidanceSupportedFindingTypes. */
+export const getActionableFindingTypes = getGuidanceSupportedFindingTypes;
+/** @deprecated Use hasGuidanceForFindingType. */
+export const isActionableFindingType = hasGuidanceForFindingType;
 
 /**
  * Field type validators for simulation context
