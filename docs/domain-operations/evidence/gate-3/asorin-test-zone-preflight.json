@@ -29,7 +29,23 @@
     "environmentId": "e6c3a4d7-2cce-4e2a-8d81-9b7e433dcd1d",
     "serviceId": "4197eca1-a820-4f2f-8706-46cba7a0740d",
     "serviceName": "controlled-live-web",
-    "status": "PROVISIONED_NOT_DEPLOYED_PENDING_LOCAL_CONTROL_SECRET"
+    "status": "DEPLOYED_PENDING_CLOUDFLARE_DNS_CONFIGURATION",
+    "deploymentId": "258377b9-bf88-422f-947c-a41d691cb8af",
+    "serviceDomain": "controlled-live-web-production.up.railway.app",
+    "customDomains": {
+      "asorin.ai": {
+        "railwayDomainId": "110e3e42-141b-4f3a-9328-3a6dff4b9851",
+        "requiredCnameTarget": "epgybwo0.up.railway.app",
+        "requiredVerificationHost": "_railway-verify",
+        "verificationTokenPresent": true
+      },
+      "www.asorin.ai": {
+        "railwayDomainId": "efe59266-2b4a-476b-b189-f5e660ac8da8",
+        "requiredCnameTarget": "4xbfxxr5.up.railway.app",
+        "requiredVerificationHost": "_railway-verify.www",
+        "verificationTokenPresent": true
+      }
+    }
   },
   "remainingInputs": [
     "A locally stored DNSOPS_FIXTURE_CONTROL_TOKEN for the Railway fixture; its value must not be sent to chat or Git",
