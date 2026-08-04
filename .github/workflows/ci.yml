@@ -100,9 +100,8 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Push DB schema
-        run: printf 'y\n' | bunx drizzle-kit push:pg
-        working-directory: packages/db
+      - name: Apply DB migrations
+        run: bun run --filter @dns-ops/db migrate
 
       - name: Test
         env:
