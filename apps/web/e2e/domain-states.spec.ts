@@ -174,7 +174,7 @@ test.describe('Loader Error States', () => {
     // Should show auth-required message (red banner)
     const errorBanner = page.getByTestId('domain-refresh-error-banner');
     await expect(errorBanner).toBeVisible({ timeout: 5000 });
-    await expect(errorBanner).toContainText(/sign-in/i);
+    await expect(errorBanner).toContainText(/sign in/i);
   });
 
   test('shows error banner with fetch error status', async ({ page }) => {
