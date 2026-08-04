@@ -100,6 +100,10 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Push DB schema
+        run: bunx drizzle-kit push --force
+        working-directory: packages/db
+
       - name: Test
         env:
           RUN_LIVE_DNS_TESTS: "0"
@@ -107,10 +111,6 @@ jobs:
 
       - name: Build
         run: bun run build
-
-      - name: Push DB schema
-        run: bunx drizzle-kit push --force
-        working-directory: packages/db
 
       - name: Start Collector
         env:
