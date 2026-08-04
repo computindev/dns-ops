@@ -2,7 +2,16 @@
   "manifestId": "ASORIN-AI-CONTROLLED-LIVE-01-03",
   "status": "FOUNDER_AUTHORIZED_PENDING_HARNESS_IMPLEMENTATION",
   "zone": "asorin.ai",
+  "zoneId": "7391960081e72b26c9c5066133013ab2",
   "provider": "cloudflare",
+  "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+  "testAssets": {
+    "webHost": "asorin.ai",
+    "mailSubdomain": "mail.asorin.ai"
+  },
+  "allowlist": [
+    {"name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"]}
+  ],
   "rollbackAndRevocationOwner": "Antonio",
   "globalConstraints": [
     "No production traffic, client dependency, or real mail dependency exists in asorin.ai.",
