@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { validateControlledFaultHarnessPolicy, authorizeControlledFaultMutation } from '../../packages/contracts/dist/index.js';
 
-const ROOT = resolve(import.meta.dirname, '../..');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_MANIFEST = resolve(ROOT, 'docs/domain-operations/evidence/gate-3/asorin-live-mutation-manifest.json');
 const fail = (message) => { throw new Error(`controlled-live harness: ${message}`); };
 const fingerprint = (token) => `sha256:${createHash('sha256').update(token).digest('hex')}`;
@@ -32,14 +33,13 @@ export function requireLive03Preconditions({ manifest, token, evidence }) {
   const policy = policyFromManifest(manifest, token);
   authorizeControlledFaultMutation(policy, { zoneId: policy.zoneId, name: 'mail.asorin.ai', type: 'TXT', mutationId: 'LIVE-03' });
   if (!evidence || evidence.spfRecords !== 1 || evidence.ttl !== 60 || evidence.mxRecords !== 0) fail('LIVE-03 authoritative baseline rejected');
-  for (const id of ['scanTaskIds', 'signalIds', 'caseIds', 'auditEventIds']) if (!Array.isArray(evidence[id]) || evidence[id].length === 0) fail(`missing required ${id}`);
+  for (const id of ['authoritativeEvidenceIds', 'scanTaskIds', 'signalIds', 'caseIds', 'auditEventIds']) if (!Array.isArray(evidence[id]) || evidence[id].length === 0) fail(`missing required ${id}`);
 }
 function main() {
   const command = process.argv[2] ?? 'status';
-  if (!['status', 'prepare', 'apply', 'verify', 'restore', 'run', 'recover'].includes(command)) fail('unsupported command');
+  if (command !== 'status') fail('unsupported command until a provider-specific adapter is implemented');
   const token = protectedToken(process.env.DNSOPS_CLOUDFLARE_SECRET_FILE ?? `${process.env.HOME}/.config/dns-ops/cloudflare-test.env`, 'CLOUDFLARE_API_TOKEN');
   const manifest = loadManifest(); policyFromManifest(manifest, token);
-  if (command === 'status') return console.log(JSON.stringify({ status: 'READY_FOR_PREFLIGHT_ONLY', manifestId: manifest.manifestId, zoneId: manifest.zoneId }));
-  fail(`${command} requires a provider-specific adapter; no provider request was made`);
+  return console.log(JSON.stringify({ status: 'READY_FOR_PREFLIGHT_ONLY', manifestId: manifest.manifestId, zoneId: manifest.zoneId, providerCredentialFingerprint: manifest.providerCredentialFingerprint, allowlist: manifest.allowlist }));
 }
 if (process.argv[1] === new URL(import.meta.url).pathname) { try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; } }
