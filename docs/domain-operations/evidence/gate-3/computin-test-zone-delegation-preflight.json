@@ -1,0 +1,44 @@
+{
+  "evidenceId": "GATE3-COMPUTIN-TEST-ZONE-DELEGATION-PREFLIGHT",
+  "recordedAt": "2026-08-04T15:52:46Z",
+  "status": "AUTHORIZED_PENDING_CLOUDFLARE_AUTHENTICATION",
+  "founderAuthorization": {
+    "author": "Antonio",
+    "authorizedAction": "Create and delegate dnsops-test.computin.dev as an isolated child DNS zone.",
+    "rollbackAndRevocationOwner": "Antonio",
+    "explicitExclusions": [
+      "computin.dev apex",
+      "existing MX records",
+      "existing SPF records",
+      "existing DKIM records",
+      "existing DMARC records"
+    ]
+  },
+  "readOnlyPreflight": {
+    "parentZone": "computin.dev",
+    "parentAuthoritativeNameservers": [
+      "olivia.ns.cloudflare.com",
+      "mcgrory.ns.cloudflare.com"
+    ],
+    "parentNsObservedTtlSeconds": 2198,
+    "childZone": "dnsops-test.computin.dev",
+    "childDelegationPresent": false,
+    "negativeResponse": {
+      "soaZone": "computin.dev",
+      "soaMinimumTtlSeconds": 1800
+    }
+  },
+  "executionBoundary": {
+    "provider": "Cloudflare",
+    "wranglerAuthentication": "not authenticated; wrangler whoami instructed the operator to run wrangler login",
+    "credentialHandling": "No token value was requested, read, logged, or committed.",
+    "permittedNextMutation": "Create the child Cloudflare zone and add only its delegation NS records at dnsops-test.computin.dev after an authenticated operator session is available."
+  },
+  "remainingInputs": [
+    "Cloudflare authenticated session or an approved harness runtime-secret reference after the child zone exists",
+    "DNSOPS_TEST_WEB_HOST and a non-production deployment mechanism for redirect and indexability fixtures",
+    "DNSOPS_TEST_MAIL_SUBDOMAIN with confirmation of no real mail dependency",
+    "Exact record allowlist, baseline values, and previous TTLs",
+    "Manual-work baseline, portfolio classification, and playbook approval"
+  ]
+}

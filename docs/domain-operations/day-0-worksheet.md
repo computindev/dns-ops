@@ -123,6 +123,13 @@ These must be non-production and have no client or real mail dependency.
 | Provider token secret name |  |  | Do not paste token value |
 | Token fingerprint |  |  |  |
 
+## Authorized test-zone preflight
+
+- Founder authorization recorded 2026-08-04: create and delegate `dnsops-test.computin.dev` as an isolated child zone; Antonio owns rollback and credential revocation.
+- Explicitly excluded: the `computin.dev` apex and all existing MX, SPF, DKIM, and DMARC records.
+- Read-only preflight evidence: `docs/domain-operations/evidence/gate-3/computin-test-zone-delegation-preflight.json`.
+- The child zone and its scoped credential do not yet exist; do not run provider mutations until the remaining safety confirmations are complete.
+
 ## Safety confirmations
 
 - [ ] No production traffic.
