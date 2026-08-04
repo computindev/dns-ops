@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check src",
     "test": "echo 'No unit tests - schema only'",
-    "migrate": "drizzle-kit migrate",
+    "migrate": "drizzle-kit migrate:pg",
     "generate": "drizzle-kit generate:pg",
     "studio": "drizzle-kit studio",
     "verify-migrations": "npx tsx scripts/verify-migrations.ts",
