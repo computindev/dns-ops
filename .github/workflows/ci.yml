@@ -101,7 +101,7 @@ jobs:
         run: bun run typecheck
 
       - name: Push DB schema
-        run: bunx drizzle-kit push:pg
+        run: printf 'y\n' | bunx drizzle-kit push:pg
         working-directory: packages/db
 
       - name: Test
