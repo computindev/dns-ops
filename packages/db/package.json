@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "bun run --filter @dns-ops/contracts build && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src",
     "test": "echo 'No unit tests - schema only'",
