@@ -1,61 +1,38 @@
 /**
- * Migration Runner — Railway web release command (apps/web/railway.toml).
+ * Transactional migration runner for CI and Railway releases.
  *
- * Replaces the legacy hardcoded-file-list + swallow-everything runner with:
- *   1. Dynamic discovery — reads packages/db/src/migrations/*.sql sorted, so a
- *      newly added 0011_*.sql can never be silently forgotten in production.
- *      (CI's verify-migrations.ts already discovers dynamically, so prod now
- *      matches what CI validates.)
- *   2. Applied-ledger — `_migrations_applied(name, checksum, applied_at)`.
- *      Each migration runs at most once; re-runs skip by name instead of
- *      re-executing and swallowing "already exists" errors every deploy.
- *
- * Flow: ensureLedger → discoverMigrationFiles → for each file NOT in ledger:
- *   applyPending (BEGIN; run sql; INSERT ledger; COMMIT). No migration uses
- *   CREATE INDEX CONCURRENTLY or its own transaction control, so wrapping each
- *   file in a single transaction is safe.
- *
- * Legacy bootstrap: a database populated by the previous runner (which had no
- * ledger) has all objects already. On the first run of this runner against such
- * a database, a not-in-ledger migration whose objects already exist raises an
- * idempotent "already exists" error; we record it as applied and continue rather
- * than fail the deploy. Any other error fails the deploy.
+ * Every migration file is applied once, in its own transaction, and recorded
+ * atomically in _migrations_applied. Failed migrations are rolled back and are
+ * deliberately not treated as applied: an operator must correct the database
+ * state rather than silently accepting a potentially partial schema.
  */
 
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const { Client } = pg;
-
 const LEDGER_TABLE = '_migrations_applied';
+const LOCK_KEY = 'dns-ops:migrations:v1';
 
-/**
- * PostgreSQL SQLSTATE codes for "object already exists" / "duplicate" — the
- * idempotent re-create conditions the legacy runner relied on. Used ONLY to
- * bridge a pre-ledger database into the ledger; never to mask real errors on a
- * fresh database.
- */
-const IDEMPOTENT_ERROR_CODES = new Set(['42P07', '42710', '42P06', '42701']);
-
-function isIdempotentMigrationError(err) {
-  const message = String(err?.message ?? '').toLowerCase();
-  return IDEMPOTENT_ERROR_CODES.has(err?.code) || message.includes('already exists');
-}
-
-/** Discover migration files dynamically, sorted lexicographically (matches verify-migrations.ts). */
 export function discoverMigrationFiles(migrationDir) {
   return readdirSync(migrationDir)
     .filter((file) => file.endsWith('.sql'))
     .sort();
 }
 
-/** Stable SHA-256 checksum of a migration's content, recorded for forensic drift detection. */
 export function computeChecksum(content) {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function quoteIdentifier(identifier) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Invalid PostgreSQL schema name: ${identifier}`);
+  }
+  return `"${identifier}"`;
 }
 
 async function ensureLedger(client) {
@@ -69,112 +46,82 @@ async function ensureLedger(client) {
 }
 
 async function getAppliedMigrations(client) {
-  const result = await client.query(`SELECT name FROM ${LEDGER_TABLE}`);
-  return new Set(result.rows.map((row) => row.name));
+  const result = await client.query(`SELECT name, checksum FROM ${LEDGER_TABLE}`);
+  return new Map(result.rows.map((row) => [row.name, row.checksum]));
 }
 
-async function recordApplied(client, name, checksum) {
-  await client.query(
-    `INSERT INTO ${LEDGER_TABLE} (name, checksum) VALUES ($1, $2)
-     ON CONFLICT (name) DO NOTHING`,
-    [name, checksum]
-  );
-}
-
-/**
- * Apply one pending migration inside a single transaction: run the SQL, then
- * record it in the ledger. On any error, roll back and re-throw so the caller
- * can decide (bootstrap-bridge vs. hard failure).
- */
-async function applyPending(client, migrationDir, file) {
+async function applyPending(client, migrationDir, file, checksum) {
   const sql = readFileSync(join(migrationDir, file), 'utf8');
-  const checksum = computeChecksum(sql);
 
   await client.query('BEGIN');
   try {
     await client.query(sql);
-    await recordApplied(client, file, checksum);
+    await client.query(`INSERT INTO ${LEDGER_TABLE} (name, checksum) VALUES ($1, $2)`, [
+      file,
+      checksum,
+    ]);
     await client.query('COMMIT');
-  } catch (err) {
+  } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
-    throw err;
+    throw error;
   }
 }
 
 /**
- * Run all pending migrations against the database at `databaseUrl`.
+ * Run every unapplied migration against one database.
  *
- * @param {{ databaseUrl: string; migrationDir: string; ssl?: import('pg').ConnectionConfig['ssl'] }} options
- * @returns {Promise<{ applied: string[]; skipped: string[]; bootstrapped: string[] }>}
- *   applied — migrations executed fresh this run.
- *   skipped — migrations already in the ledger (no SQL run).
- *   bootstrapped — pre-ledger migrations whose objects already existed.
+ * @param {{ databaseUrl: string; migrationDir: string; schema?: string; ssl?: import('pg').ConnectionConfig['ssl'] }} options
+ * @returns {Promise<{ applied: string[]; skipped: string[] }>}
  */
-export async function runMigrations({ databaseUrl, migrationDir, ssl }) {
-  if (!databaseUrl) {
-    throw new Error('databaseUrl is required to run migrations');
-  }
+export async function runMigrations({ databaseUrl, migrationDir, schema, ssl }) {
+  if (!databaseUrl) throw new Error('databaseUrl is required to run migrations');
 
   const sslConfig =
     ssl ?? (databaseUrl.includes('sslmode=no-verify') ? { rejectUnauthorized: false } : undefined);
-  const applied = [];
-  const skipped = [];
-  const bootstrapped = [];
-
   const client = new Client({ connectionString: databaseUrl, ssl: sslConfig });
-  console.log('=== Migration Runner Starting ===');
-  console.log(`DATABASE_URL found: ${databaseUrl.substring(0, 40)}...`);
+  let lockHeld = false;
 
   try {
-    console.log('Connecting to database...');
     await client.connect();
-    console.log('Connected successfully');
+    if (schema) {
+      await client.query(`SET search_path TO ${quoteIdentifier(schema)}, public`);
+    }
 
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [LOCK_KEY]);
+    lockHeld = true;
     await ensureLedger(client);
-    const alreadyApplied = await getAppliedMigrations(client);
-    const files = discoverMigrationFiles(migrationDir);
 
-    console.log(
-      `Discovered ${files.length} migration file(s); ${alreadyApplied.size} already applied.`
-    );
+    const appliedMigrations = await getAppliedMigrations(client);
+    const applied = [];
+    const skipped = [];
 
-    for (const file of files) {
-      if (alreadyApplied.has(file)) {
-        console.log(`Skipping already-applied: ${file}`);
+    for (const file of discoverMigrationFiles(migrationDir)) {
+      const checksum = computeChecksum(readFileSync(join(migrationDir, file), 'utf8'));
+      const recordedChecksum = appliedMigrations.get(file);
+
+      if (recordedChecksum) {
+        if (recordedChecksum !== checksum) {
+          throw new Error(`Migration checksum mismatch for ${file}`);
+        }
         skipped.push(file);
         continue;
       }
 
-      try {
-        console.log(`Running migration: ${file}`);
-        await applyPending(client, migrationDir, file);
-        console.log(`Completed: ${file}`);
-        applied.push(file);
-      } catch (err) {
-        if (isIdempotentMigrationError(err)) {
-          // Legacy database: the object already exists from a pre-ledger run.
-          // Record the migration as applied so future runs skip it by name.
-          console.log(
-            `Bootstrapping legacy migration ${file} (object already exists): ${err.code ?? ''} ${err.message}`
-          );
-          const checksum = computeChecksum(readFileSync(join(migrationDir, file), 'utf8'));
-          await recordApplied(client, file, checksum);
-          bootstrapped.push(file);
-          continue;
-        }
-        console.error(`Error in ${file}:`, err.code, err.message);
-        throw err;
-      }
+      await applyPending(client, migrationDir, file, checksum);
+      applied.push(file);
     }
 
-    console.log('=== Migrations Complete ===');
-    return { applied, skipped, bootstrapped };
+    return { applied, skipped };
   } finally {
+    if (lockHeld) {
+      await client
+        .query('SELECT pg_advisory_unlock(hashtext($1))', [LOCK_KEY])
+        .catch(() => undefined);
+    }
     await client.end().catch(() => undefined);
   }
 }
 
-/** True when this file is the Node entry point (not imported by a test). */
 function isMainModule() {
   if (!process.argv[1]) return false;
   try {
@@ -186,26 +133,20 @@ function isMainModule() {
 
 if (isMainModule()) {
   const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    console.error('DATABASE_URL environment variable is required to run migrations');
-    process.exit(1);
-  }
-
-  const migrationDir = join(process.cwd(), 'packages/db/src/migrations');
+  const migrationDir = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '../packages/db/src/migrations'
+  );
 
   runMigrations({ databaseUrl, migrationDir })
-    .then(({ applied, skipped, bootstrapped }) => {
+    .then(({ applied, skipped }) => {
       if (applied.length) console.log(`Applied (${applied.length}): ${applied.join(', ')}`);
       if (skipped.length)
         console.log(`Skipped already-applied (${skipped.length}): ${skipped.join(', ')}`);
-      if (bootstrapped.length) {
-        console.log(`Bootstrapped legacy (${bootstrapped.length}): ${bootstrapped.join(', ')}`);
-      }
       console.log('Migration runner finished');
     })
-    .catch((err) => {
-      console.error('Migration runner failed:', err);
+    .catch((error) => {
+      console.error('Migration runner failed:', error);
       process.exit(1);
     });
 }
