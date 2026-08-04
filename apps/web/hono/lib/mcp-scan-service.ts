@@ -99,7 +99,8 @@ export class McpScanService {
         ok: false,
         error: {
           code: `COLLECTOR_${proxied.status}`,
-          message: proxied.status >= 500 ? 'Collector unavailable' : 'Collector rejected scan request',
+          message:
+            proxied.status >= 500 ? 'Collector unavailable' : 'Collector rejected scan request',
         },
         replayed: false,
       };
