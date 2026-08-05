@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +11,7 @@ import {
   loadManifest,
   policyFromManifest,
   protectedToken,
+  protectedValues,
 } from '../tools/controlled-live-harness/runner.mjs';
 
 const token = 'x';
@@ -28,6 +30,40 @@ const record = {
   content: 'v=spf1 -all',
   ttl: 60,
 };
+const railwayVerificationValues = Object.freeze({
+  RAILWAY_ASORIN_AI_VERIFICATION_TXT: randomBytes(24).toString('hex'),
+  RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT: randomBytes(24).toString('hex'),
+});
+const webRecords = Object.freeze([
+  {
+    id: 'c'.repeat(32),
+    name: 'asorin.ai',
+    type: 'CNAME',
+    content: 'epgybwo0.up.railway.app',
+    ttl: 60,
+  },
+  {
+    id: 'd'.repeat(32),
+    name: 'www.asorin.ai',
+    type: 'CNAME',
+    content: '4xbfxxr5.up.railway.app',
+    ttl: 60,
+  },
+  {
+    id: 'e'.repeat(32),
+    name: '_railway-verify.asorin.ai',
+    type: 'TXT',
+    content: railwayVerificationValues.RAILWAY_ASORIN_AI_VERIFICATION_TXT,
+    ttl: 60,
+  },
+  {
+    id: 'f'.repeat(32),
+    name: '_railway-verify.www.asorin.ai',
+    type: 'TXT',
+    content: railwayVerificationValues.RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT,
+    ttl: 60,
+  },
+]);
 const completionEvidence = {
   authoritativeEvidenceIds: ['authoritative-01'],
   scanTaskIds: ['scan-01'],
@@ -49,10 +85,11 @@ const mockFetch = (...responses) => {
   };
 };
 
-const adapter = (fetch) =>
+const adapter = (fetch, runtimeValues) =>
   createCloudflareAdapter({
     manifest: manifest(),
     token,
+    railwayVerificationValues: runtimeValues,
     fetchImpl: fetch,
     now: () => new Date('2026-08-05T15:00:00.000Z'),
     createRunId: () => 'live-03-test-run',
@@ -64,6 +101,35 @@ test('derives LIVE-03 authorization from the manifest and pins token fingerprint
   const m = manifest();
   assert.throws(() => policyFromManifest(m, 'wrong'), /fingerprint/);
 });
+test('requires an exact mode-600 Railway verification secret file', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'railway-verification');
+  writeFileSync(
+    path,
+    `export RAILWAY_ASORIN_AI_VERIFICATION_TXT='${railwayVerificationValues.RAILWAY_ASORIN_AI_VERIFICATION_TXT}'\nexport RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT='${railwayVerificationValues.RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT}'\n`
+  );
+  chmodSync(path, 0o600);
+  assert.deepEqual(
+    protectedValues(path, [
+      'RAILWAY_ASORIN_AI_VERIFICATION_TXT',
+      'RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT',
+    ]),
+    railwayVerificationValues
+  );
+  chmodSync(path, 0o644);
+  assert.throws(() => protectedValues(path, ['RAILWAY_ASORIN_AI_VERIFICATION_TXT']), /mode 600/);
+});
+test('runner keeps LIVE-01/02 fixture mode changes blocked before reading credentials', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
+  );
+  const result = spawnSync(process.execPath, [runner, 'fixture-mode', 'redirect_fault'], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unsupported command/);
+  assert.doesNotMatch(result.stderr, /secret file/);
+});
+
 test('runner rejects a caller-supplied completion evidence file before reading credentials', () => {
   const runner = fileURLToPath(
     new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
@@ -76,6 +142,104 @@ test('runner rejects a caller-supplied completion evidence file before reading c
   assert.equal(result.status, 1);
   assert.match(result.stderr, /does not accept a caller-supplied completion evidence file/);
   assert.doesNotMatch(result.stderr, /secret file/);
+});
+
+test('runner rejects a missing web-bootstrap artifact path before reading credentials', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
+  );
+  const result = spawnSync(process.execPath, [runner, 'web-bootstrap'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /web-bootstrap requires an output artifact path/);
+  assert.doesNotMatch(result.stderr, /secret file/);
+});
+
+test('LIVE-01/02 web preflight is read-only, validates every bootstrap record, and redacts TXT values', async () => {
+  const mocked = mockFetch(
+    ok({ id: manifest().zoneId, name: 'asorin.ai' }),
+    ...webRecords.map((entry) => ok([entry]))
+  );
+  const result = await adapter(mocked.fetch, railwayVerificationValues).webPreflight();
+  assert.equal(result.status, 'WEB_PREFLIGHT_OK');
+  assert.equal(mocked.calls.length, 5);
+  assert.deepEqual(
+    mocked.calls.map(({ init }) => init.method),
+    ['GET', 'GET', 'GET', 'GET', 'GET']
+  );
+  assert.deepEqual(result.providerResponses, [
+    'cloudflare.web_zone_preflight: 200',
+    'cloudflare.web_dns_verify: 200',
+    'cloudflare.web_dns_verify: 200',
+    'cloudflare.web_dns_verify: 200',
+    'cloudflare.web_dns_verify: 200',
+  ]);
+  const emitted = JSON.stringify(result);
+  assert.doesNotMatch(
+    emitted,
+    new RegExp(railwayVerificationValues.RAILWAY_ASORIN_AI_VERIFICATION_TXT)
+  );
+  assert.doesNotMatch(
+    emitted,
+    new RegExp(railwayVerificationValues.RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT)
+  );
+  const verificationFetch = mockFetch(
+    ok({ id: manifest().zoneId, name: 'asorin.ai' }),
+    ...webRecords.map((entry) => ok([entry]))
+  );
+  const verification = await adapter(
+    verificationFetch.fetch,
+    railwayVerificationValues
+  ).webVerify();
+  assert.equal(verification.status, 'WEB_BOOTSTRAP_VERIFIED');
+  assert.equal(verificationFetch.calls.length, 5);
+});
+
+test('LIVE-01/02 web bootstrap fails before provider access without exact runtime values', async () => {
+  const mocked = mockFetch(ok({}));
+  await assert.rejects(
+    adapter(mocked.fetch, {
+      RAILWAY_ASORIN_AI_VERIFICATION_TXT: 'valid-but-incomplete',
+    }).webBootstrap(),
+    /runtime values are invalid/
+  );
+  assert.equal(mocked.calls.length, 0);
+});
+
+test('LIVE-01/02 web bootstrap creates only exact missing CNAME/TXT records and emits no TXT values', async () => {
+  const created = webRecords.map((entry) => ok(entry));
+  const mocked = mockFetch(
+    ok({ id: manifest().zoneId, name: 'asorin.ai' }),
+    ok([]),
+    created[0],
+    ok([]),
+    created[1],
+    ok([]),
+    created[2],
+    ok([]),
+    created[3]
+  );
+  const artifact = await adapter(mocked.fetch, railwayVerificationValues).webBootstrap();
+  assert.equal(artifact.kind, 'CLOUDFLARE_LIVE01_02_WEB_BOOTSTRAP');
+  assert.equal(mocked.calls.length, 9);
+  assert.deepEqual(
+    mocked.calls.map(({ init }) => init.method),
+    ['GET', 'GET', 'POST', 'GET', 'POST', 'GET', 'POST', 'GET', 'POST']
+  );
+  assert.deepEqual(JSON.parse(mocked.calls[4].init.body), {
+    type: 'CNAME',
+    name: 'www.asorin.ai',
+    content: '4xbfxxr5.up.railway.app',
+    ttl: 60,
+  });
+  const emitted = JSON.stringify(artifact);
+  assert.doesNotMatch(
+    emitted,
+    new RegExp(railwayVerificationValues.RAILWAY_ASORIN_AI_VERIFICATION_TXT)
+  );
+  assert.doesNotMatch(
+    emitted,
+    new RegExp(railwayVerificationValues.RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT)
+  );
 });
 
 test('preflight is read-only, verifies zone and exact approved record, and emits redacted summaries', async () => {
@@ -243,6 +407,13 @@ test('manifest fingerprint and exact allowlist are rechecked before an injected 
       createCloudflareAdapter({ manifest: manifest(), token: 'wrong', fetchImpl: mocked.fetch }),
     /fingerprint/
   );
+  const wrongTarget = JSON.parse(JSON.stringify(manifest()));
+  wrongTarget.bootstrapAllowlist[0].content = 'unapproved.example';
+  assert.throws(
+    () => createCloudflareAdapter({ manifest: wrongTarget, token, fetchImpl: mocked.fetch }),
+    /bootstrap allowlist/
+  );
+  assert.equal(mocked.calls.length, 0);
 });
 
 test('provider errors are fail-closed and redact provider bodies', async () => {
