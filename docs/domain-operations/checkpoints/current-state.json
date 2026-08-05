@@ -113,6 +113,7 @@
       "docs/domain-operations/evidence/gate-3/asorin-live-01-fixture-restored.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-02-fixture-restored.json",
       "docs/domain-operations/evidence/gate-3/asorin-web-restoration-recheck.json",
+      "docs/domain-operations/evidence/gate-3/asorin-durable-evidence-redaction-audit.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-01-02-authoritative-web.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-03-authoritative-restoration.json",
       "docs/domain-operations/evidence/gate-3/asorin-authoritative-restoration-recheck.json",
@@ -164,5 +165,5 @@
     "Obtain authorized DNS Ops MCP access plus authorized web-session GET /api/portfolio/audit and GET /api/alerts access; run both required redacted preflights, then collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-05T20:36:39Z"
+  "updatedAt": "2026-08-05T21:08:36Z"
 }

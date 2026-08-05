@@ -1,0 +1,25 @@
+{
+  "evidenceId": "GATE3-ASORIN-DURABLE-EVIDENCE-REDACTION-AUDIT",
+  "recordedAt": "2026-08-05T21:08:36Z",
+  "auditedRevision": "083b3818899df2f48d4179967d7382c7514df063",
+  "result": "CLEAN_PENDING_EXTERNAL_DNS_OPS_EVIDENCE",
+  "scope": {
+    "checkpoint": "docs/domain-operations/checkpoints/current-state.json",
+    "durableArtifactCount": 11,
+    "artifactListSource": "controlledLiveCheckpoint.durableEvidence"
+  },
+  "method": {
+    "credentialKeyCheck": "Flagged sensitive-key fields only when their string value was neither a sha256 fingerprint nor the literal <redacted> marker.",
+    "credentialValueCheck": "Flagged only Bearer values, private-key blocks, JWT-shaped strings, and common live-key prefixes.",
+    "outputPolicy": "The audit emitted aggregate finding metadata only; it did not print, persist, or transmit artifact scalar values."
+  },
+  "findings": {
+    "unredactedSensitiveKeyValues": 0,
+    "tokenLikeValues": 0
+  },
+  "limitations": [
+    "This validates only the 11 checkpoint-linked JSON artifacts at auditedRevision; it does not inspect runtime secret files or unlinked repository content.",
+    "This is a redaction-quality gate, not a DNS Ops scan, signal, case, audit, authoritative-DNS lifecycle, restoration, or LIVE-01 reopen proof.",
+    "No credentials, MCP calls, scans, case actions, provider/Railway actions, mutations, or deployments were performed."
+  ]
+}
