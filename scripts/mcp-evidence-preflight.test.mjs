@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  isPublicMcpAddress,
   loadMcpPreflightSecret,
   REQUIRED_MCP_TOOLS,
   resolveMcpEndpoint,
@@ -24,10 +25,7 @@ import {
 
 const endpoint = 'https://mcp.example.test/mcp';
 const token = 'mcp-preflight-token-with-sufficient-entropy-123456';
-const publicAddresses = Object.freeze([
-  Object.freeze({ address: '93.184.216.34', family: 4 }),
-  Object.freeze({ address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }),
-]);
+const publicAddresses = Object.freeze([Object.freeze({ address: '93.184.216.34', family: 4 })]);
 const resolvePublic = async () => publicAddresses;
 
 function secret(values = { DNSOPS_MCP_ENDPOINT: endpoint, DNSOPS_MCP_BEARER_TOKEN: token }) {
@@ -241,43 +239,126 @@ test('MCP errors do not disclose a response body or bearer token', async () => {
   assert.equal(existsSync(artifactPath), false);
 });
 
-test('MCP endpoint resolution rejects every private, special, and mixed DNS answer before a request', async () => {
-  const privateAnswers = [
-    { address: '127.0.0.1', family: 4 },
-    { address: '10.0.0.1', family: 4 },
-    { address: '169.254.169.254', family: 4 },
-    { address: '192.168.1.1', family: 4 },
-    { address: '::1', family: 6 },
-    { address: 'fd00::1', family: 6 },
-    { address: 'fe80::1', family: 6 },
-    { address: '2001:0db8::1', family: 6 },
+test('MCP address policy rejects every IANA special-purpose IPv4 block and all IPv6', () => {
+  const nonGlobalIpv4Boundaries = [
+    '0.0.0.0',
+    '0.255.255.255',
+    '10.0.0.0',
+    '10.255.255.255',
+    '100.64.0.0',
+    '100.127.255.255',
+    '127.0.0.0',
+    '127.255.255.255',
+    '169.254.0.0',
+    '169.254.255.255',
+    '172.16.0.0',
+    '172.31.255.255',
+    '192.0.0.0',
+    '192.0.0.255',
+    '192.0.2.0',
+    '192.0.2.255',
+    '192.31.196.0',
+    '192.31.196.255',
+    '192.52.193.0',
+    '192.52.193.255',
+    '192.88.99.0',
+    '192.88.99.255',
+    '192.168.0.0',
+    '192.168.255.255',
+    '192.175.48.0',
+    '192.175.48.255',
+    '198.18.0.0',
+    '198.19.255.255',
+    '198.51.100.0',
+    '198.51.100.255',
+    '203.0.113.0',
+    '203.0.113.255',
+    '224.0.0.0',
+    '239.255.255.255',
+    '240.0.0.0',
+    '255.255.255.255',
   ];
-  for (const answer of privateAnswers) {
+  for (const address of nonGlobalIpv4Boundaries) assert.equal(isPublicMcpAddress(address), false);
+  for (const address of [
+    '::1',
+    'fd00::1',
+    'fe80::1',
+    '2001:0db8::1',
+    '2001:10::1',
+    '2606:2800:220:1:248:1893:25c8:1946',
+  ])
+    assert.equal(isPublicMcpAddress(address), false);
+
+  for (const address of [
+    '8.8.8.8',
+    '9.255.255.255',
+    '11.0.0.0',
+    '100.63.255.255',
+    '100.128.0.0',
+    '172.15.255.255',
+    '172.32.0.0',
+    '192.0.1.1',
+    '192.0.3.1',
+    '192.31.195.255',
+    '192.31.197.0',
+    '192.175.47.255',
+    '192.175.49.0',
+    '223.255.255.255',
+  ])
+    assert.equal(isPublicMcpAddress(address), true);
+});
+
+test('MCP endpoint resolution rejects special and mixed DNS answers before bearer HTTPS', async () => {
+  const specialAnswers = [
+    { address: '192.31.196.1', family: 4 },
+    { address: '192.175.48.1', family: 4 },
+    { address: '2001:10::1', family: 6 },
+    { address: '93.184.216.34', family: 6 },
+  ];
+  for (const answer of specialAnswers) {
     await assert.rejects(
       resolveMcpEndpoint(validateMcpEndpoint(endpoint), async () => [answer]),
       /MCP endpoint resolution failed/
     );
   }
+
+  const artifactPath = join(mkdtempSync(join(tmpdir(), 'dnsops-mcp-')), 'preflight.json');
+  let bearerRequests = 0;
   await assert.rejects(
-    resolveMcpEndpoint(validateMcpEndpoint(endpoint), async () => [
-      publicAddresses[0],
-      privateAnswers[0],
-    ]),
+    runMcpEvidencePreflight({
+      secretFile: secret(),
+      artifactPath,
+      fetchImpl: async () => {
+        bearerRequests += 1;
+        throw new Error('must not request');
+      },
+      resolveHostname: async () => [publicAddresses[0], specialAnswers[0]],
+    }),
     /MCP endpoint resolution failed/
   );
+  assert.equal(bearerRequests, 0);
+  assert.equal(existsSync(artifactPath), false);
 });
 
 test('MCP endpoint connection lookup is pinned to the vetted DNS answers', async () => {
   const resolved = await resolveMcpEndpoint(validateMcpEndpoint(endpoint), resolvePublic);
   await new Promise((resolve, reject) =>
-    resolved.lookup('mcp.example.test', { family: 6 }, (error, address, family) => {
+    resolved.lookup('mcp.example.test', { family: 4 }, (error, address, family) => {
       if (error) reject(error);
       else {
-        assert.equal(address, publicAddresses[1].address);
-        assert.equal(family, 6);
+        assert.equal(address, publicAddresses[0].address);
+        assert.equal(family, 4);
         resolve();
       }
     })
+  );
+  await assert.rejects(
+    new Promise((resolve, reject) =>
+      resolved.lookup('mcp.example.test', { family: 6 }, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+    /lookup rejected/
   );
   await assert.rejects(
     new Promise((resolve, reject) =>

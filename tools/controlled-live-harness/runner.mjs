@@ -161,33 +161,54 @@ function validJsonRpcResult(value, id) {
   );
 }
 
-function ipv4IsPublic(address) {
-  if (isIP(address) !== 4) return false;
-  const [a, b] = address.split('.').map(Number);
-  return !(
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 0 || b === 168)) ||
-    (a === 198 && (b === 18 || b === 19 || b === 51)) ||
-    (a === 203 && b === 0) ||
-    a >= 224
-  );
+// Conservative denylist for the complete IANA IPv4 Special-Purpose Address
+// Registry plus multicast. Entries covering a smaller registered allocation
+// deliberately deny their entire enclosing prefix; this avoids exceptions that
+// could become unsafe when the registry changes. IPv6 is not accepted until a
+// comparably maintained complete policy is available.
+const NON_GLOBAL_IPV4_CIDRS = Object.freeze([
+  ['0.0.0.0', 8], // "This network"
+  ['10.0.0.0', 8], // Private-use
+  ['100.64.0.0', 10], // Shared address space
+  ['127.0.0.0', 8], // Loopback
+  ['169.254.0.0', 16], // Link local
+  ['172.16.0.0', 12], // Private-use
+  ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.0.2.0', 24], // Documentation
+  ['192.31.196.0', 24], // AS112-v4
+  ['192.52.193.0', 24], // AMT
+  ['192.88.99.0', 24], // Deprecated 6to4 relay anycast
+  ['192.168.0.0', 16], // Private-use
+  ['192.175.48.0', 24], // Direct Delegation AS112 service
+  ['198.18.0.0', 15], // Benchmarking
+  ['198.51.100.0', 24], // Documentation
+  ['203.0.113.0', 24], // Documentation
+  ['224.0.0.0', 4], // Multicast
+  ['240.0.0.0', 4], // Reserved, including limited broadcast
+]);
+
+function ipv4ToInteger(address) {
+  return address.split('.').reduce((value, octet) => value * 256 + Number(octet), 0);
 }
 
-function ipv6IsPublic(address) {
-  if (isIP(address) !== 6) return false;
-  const normalized = address.toLowerCase();
-  // Global-unicast IPv6 is 2000::/3. Documentation addresses are excluded
-  // even though they fall within that allocation.
-  return normalized.startsWith('2') && !/^2001:(?:0{0,3}db8|0{0,3}2)(?::|$)/.test(normalized);
+const NON_GLOBAL_IPV4_NETWORKS = Object.freeze(
+  NON_GLOBAL_IPV4_CIDRS.map(([network, prefix]) =>
+    Object.freeze({ network: ipv4ToInteger(network), prefix })
+  )
+);
+
+function ipv4IsPublic(address) {
+  if (isIP(address) !== 4) return false;
+  const value = ipv4ToInteger(address);
+  return !NON_GLOBAL_IPV4_NETWORKS.some(({ network, prefix }) => {
+    const blockSize = 2 ** (32 - prefix);
+    return Math.floor(value / blockSize) === Math.floor(network / blockSize);
+  });
 }
 
 export function isPublicMcpAddress(address) {
-  return ipv4IsPublic(address) || ipv6IsPublic(address);
+  // Do not permit IPv6 until it has an equivalently complete, maintained policy.
+  return ipv4IsPublic(address);
 }
 
 /**
@@ -208,7 +229,7 @@ export async function resolveMcpEndpoint(endpoint, resolveHostname = dns.lookup)
     addresses.some(
       (entry) =>
         !entry ||
-        (entry.family !== 4 && entry.family !== 6) ||
+        entry.family !== 4 ||
         typeof entry.address !== 'string' ||
         !isPublicMcpAddress(entry.address)
     )
