@@ -7,6 +7,48 @@ import {
 
 const API_ORIGIN = 'https://api.cloudflare.com/client/v4';
 const LIVE_03 = Object.freeze({ name: 'mail.asorin.ai', type: 'TXT', mutationId: 'LIVE-03' });
+const WEB_BOOTSTRAP = Object.freeze([
+  Object.freeze({
+    name: 'asorin.ai',
+    type: 'CNAME',
+    content: 'epgybwo0.up.railway.app',
+    ttl: 60,
+    mutationId: 'LIVE-02',
+  }),
+  Object.freeze({
+    name: 'www.asorin.ai',
+    type: 'CNAME',
+    content: '4xbfxxr5.up.railway.app',
+    ttl: 60,
+    mutationId: 'LIVE-01',
+  }),
+  Object.freeze({
+    name: '_railway-verify.asorin.ai',
+    type: 'TXT',
+    runtimeValue: 'RAILWAY_ASORIN_AI_VERIFICATION_TXT',
+    ttl: 60,
+    mutationId: 'LIVE-02',
+  }),
+  Object.freeze({
+    name: '_railway-verify.www.asorin.ai',
+    type: 'TXT',
+    runtimeValue: 'RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT',
+    ttl: 60,
+    mutationId: 'LIVE-01',
+  }),
+]);
+const LIVE_03_BOOTSTRAP = Object.freeze({
+  name: LIVE_03.name,
+  type: LIVE_03.type,
+  content: 'v=spf1 -all',
+  ttl: 60,
+  mutationId: LIVE_03.mutationId,
+});
+const EXPECTED_ALLOWLIST = Object.freeze([
+  ...WEB_BOOTSTRAP.map(({ name, type, mutationId }) => ({ name, type, mutationId })),
+  { name: LIVE_03.name, type: LIVE_03.type, mutationId: LIVE_03.mutationId },
+]);
+const runtimeTxtPattern = /^[\x21-\x7e]{1,255}$/;
 const recordIdPattern = /^[a-f0-9]{32}$/;
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/;
 const fail = (message) => {
@@ -50,33 +92,44 @@ export function validateCloudflareManifest(manifest) {
     fail('manifest identity is invalid');
   if (
     manifest.testAssets?.webHost !== 'asorin.ai' ||
+    manifest.testAssets?.wwwHost !== 'www.asorin.ai' ||
     manifest.testAssets?.mailSubdomain !== LIVE_03.name
   )
     fail('manifest test assets are invalid');
-  if (!Array.isArray(manifest.allowlist) || manifest.allowlist.length !== 1)
+  if (!Array.isArray(manifest.allowlist) || manifest.allowlist.length !== EXPECTED_ALLOWLIST.length)
     fail('manifest allowlist is invalid');
-  const [entry] = manifest.allowlist;
-  if (
-    !entry ||
-    entry.name !== LIVE_03.name ||
-    !Array.isArray(entry.types) ||
-    entry.types.length !== 1 ||
-    entry.types[0] !== LIVE_03.type ||
-    !Array.isArray(entry.mutationIds) ||
-    entry.mutationIds.length !== 1 ||
-    entry.mutationIds[0] !== LIVE_03.mutationId
-  )
-    fail('manifest allowlist is invalid');
+  for (const [index, expected] of EXPECTED_ALLOWLIST.entries()) {
+    const entry = manifest.allowlist[index];
+    if (
+      !entry ||
+      entry.name !== expected.name ||
+      !Array.isArray(entry.types) ||
+      entry.types.length !== 1 ||
+      entry.types[0] !== expected.type ||
+      !Array.isArray(entry.mutationIds) ||
+      entry.mutationIds.length !== 1 ||
+      entry.mutationIds[0] !== expected.mutationId
+    )
+      fail('manifest allowlist is invalid');
+  }
+  const expectedBootstrap = [...WEB_BOOTSTRAP, LIVE_03_BOOTSTRAP];
   const bootstrap = manifest.bootstrapAllowlist;
-  if (
-    !Array.isArray(bootstrap) ||
-    bootstrap.length !== 1 ||
-    bootstrap[0]?.name !== LIVE_03.name ||
-    bootstrap[0]?.type !== LIVE_03.type ||
-    bootstrap[0]?.content !== 'v=spf1 -all' ||
-    bootstrap[0]?.ttl !== 60
-  )
+  if (!Array.isArray(bootstrap) || bootstrap.length !== expectedBootstrap.length)
     fail('manifest bootstrap allowlist is invalid');
+  for (const [index, expected] of expectedBootstrap.entries()) {
+    const entry = bootstrap[index];
+    if (
+      !entry ||
+      entry.name !== expected.name ||
+      entry.type !== expected.type ||
+      entry.ttl !== expected.ttl ||
+      entry.mutationId !== expected.mutationId ||
+      (expected.content !== undefined
+        ? entry.content !== expected.content || entry.runtimeValue !== undefined
+        : entry.runtimeValue !== expected.runtimeValue || entry.content !== undefined)
+    )
+      fail('manifest bootstrap allowlist is invalid');
+  }
   const policy = {
     testDomain: manifest.zone,
     testWebHost: manifest.testAssets.webHost,
@@ -142,6 +195,66 @@ function validateRecord(record) {
   });
 }
 
+/** Runtime TXT verification values are never placed in manifests or artifacts. */
+function webBootstrapRecords(runtimeValues) {
+  if (
+    !runtimeValues ||
+    typeof runtimeValues !== 'object' ||
+    Array.isArray(runtimeValues) ||
+    Object.getPrototypeOf(runtimeValues) !== Object.prototype ||
+    Object.keys(runtimeValues).length !== 2
+  )
+    fail('Railway verification runtime values are invalid');
+  const values = {};
+  for (const key of [
+    'RAILWAY_ASORIN_AI_VERIFICATION_TXT',
+    'RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT',
+  ]) {
+    const value = runtimeValues[key];
+    if (typeof value !== 'string' || !runtimeTxtPattern.test(value))
+      fail('Railway verification runtime values are invalid');
+    values[key] = value;
+  }
+  return WEB_BOOTSTRAP.map((record) =>
+    Object.freeze({
+      ...record,
+      content: record.runtimeValue === undefined ? record.content : values[record.runtimeValue],
+    })
+  );
+}
+
+function validateWebRecord(record, expected) {
+  if (
+    !record ||
+    typeof record !== 'object' ||
+    Array.isArray(record) ||
+    !recordIdPattern.test(record.id ?? '') ||
+    record.name !== expected.name ||
+    record.type !== expected.type ||
+    record.content !== expected.content ||
+    record.ttl !== expected.ttl
+  )
+    fail('provider record does not match the approved LIVE-01/02 bootstrap baseline');
+  return Object.freeze({
+    id: record.id,
+    name: record.name,
+    type: record.type,
+    content: record.content,
+    ttl: record.ttl,
+  });
+}
+
+function canonicalWebBaseline(records) {
+  return JSON.stringify(
+    records.map((record) => ({
+      name: record.name,
+      type: record.type,
+      content: record.content,
+      ttl: record.ttl,
+    }))
+  );
+}
+
 function assertBootstrapArtifact(value, manifest) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     fail('bootstrap artifact must be an object');
@@ -186,6 +299,7 @@ function redactedStatus(operation, response) {
 export function createCloudflareAdapter({
   manifest,
   token,
+  railwayVerificationValues,
   fetchImpl = globalThis.fetch,
   now = () => new Date(),
   createRunId = randomUUID,
@@ -200,8 +314,22 @@ export function createCloudflareAdapter({
     return current;
   }
 
-  async function request(operation, path, init) {
-    const { manifest: approved } = authorize(operation);
+  function authorizeWebBootstrap(_operation) {
+    // Revalidate the zone and every exact CNAME/TXT tuple before every HTTP operation.
+    const current = policyFor(initial.manifest, token);
+    for (const record of webBootstrapRecords(railwayVerificationValues)) {
+      authorizeControlledFaultMutation(current.policy, {
+        zoneId: current.policy.zoneId,
+        name: record.name,
+        type: record.type,
+        mutationId: record.mutationId,
+      });
+    }
+    return current;
+  }
+
+  async function request(operation, path, init, authorizeRequest = authorize) {
+    const { manifest: approved } = authorizeRequest(operation);
     let response;
     try {
       response = await fetchImpl(`${API_ORIGIN}/zones/${approved.zoneId}${path}`, {
@@ -236,7 +364,115 @@ export function createCloudflareAdapter({
     return { record: validateRecord(body.result[0]), summary };
   }
 
+  async function readWebRecord(operation, expected) {
+    const query = `?name=${encodeURIComponent(expected.name)}&type=${expected.type}`;
+    const { body, summary } = await request(
+      operation,
+      `/dns_records${query}`,
+      { method: 'GET' },
+      authorizeWebBootstrap
+    );
+    if (!Array.isArray(body.result) || body.result.length !== 1)
+      fail('provider must return exactly one approved LIVE-01/02 bootstrap record');
+    return { record: validateWebRecord(body.result[0], expected), summary };
+  }
+
+  async function verifyWebBootstrap(status) {
+    // Resolve and validate both TXT values before the first provider request.
+    const records = webBootstrapRecords(railwayVerificationValues);
+    const zone = await request('web_zone_preflight', '', { method: 'GET' }, authorizeWebBootstrap);
+    if (
+      zone.body.result?.id !== initial.manifest.zoneId ||
+      zone.body.result?.name !== initial.manifest.zone
+    )
+      fail('provider zone does not match the validated manifest');
+    const providerResponses = [zone.summary];
+    for (const expected of records) {
+      const verified = await readWebRecord('web_dns_verify', expected);
+      providerResponses.push(verified.summary);
+    }
+    return Object.freeze({
+      status,
+      manifestId: initial.manifest.manifestId,
+      zoneId: initial.manifest.zoneId,
+      targetNames: records.map(({ name }) => name),
+      providerResponses: Object.freeze(providerResponses),
+    });
+  }
+
   return Object.freeze({
+    /** Read-only LIVE-01/02 DNS preflight with status-only provider evidence. */
+    async webPreflight() {
+      return verifyWebBootstrap('WEB_PREFLIGHT_OK');
+    },
+
+    /** Read-only post-bootstrap verification; never emits TXT verification values. */
+    async webVerify() {
+      return verifyWebBootstrap('WEB_BOOTSTRAP_VERIFIED');
+    },
+
+    async webBootstrap() {
+      // Resolve and validate both TXT values before the first provider request.
+      const expectedRecords = webBootstrapRecords(railwayVerificationValues);
+      const zone = await request(
+        'web_zone_bootstrap',
+        '',
+        { method: 'GET' },
+        authorizeWebBootstrap
+      );
+      if (
+        zone.body.result?.id !== initial.manifest.zoneId ||
+        zone.body.result?.name !== initial.manifest.zone
+      )
+        fail('provider zone does not match the validated manifest');
+      const providerResponses = [zone.summary];
+      const baselineRecords = [];
+      for (const expected of expectedRecords) {
+        const query = `?name=${encodeURIComponent(expected.name)}&type=${expected.type}`;
+        const listed = await request(
+          'web_dns_bootstrap_read',
+          `/dns_records${query}`,
+          { method: 'GET' },
+          authorizeWebBootstrap
+        );
+        providerResponses.push(listed.summary);
+        if (!Array.isArray(listed.body.result))
+          fail('provider returned an invalid DNS record list');
+        if (listed.body.result.length === 0) {
+          const created = await request(
+            'web_dns_bootstrap_create',
+            '/dns_records',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: expected.type,
+                name: expected.name,
+                content: expected.content,
+                ttl: expected.ttl,
+              }),
+            },
+            authorizeWebBootstrap
+          );
+          providerResponses.push(created.summary);
+          baselineRecords.push(validateWebRecord(created.body.result, expected));
+        } else if (listed.body.result.length === 1) {
+          baselineRecords.push(validateWebRecord(listed.body.result[0], expected));
+        } else {
+          fail('provider must return at most one approved LIVE-01/02 bootstrap record');
+        }
+      }
+      return Object.freeze({
+        kind: 'CLOUDFLARE_LIVE01_02_WEB_BOOTSTRAP',
+        manifestId: initial.manifest.manifestId,
+        zoneId: initial.manifest.zoneId,
+        providerCredentialFingerprint: initial.manifest.providerCredentialFingerprint,
+        targetNames: Object.freeze(expectedRecords.map(({ name }) => name)),
+        baselineHash: fingerprint(canonicalWebBaseline(baselineRecords)),
+        providerResponses: Object.freeze(providerResponses),
+      });
+    },
+
     async preflight() {
       const zone = await request('zone_preflight', '', { method: 'GET' });
       if (

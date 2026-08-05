@@ -7,11 +7,22 @@
   "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
   "testAssets": {
     "webHost": "asorin.ai",
+    "wwwHost": "www.asorin.ai",
     "mailSubdomain": "mail.asorin.ai"
   },
-  "allowlist": [{ "name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"] }],
+  "allowlist": [
+    { "name": "asorin.ai", "types": ["CNAME"], "mutationIds": ["LIVE-02"] },
+    { "name": "www.asorin.ai", "types": ["CNAME"], "mutationIds": ["LIVE-01"] },
+    { "name": "_railway-verify.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-02"] },
+    { "name": "_railway-verify.www.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-01"] },
+    { "name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"] }
+  ],
   "bootstrapAllowlist": [
-    { "name": "mail.asorin.ai", "type": "TXT", "content": "v=spf1 -all", "ttl": 60 }
+    { "name": "asorin.ai", "type": "CNAME", "content": "epgybwo0.up.railway.app", "ttl": 60, "mutationId": "LIVE-02" },
+    { "name": "www.asorin.ai", "type": "CNAME", "content": "4xbfxxr5.up.railway.app", "ttl": 60, "mutationId": "LIVE-01" },
+    { "name": "_railway-verify.asorin.ai", "type": "TXT", "runtimeValue": "RAILWAY_ASORIN_AI_VERIFICATION_TXT", "ttl": 60, "mutationId": "LIVE-02" },
+    { "name": "_railway-verify.www.asorin.ai", "type": "TXT", "runtimeValue": "RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT", "ttl": 60, "mutationId": "LIVE-01" },
+    { "name": "mail.asorin.ai", "type": "TXT", "content": "v=spf1 -all", "ttl": 60, "mutationId": "LIVE-03" }
   ],
   "rollbackAndRevocationOwner": "Antonio",
   "globalConstraints": [

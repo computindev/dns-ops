@@ -26,6 +26,26 @@ export function protectedToken(path, name) {
   return match[1];
 }
 
+export function protectedValues(path, names) {
+  if (!Array.isArray(names) || names.length === 0 || new Set(names).size !== names.length)
+    fail('protected runtime value names are invalid');
+  if ((statSync(path).mode & 0o777) !== 0o600) fail('runtime secret file must be mode 600');
+  const lines = readFileSync(path, 'utf8').split('\n');
+  if (lines.at(-1) !== '') fail('runtime secret file has invalid format');
+  lines.pop();
+  if (lines.length !== names.length) fail('runtime secret file has invalid format');
+  const expected = new Set(names);
+  const values = {};
+  for (const line of lines) {
+    const match = line.match(/^export ([A-Z][A-Z0-9_]*)='([^'\r\n]+)'$/);
+    if (!match || !expected.has(match[1]) || Object.hasOwn(values, match[1]))
+      fail('runtime secret file has invalid format');
+    values[match[1]] = match[2];
+  }
+  if (Object.keys(values).length !== names.length) fail('runtime secret file has invalid format');
+  return Object.freeze(values);
+}
+
 export function loadManifest(path = DEFAULT_MANIFEST) {
   return validateCloudflareManifest(JSON.parse(readFileSync(path, 'utf8')));
 }
@@ -49,17 +69,40 @@ function writeArtifact(path, artifact) {
 
 async function main() {
   const command = process.argv[2] ?? 'status';
-  if (!['status', 'preflight', 'bootstrap', 'apply', 'restore'].includes(command))
+  if (
+    ![
+      'status',
+      'preflight',
+      'bootstrap',
+      'apply',
+      'restore',
+      'web-preflight',
+      'web-verify',
+      'web-bootstrap',
+    ].includes(command)
+  )
     fail('unsupported command');
   if (command === 'restore' && process.argv[5] !== undefined)
     fail('restore does not accept a caller-supplied completion evidence file');
+  if (['bootstrap', 'web-bootstrap'].includes(command) && !process.argv[3])
+    fail(`${command} requires an output artifact path before provider access`);
+  if (['apply', 'restore'].includes(command) && (!process.argv[3] || !process.argv[4]))
+    fail(`${command} requires input and output artifact paths before provider access`);
+  const manifest = loadManifest();
+  // Railway TXT values are resolved and validated before the Cloudflare client exists.
+  const railwayVerificationValues = command.startsWith('web-')
+    ? protectedValues(
+        process.env.DNSOPS_RAILWAY_VERIFICATION_SECRET_FILE ??
+          `${process.env.HOME}/.config/dns-ops/railway-verification.env`,
+        ['RAILWAY_ASORIN_AI_VERIFICATION_TXT', 'RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT']
+      )
+    : undefined;
   // Credential resolution is intentionally here rather than in DNS Ops/MCP or the adapter module.
   const token = protectedToken(
     process.env.DNSOPS_CLOUDFLARE_SECRET_FILE ??
       `${process.env.HOME}/.config/dns-ops/cloudflare-test.env`,
     'CLOUDFLARE_API_TOKEN'
   );
-  const manifest = loadManifest();
   if (command === 'status') {
     policyFromManifest(manifest, token);
     console.log(
@@ -73,7 +116,27 @@ async function main() {
     );
     return;
   }
-  const adapter = createCloudflareAdapter({ manifest, token });
+  const adapter = createCloudflareAdapter({ manifest, token, railwayVerificationValues });
+  if (command === 'web-preflight') {
+    console.log(JSON.stringify(await adapter.webPreflight()));
+    return;
+  }
+  if (command === 'web-verify') {
+    console.log(JSON.stringify(await adapter.webVerify()));
+    return;
+  }
+  if (command === 'web-bootstrap') {
+    const artifact = await adapter.webBootstrap();
+    writeArtifact(process.argv[3], artifact);
+    console.log(
+      JSON.stringify({
+        status: 'WEB_BOOTSTRAP_ARTIFACT_WRITTEN',
+        artifactPath: process.argv[3],
+        baselineHash: artifact.baselineHash,
+      })
+    );
+    return;
+  }
   if (command === 'preflight') {
     console.log(JSON.stringify(await adapter.preflight()));
     return;
