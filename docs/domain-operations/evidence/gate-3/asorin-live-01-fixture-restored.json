@@ -1,0 +1,23 @@
+{
+  "kind": "FIXTURE_LIVE01_02_FAULT",
+  "runId": "67aeefd1-5af9-4bc9-bf5f-afe448d6e6f8",
+  "manifestId": "ASORIN-AI-CONTROLLED-LIVE-01-03",
+  "fixtureEndpoint": "https://asorin.ai/__dnsops/live-mode",
+  "mutationId": "LIVE-01",
+  "targetNames": [
+    "www.asorin.ai"
+  ],
+  "baselineHash": "sha256:6260efb46b74d4d25d21e01c57ee8b02789adf31139a5eed2c6ff7d5de5f7a6e",
+  "fixtureControlCredentialFingerprint": "sha256:759c8178cc299ccbcad760bf5cbbad9fab2d7f4c1792a2025a6a5f1e2ad198a7",
+  "appliedAt": "2026-08-05T17:18:16.140Z",
+  "fixtureResponses": [
+    "fixture.mode_apply_before_readback: 200",
+    "fixture.mode_apply: 200",
+    "fixture.mode_apply_after_readback: 200",
+    "fixture.mode_restore_before_readback: 200",
+    "fixture.mode_restore: 200",
+    "fixture.mode_restore_after_readback: 200"
+  ],
+  "result": "RESTORED",
+  "restoredAt": "2026-08-05T17:18:16.928Z"
+}

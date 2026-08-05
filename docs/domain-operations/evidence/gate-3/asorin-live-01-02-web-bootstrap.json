@@ -1,0 +1,24 @@
+{
+  "kind": "CLOUDFLARE_LIVE01_02_WEB_BOOTSTRAP",
+  "manifestId": "ASORIN-AI-CONTROLLED-LIVE-01-03",
+  "zoneId": "7391960081e72b26c9c5066133013ab2",
+  "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+  "targetNames": [
+    "asorin.ai",
+    "www.asorin.ai",
+    "_railway-verify.asorin.ai",
+    "_railway-verify.www.asorin.ai"
+  ],
+  "baselineHash": "sha256:74c75dc9ac48d95293fcc8333ae3ed135f33148da227fed498c6e0f7cafdfc3f",
+  "providerResponses": [
+    "cloudflare.web_zone_bootstrap: 200",
+    "cloudflare.web_dns_bootstrap_read: 200",
+    "cloudflare.web_dns_bootstrap_create: 200",
+    "cloudflare.web_dns_bootstrap_read: 200",
+    "cloudflare.web_dns_bootstrap_create: 200",
+    "cloudflare.web_dns_bootstrap_read: 200",
+    "cloudflare.web_dns_bootstrap_create: 200",
+    "cloudflare.web_dns_bootstrap_read: 200",
+    "cloudflare.web_dns_bootstrap_create: 200"
+  ]
+}
