@@ -138,6 +138,6 @@
 - **Current repo state:** `master` branch, `aaa2ccd3` is HEAD. Dockerfile + railway.toml exist. `.output/` is NOT in git.
 - **Collector is healthy:** `https://dns-ops-production.up.railway.app` — use it for `COLLECTOR_URL`.
 - **Postgres is healthy:** service ID `edec61ed-1585-4210-a6d8-86d27f72f5dc`.
-- **Previous login credentials:** `antonio.correa@gmail.com` / `sW0uK44xoGdYm@56GNXDZP%g` (seeded in production DB).
+- Historical production credentials were removed. Use approved runtime-only secret management and rotate any previously exposed value.
 - **Avoid:** Railpack builder, committing `.output/`, root `railway.toml`, `railpack.json`.
 - **Prefer:** Dockerfile builder, dashboard for service creation, API tokens for headless ops.
