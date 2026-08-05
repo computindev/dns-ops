@@ -1,0 +1,62 @@
+{
+  "evidenceId": "GATE3-ASORIN-OPERATIONAL-PASS-MANIFEST",
+  "status": "PENDING_EXTERNAL_DNS_OPS_EVIDENCE",
+  "purpose": "Collection contract for independently verifiable DNS Ops evidence. Existing harness and authoritative-DNS artifacts prove restoration only and are not PASS evidence.",
+  "mcpPreflight": {
+    "required": true,
+    "command": "node tools/controlled-live-harness/runner.mjs mcp-evidence-preflight <redacted-artifact-path>",
+    "requiredScopes": ["DOMAIN_READ", "SIGNAL_READ", "CASE_READ", "CASE_WRITE", "SCAN_REQUEST"],
+    "requiredRuntimeInputs": ["authorized MCP endpoint", "mode-0600 runtime-only bearer secret", "registered tenant-owned domain IDs", "operator run authorization"]
+  },
+  "scenarios": [
+    {
+      "mutationId": "LIVE-01",
+      "target": "www.asorin.ai",
+      "expectedSignal": "REDIRECT_TOPOLOGY_REGRESSION",
+      "restorationArtifacts": [
+        "asorin-live-01-fixture-restored.json",
+        "asorin-live-01-02-authoritative-web.json"
+      ],
+      "requiredOperationalEvidence": [
+        "fault scan task/result ID and timestamp",
+        "expected signal ID/status",
+        "canonical case ID, acknowledged disposition, and audit IDs",
+        "post-restore scan task/result ID and resolved case/signal evidence",
+        "reapplied-fault scan proving reopen of the same canonical condition without duplicate active case or alert",
+        "final restoration scan/result and audit IDs"
+      ]
+    },
+    {
+      "mutationId": "LIVE-02",
+      "target": "asorin.ai",
+      "expectedSignal": "HOMEPAGE_INDEXABILITY_REGRESSION",
+      "restorationArtifacts": [
+        "asorin-live-02-fixture-restored.json",
+        "asorin-live-01-02-authoritative-web.json"
+      ],
+      "requiredOperationalEvidence": [
+        "fault scan task/result ID and timestamp",
+        "expected signal ID/status",
+        "canonical case ID, acknowledged disposition, and audit IDs",
+        "post-restore scan task/result ID and resolved case/signal evidence"
+      ]
+    },
+    {
+      "mutationId": "LIVE-03",
+      "target": "mail.asorin.ai",
+      "expectedSignal": "MAIL_DNS_CONFIGURATION_REGRESSION",
+      "restorationArtifacts": [
+        "asorin-live-03-restored-pending-evidence.json",
+        "asorin-live-03-authoritative-restoration.json"
+      ],
+      "requiredOperationalEvidence": [
+        "fault scan task/result ID and timestamp",
+        "expected signal ID/status",
+        "canonical case ID, acknowledged disposition, and audit IDs",
+        "post-restore authoritative DNS trace correlated to restoration",
+        "post-restore scan task/result ID and resolved case/signal evidence"
+      ]
+    }
+  ],
+  "passRule": "Every listed operational evidence item must be independently retrievable, timestamp-correlated to its scenario, persisted as redacted durable evidence, and linked from Issue #4 before any scenario may be marked PASS."
+}
