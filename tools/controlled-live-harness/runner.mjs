@@ -40,6 +40,10 @@ const fail = (message) => {
 };
 
 const MCP_PREFLIGHT_SECRET_NAMES = ['DNSOPS_MCP_ENDPOINT', 'DNSOPS_MCP_BEARER_TOKEN'];
+const WEB_EVIDENCE_PREFLIGHT_SECRET_NAMES = [
+  'DNSOPS_WEB_EVIDENCE_ENDPOINT',
+  'DNSOPS_WEB_EVIDENCE_SESSION_TOKEN',
+];
 const REQUIRED_MCP_TOOLS = Object.freeze([
   ['domain_search', 'DOMAIN_READ'],
   ['domain_get_profile', 'DOMAIN_READ'],
@@ -147,6 +151,66 @@ export function loadMcpPreflightSecret(path) {
   return Object.freeze({
     endpoint: validateMcpEndpoint(values.DNSOPS_MCP_ENDPOINT),
     token: values.DNSOPS_MCP_BEARER_TOKEN,
+  });
+}
+
+/** Validates the HTTPS origin that serves authenticated, read-only evidence routes. */
+export function validateWebEvidenceEndpoint(value) {
+  if (typeof value !== 'string' || !value) fail('web evidence endpoint is invalid');
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    fail('web evidence endpoint is invalid');
+  }
+  if (
+    endpoint.protocol !== 'https:' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.port ||
+    endpoint.pathname !== '/' ||
+    endpoint.search ||
+    endpoint.hash
+  )
+    fail('web evidence endpoint is invalid');
+
+  // Reuse MCP's hostname policy by constructing a synthetic /mcp target. This
+  // validates only the origin; the synthetic path is never contacted here.
+  let validatedMcpOrigin;
+  try {
+    validatedMcpOrigin = validateMcpEndpoint(new URL('/mcp', endpoint).toString());
+  } catch {
+    fail('web evidence endpoint is invalid');
+  }
+  return new URL('/', validatedMcpOrigin);
+}
+
+/** Reads the separately supplied, isolated web-session runtime secret. */
+export function loadWebEvidencePreflightSecret(path) {
+  if (!path || typeof path !== 'string' || !isAbsolute(path))
+    fail('web evidence preflight requires an explicit secret file path');
+  let contents;
+  try {
+    contents = readProtectedSecretFile(path, 'runtime secret file must be mode 600');
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'controlled-live harness: runtime secret file is invalid'
+    )
+      fail('web evidence preflight secret file is invalid');
+    if (
+      error instanceof Error &&
+      error.message === 'controlled-live harness: runtime secret file is unavailable'
+    )
+      fail('web evidence preflight secret file is unavailable');
+    throw error;
+  }
+  const values = parseProtectedValues(contents, WEB_EVIDENCE_PREFLIGHT_SECRET_NAMES);
+  if (!/^[a-f0-9]{64}$/.test(values.DNSOPS_WEB_EVIDENCE_SESSION_TOKEN))
+    fail('web evidence preflight session token is invalid');
+  return Object.freeze({
+    endpoint: validateWebEvidenceEndpoint(values.DNSOPS_WEB_EVIDENCE_ENDPOINT),
+    sessionToken: values.DNSOPS_WEB_EVIDENCE_SESSION_TOKEN,
   });
 }
 
@@ -409,6 +473,87 @@ export async function runMcpEvidencePreflight({
   }
 }
 
+function safeWebEvidenceFailure(operation) {
+  fail(`web evidence ${operation} failed`);
+}
+
+async function webEvidenceGet(fetchImpl, resolvedEndpoint, sessionToken, path, responseShape) {
+  let response;
+  try {
+    response = await fetchImpl(new URL(path, resolvedEndpoint.endpoint), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Cookie: `dns_ops_session=${sessionToken}`,
+      },
+      lookup: resolvedEndpoint.lookup,
+    });
+  } catch {
+    safeWebEvidenceFailure(path);
+  }
+  if (!response || response.status !== 200 || !response.ok) safeWebEvidenceFailure(path);
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    safeWebEvidenceFailure(path);
+  }
+  if (!responseShape(body)) safeWebEvidenceFailure(path);
+  return response.status;
+}
+
+/**
+ * Proves only that the pre-authorized audit and alert read paths are available.
+ * Neither their response bodies nor the session token can enter the emitted
+ * artifact; callers collect and redact scenario evidence separately.
+ */
+export async function runWebEvidencePreflight({
+  secretFile,
+  artifactPath,
+  fetchImpl = pinnedHttpsFetch,
+  resolveHostname = dns.lookup,
+}) {
+  const reservation = reserveFixtureArtifact(artifactPath);
+  try {
+    const secret = loadWebEvidencePreflightSecret(secretFile);
+    const resolvedEndpoint = await resolveMcpEndpoint(secret.endpoint, resolveHostname);
+    const auditStatus = await webEvidenceGet(
+      fetchImpl,
+      resolvedEndpoint,
+      secret.sessionToken,
+      '/api/portfolio/audit?limit=1',
+      (body) => body && typeof body === 'object' && Array.isArray(body.events)
+    );
+    const alertsStatus = await webEvidenceGet(
+      fetchImpl,
+      resolvedEndpoint,
+      secret.sessionToken,
+      '/api/alerts?limit=1',
+      (body) =>
+        body &&
+        typeof body === 'object' &&
+        Array.isArray(body.alerts) &&
+        body.pagination &&
+        typeof body.pagination === 'object'
+    );
+    const artifact = Object.freeze({
+      kind: 'DNSOPS_WEB_EVIDENCE_PREFLIGHT',
+      status: 'WEB_EVIDENCE_PREFLIGHT_OK',
+      checkedAt: new Date().toISOString(),
+      webEndpointFingerprint: fingerprint(secret.endpoint.toString()),
+      verifiedReadPaths: [
+        `GET /api/portfolio/audit: ${auditStatus}`,
+        `GET /api/alerts: ${alertsStatus}`,
+      ],
+    });
+    reservation.publish(artifact);
+    return artifact;
+  } catch (error) {
+    reservation.discard();
+    throw error;
+  }
+}
+
 /** Reads the runtime secret only from this isolated harness process. */
 export function protectedToken(path, name) {
   const contents = readProtectedSecretFile(path, `${name} secret file must be mode 600`);
@@ -574,6 +719,7 @@ async function main() {
       'fixture-apply',
       'fixture-restore',
       'mcp-evidence-preflight',
+      'web-evidence-preflight',
     ].includes(command)
   )
     fail('unsupported command');
@@ -591,6 +737,22 @@ async function main() {
         status: artifact.status,
         artifactPath: process.argv[3],
         mcpEndpointFingerprint: artifact.mcpEndpointFingerprint,
+      })
+    );
+    return;
+  }
+  if (command === 'web-evidence-preflight') {
+    if (!process.argv[3] || process.argv[4] !== undefined)
+      fail('web-evidence-preflight requires one output artifact path before credential access');
+    const artifact = await runWebEvidencePreflight({
+      secretFile: process.env.DNSOPS_WEB_EVIDENCE_SECRET_FILE,
+      artifactPath: process.argv[3],
+    });
+    console.log(
+      JSON.stringify({
+        status: artifact.status,
+        artifactPath: process.argv[3],
+        webEndpointFingerprint: artifact.webEndpointFingerprint,
       })
     );
     return;

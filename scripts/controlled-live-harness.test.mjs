@@ -21,10 +21,13 @@ import {
 } from '../tools/controlled-live-harness/fixture-control.mjs';
 import {
   loadManifest,
+  loadWebEvidencePreflightSecret,
   policyFromManifest,
   protectedToken,
   protectedValues,
   reserveFixtureArtifact,
+  runWebEvidencePreflight,
+  validateWebEvidenceEndpoint,
   writeArtifact,
   writeFixtureArtifactAfterTransition,
 } from '../tools/controlled-live-harness/runner.mjs';
@@ -270,6 +273,138 @@ test('fixture artifacts are written mode 600', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'fixture-artifact.json');
   writeArtifact(path, { status: 'redacted' });
   assert.equal(statSync(path).mode & 0o777, 0o600);
+});
+
+test('web evidence preflight pins a public HTTPS endpoint, accepts only the scoped session format, and redacts its artifact', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  const secretPath = join(directory, 'web-evidence.env');
+  const artifactPath = join(directory, 'web-evidence-preflight.json');
+  const sessionToken = 'a'.repeat(64);
+  writeFileSync(
+    secretPath,
+    [
+      "export DNSOPS_WEB_EVIDENCE_ENDPOINT='https://evidence.example'",
+      `export DNSOPS_WEB_EVIDENCE_SESSION_TOKEN='${sessionToken}'`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 }
+  );
+  chmodSync(secretPath, 0o600);
+  const calls = [];
+  const artifact = await runWebEvidencePreflight({
+    secretFile: secretPath,
+    artifactPath,
+    resolveHostname: async () => [{ address: '8.8.8.8', family: 4 }],
+    fetchImpl: async (endpoint, init) => {
+      calls.push({ endpoint, init });
+      await new Promise((resolve, reject) =>
+        init.lookup('evidence.example', { family: 4 }, (error, address, family) => {
+          if (error) reject(error);
+          else {
+            assert.equal(address, '8.8.8.8');
+            assert.equal(family, 4);
+            resolve();
+          }
+        })
+      );
+      if (endpoint.pathname === '/api/portfolio/audit')
+        return { ok: true, status: 200, json: async () => ({ events: [{ private: 'value' }] }) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ alerts: [{ private: 'value' }], pagination: { total: 1 } }),
+      };
+    },
+  });
+  assert.equal(artifact.status, 'WEB_EVIDENCE_PREFLIGHT_OK');
+  assert.deepEqual(artifact.verifiedReadPaths, [
+    'GET /api/portfolio/audit: 200',
+    'GET /api/alerts: 200',
+  ]);
+  assert.equal(statSync(artifactPath).mode & 0o777, 0o600);
+  const serialized = readFileSync(artifactPath, 'utf8');
+  assert.equal(serialized.includes(sessionToken), false);
+  assert.equal(serialized.includes('private'), false);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(
+    calls.map(({ endpoint }) => `${endpoint.pathname}${endpoint.search}`),
+    ['/api/portfolio/audit?limit=1', '/api/alerts?limit=1']
+  );
+  assert.equal(calls[0].init.headers.Cookie, `dns_ops_session=${sessionToken}`);
+  assert.equal(calls[1].init.headers.Cookie, `dns_ops_session=${sessionToken}`);
+});
+
+test('web evidence preflight rejects a missing artifact path before reading its session secret', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
+  );
+  const result = spawnSync(process.execPath, [runner, 'web-evidence-preflight'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DNSOPS_WEB_EVIDENCE_SECRET_FILE: '/definitely-not-readable/web-evidence.env',
+    },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires one output artifact path/);
+  assert.doesNotMatch(result.stderr, /secret file/);
+});
+
+test('web evidence preflight rejects unsafe origins and response shapes without publishing an artifact', async () => {
+  assert.throws(() => validateWebEvidenceEndpoint('https://127.0.0.1'), /web evidence endpoint/);
+  assert.throws(() => validateWebEvidenceEndpoint('https://evidence.example/api'), /web evidence endpoint/);
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  const secretPath = join(directory, 'web-evidence.env');
+  const artifactPath = join(directory, 'web-evidence-preflight.json');
+  const existingArtifactPath = join(directory, 'existing-artifact.json');
+  writeFileSync(existingArtifactPath, 'existing artifact\n', { mode: 0o600 });
+  await assert.rejects(
+    runWebEvidencePreflight({
+      secretFile: '/definitely-not-readable/web-evidence.env',
+      artifactPath: existingArtifactPath,
+      fetchImpl: async () => {
+        throw new Error('network must not run');
+      },
+    }),
+    /output artifact path already exists/
+  );
+  assert.equal(readFileSync(existingArtifactPath, 'utf8'), 'existing artifact\n');
+  writeFileSync(
+    secretPath,
+    [
+      "export DNSOPS_WEB_EVIDENCE_ENDPOINT='https://evidence.example'",
+      `export DNSOPS_WEB_EVIDENCE_SESSION_TOKEN='${'B'.repeat(64)}'`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 }
+  );
+  chmodSync(secretPath, 0o600);
+  assert.throws(() => loadWebEvidencePreflightSecret(secretPath), /session token is invalid/);
+  writeFileSync(
+    secretPath,
+    [
+      "export DNSOPS_WEB_EVIDENCE_ENDPOINT='https://evidence.example'",
+      `export DNSOPS_WEB_EVIDENCE_SESSION_TOKEN='${'b'.repeat(64)}'`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 }
+  );
+  let calls = 0;
+  await assert.rejects(
+    runWebEvidencePreflight({
+      secretFile: secretPath,
+      artifactPath,
+      resolveHostname: async () => [{ address: '8.8.8.8', family: 4 }],
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 200, json: async () => ({ events: 'not-an-array' }) };
+      },
+    }),
+    /web evidence .*failed/
+  );
+  assert.equal(calls, 1);
+  assert.equal(existsSync(artifactPath), false);
+  assert.deepEqual(readdirSync(directory).sort(), ['existing-artifact.json', 'web-evidence.env']);
 });
 
 test('fixture output preflight rejects invalid or existing destinations before any fixture fetch', async () => {
