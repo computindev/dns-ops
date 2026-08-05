@@ -1,19 +1,21 @@
 {
   "evidenceId": "GATE3-ASORIN-MCP-OPERATIONAL-EVIDENCE-ACCESS-GAP",
-  "status": "BLOCKED_BY_EXTERNAL_EVIDENCE_ACCESS_DECISION",
-  "observedAt": "2026-08-05T19:46:14Z",
-  "purpose": "Static, secret-free reconciliation of the operational PASS manifest against the approved closed-world MCP contract. It identifies read-path evidence that cannot be independently retrieved through the ten approved MCP tools.",
-  "reviewedRevision": "de2400567fc0b6799c0b8f4cf04f702c52d7657c",
+  "status": "BLOCKED_BY_EXTERNAL_EVIDENCE_ACCESS",
+  "observedAt": "2026-08-05T19:50:55Z",
+  "purpose": "Static, secret-free reconciliation of the operational PASS manifest against the approved closed-world MCP contract. It identifies audit and alert evidence that is intentionally outside MCP and therefore requires an authorized web-session read path.",
+  "reviewedRevision": "0f74d02265c231b618b9140de888f873e33a1cf5",
   "reviewedSources": [
     "apps/web/hono/lib/mcp-tools.ts",
     "apps/web/hono/lib/mcp-read-service.ts",
     "packages/db/src/repos/portfolio.ts",
+    "apps/web/hono/routes/portfolio.ts",
     "apps/web/hono/routes/alerts.ts",
     "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json"
   ],
   "confirmedMcpReadPaths": {
     "snapshotEvidence": "evidence_get returns snapshot, record sets, findings, and probe observations.",
     "signalsAndCases": "signal_list returns tenant-scoped signal/case pairs; case_get returns a tenant-scoped case, signal, and ordered internal case lifecycle events.",
+    "auditOutsideMcp": "The existing authenticated web API exposes tenant-scoped audit reads at GET /api/portfolio/audit. This route requires normal web-session authentication and is intentionally outside the closed MCP contract.",
     "alertsOutsideMcp": "The existing authenticated web API exposes tenant-scoped alert reads at GET /api/alerts and GET /api/alerts/:id. These routes require normal web-session authentication and are intentionally outside the closed MCP contract.",
     "closedToolInventory": [
       "domain_search",
@@ -31,9 +33,8 @@
   "gaps": [
     {
       "requirement": "Audit IDs for fault, case, and restoration lifecycle evidence across LIVE-01, LIVE-02, and LIVE-03",
-      "observation": "The approved MCP inventory contains no generic audit read tool. evidence_get does not return audit records. AuditEventRepository can query tenant/entity/actor audit records internally, but this repository capability is not exposed by an approved MCP or HTTP read contract in the reviewed sources.",
-      "nonAssumption": "Internal case lifecycle event IDs returned by case_get are not treated as equivalent to the manifest's audit IDs without an explicit owner decision.",
-      "requiredResolution": "Provide an approved tenant-scoped audit export/read path with attributable, timestamped records, or explicitly declare which case_get lifecycle event IDs satisfy each audit requirement."
+      "observation": "The approved MCP inventory contains no generic audit read tool and evidence_get does not return audit records. The existing tenant-scoped GET /api/portfolio/audit web API returns audit records, but it requires an authorized web-session principal and is not available to the MCP bearer principal.",
+      "requiredResolution": "Authorize a tenant-scoped web-session read path for GET /api/portfolio/audit with the correlation procedure recorded in the redacted artifact."
     },
     {
       "requirement": "LIVE-01 reapplication proof that the canonical condition reopened without a duplicate active case or alert",
@@ -41,7 +42,7 @@
       "requiredResolution": "Authorize a tenant-scoped web-session read path for GET /api/alerts with the correlation procedure recorded in the redacted artifact, or explicitly approve a different alert evidence path."
     }
   ],
-  "passImpact": "Every LIVE scenario remains PENDING_EXTERNAL_DNS_OPS_EVIDENCE. LIVE-01 additionally cannot satisfy its reopen no-duplicate-alert proof until an authorized tenant-scoped alert read path is supplied.",
+  "passImpact": "Every LIVE scenario remains PENDING_EXTERNAL_DNS_OPS_EVIDENCE until the required MCP principal and authorized tenant-scoped web-session reads for audit and alert evidence are supplied. LIVE-01 additionally requires the alert read to prove reopen deduplication.",
   "notPerformed": [
     "No MCP endpoint was contacted.",
     "No MCP bearer secret, endpoint, domain ID, tenant ID, actor ID, or audit/alert value was accessed or recorded.",
