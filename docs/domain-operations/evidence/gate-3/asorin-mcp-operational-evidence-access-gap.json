@@ -1,0 +1,49 @@
+{
+  "evidenceId": "GATE3-ASORIN-MCP-OPERATIONAL-EVIDENCE-ACCESS-GAP",
+  "status": "BLOCKED_BY_EXTERNAL_EVIDENCE_ACCESS_DECISION",
+  "observedAt": "2026-08-05T19:39:29Z",
+  "purpose": "Static, secret-free reconciliation of the operational PASS manifest against the approved closed-world MCP contract. It identifies read-path evidence that cannot be independently retrieved through the ten approved MCP tools.",
+  "reviewedRevision": "de2400567fc0b6799c0b8f4cf04f702c52d7657c",
+  "reviewedSources": [
+    "apps/web/hono/lib/mcp-tools.ts",
+    "apps/web/hono/lib/mcp-read-service.ts",
+    "packages/db/src/repos/portfolio.ts",
+    "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json"
+  ],
+  "confirmedMcpReadPaths": {
+    "snapshotEvidence": "evidence_get returns snapshot, record sets, findings, and probe observations.",
+    "signalsAndCases": "signal_list returns tenant-scoped signal/case pairs; case_get returns a tenant-scoped case, signal, and ordered internal case lifecycle events.",
+    "closedToolInventory": [
+      "domain_search",
+      "domain_get_profile",
+      "domain_get_posture",
+      "snapshot_compare",
+      "evidence_get",
+      "signal_list",
+      "case_get",
+      "case_open",
+      "case_set_disposition",
+      "scan_request"
+    ]
+  },
+  "gaps": [
+    {
+      "requirement": "Audit IDs for fault, case, and restoration lifecycle evidence across LIVE-01, LIVE-02, and LIVE-03",
+      "observation": "The approved MCP inventory contains no generic audit read tool. evidence_get does not return audit records. AuditEventRepository can query tenant/entity/actor audit records internally, but this repository capability is not exposed by an approved MCP or HTTP read contract in the reviewed sources.",
+      "nonAssumption": "Internal case lifecycle event IDs returned by case_get are not treated as equivalent to the manifest's audit IDs without an explicit owner decision.",
+      "requiredResolution": "Provide an approved tenant-scoped audit export/read path with attributable, timestamped records, or explicitly declare which case_get lifecycle event IDs satisfy each audit requirement."
+    },
+    {
+      "requirement": "LIVE-01 reapplication proof that the canonical condition reopened without a duplicate active case or alert",
+      "observation": "The approved MCP inventory contains no alert read/list tool. domain_get_posture, signal_list, and case_get expose signals and cases, but no alert records. The manifest's alert-deduplication proof therefore cannot be independently retrieved through the approved MCP tools.",
+      "requiredResolution": "Provide an approved tenant-scoped alert export/read path that can correlate alerts to the canonical condition and reopen cycle, or explicitly revise the PASS contract."
+    }
+  ],
+  "passImpact": "Every LIVE scenario remains PENDING_EXTERNAL_DNS_OPS_EVIDENCE. LIVE-01 additionally cannot satisfy its reopen no-duplicate-alert proof until the alert evidence path or an explicit contract decision is supplied.",
+  "notPerformed": [
+    "No MCP endpoint was contacted.",
+    "No MCP bearer secret, endpoint, domain ID, tenant ID, actor ID, or audit/alert value was accessed or recorded.",
+    "No scan, case mutation, provider mutation, Railway action, DNS query, or deployment was performed."
+  ],
+  "trackingIssue": "https://github.com/computindev/dns-ops/issues/4"
+}
