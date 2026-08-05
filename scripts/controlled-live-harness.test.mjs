@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,7 +24,9 @@ import {
   policyFromManifest,
   protectedToken,
   protectedValues,
+  reserveFixtureArtifact,
   writeArtifact,
+  writeFixtureArtifactAfterTransition,
 } from '../tools/controlled-live-harness/runner.mjs';
 
 const token = 'fixture-control-credential-value';
@@ -260,6 +270,55 @@ test('fixture artifacts are written mode 600', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'fixture-artifact.json');
   writeArtifact(path, { status: 'redacted' });
   assert.equal(statSync(path).mode & 0o777, 0o600);
+});
+
+test('fixture output preflight rejects invalid or existing destinations before any fixture fetch', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  let fixtureFetchCalls = 0;
+  const fixtureFetch = async () => {
+    fixtureFetchCalls += 1;
+    return { status: 'unreachable' };
+  };
+  await assert.rejects(
+    writeFixtureArtifactAfterTransition(
+      join(directory, 'missing', 'fixture-artifact.json'),
+      fixtureFetch
+    ),
+    /destination is invalid/
+  );
+
+  const path = join(directory, 'fixture-artifact.json');
+  writeFileSync(path, 'existing artifact\n', { mode: 0o600 });
+  await assert.rejects(writeFixtureArtifactAfterTransition(path, fixtureFetch), /already exists/);
+  assert.equal(fixtureFetchCalls, 0);
+  assert.equal(readFileSync(path, 'utf8'), 'existing artifact\n');
+
+  const failedDirectory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  await assert.rejects(
+    writeFixtureArtifactAfterTransition(join(failedDirectory, 'failed-artifact.json'), async () => {
+      throw new Error('fixture transition failed');
+    }),
+    /fixture transition failed/
+  );
+  assert.deepEqual(readdirSync(failedDirectory), []);
+});
+
+test('fixture artifact publication creates the final name atomically and never replaces a raced output', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  const path = join(directory, 'fixture-artifact.json');
+  const artifact = { status: 'redacted' };
+  const written = await writeFixtureArtifactAfterTransition(path, async () => artifact);
+  assert.deepEqual(written, artifact);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), artifact);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+
+  const racedPath = join(directory, 'raced-fixture-artifact.json');
+  const reservation = reserveFixtureArtifact(racedPath);
+  assert.equal(statSync(reservation.temporaryPath).mode & 0o777, 0o600);
+  writeFileSync(racedPath, 'concurrent artifact\n', { mode: 0o600 });
+  assert.throws(() => reservation.publish(artifact), /EEXIST/);
+  assert.equal(readFileSync(racedPath, 'utf8'), 'concurrent artifact\n');
+  assert.equal(existsSync(reservation.temporaryPath), false);
 });
 
 test('LIVE-01/02 web preflight is read-only, validates every bootstrap record, and redacts TXT values', async () => {

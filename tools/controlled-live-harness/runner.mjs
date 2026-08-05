@@ -1,6 +1,19 @@
 #!/usr/bin/env node
-import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createCloudflareAdapter,
@@ -72,6 +85,100 @@ export function writeArtifact(path, artifact) {
   chmodSync(path, 0o600);
 }
 
+/**
+ * Reserves a fixture artifact destination before credentials or the fixture are
+ * accessed. Publishing uses link(2), which atomically creates the final name
+ * without replacing an output another process may have created meanwhile.
+ */
+export function reserveFixtureArtifact(path) {
+  if (!path || typeof path !== 'string') fail('an output artifact path is required');
+  const artifactPath = resolve(path);
+  try {
+    lstatSync(artifactPath);
+    fail('output artifact path already exists');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('controlled-live harness:')) throw error;
+    if (error?.code !== 'ENOENT') fail('output artifact destination is invalid');
+  }
+
+  let descriptor;
+  let temporaryPath;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    temporaryPath = join(dirname(artifactPath), `.${randomBytes(16).toString('hex')}.tmp`);
+    let candidate;
+    try {
+      candidate = openSync(temporaryPath, 'wx', 0o600);
+      fchmodSync(candidate, 0o600);
+      descriptor = candidate;
+      break;
+    } catch (error) {
+      if (candidate !== undefined) {
+        closeSync(candidate);
+        unlinkSync(temporaryPath);
+      }
+      if (error?.code !== 'EEXIST') fail('output artifact destination is invalid');
+    }
+  }
+  if (descriptor === undefined) fail('unable to reserve output artifact destination');
+
+  let closed = false;
+  let temporaryExists = true;
+  const close = () => {
+    if (!closed) {
+      closeSync(descriptor);
+      closed = true;
+    }
+  };
+  const discard = () => {
+    let cleanupError;
+    try {
+      close();
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (temporaryExists) {
+      try {
+        unlinkSync(temporaryPath);
+        temporaryExists = false;
+      } catch (error) {
+        if (error?.code === 'ENOENT') temporaryExists = false;
+        else if (!cleanupError) cleanupError = error;
+      }
+    }
+    if (cleanupError) throw cleanupError;
+  };
+  return Object.freeze({
+    artifactPath,
+    temporaryPath,
+    publish(artifact) {
+      try {
+        writeFileSync(descriptor, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+        fsyncSync(descriptor);
+        close();
+        linkSync(temporaryPath, artifactPath);
+        unlinkSync(temporaryPath);
+        temporaryExists = false;
+      } catch (error) {
+        discard();
+        throw error;
+      }
+    },
+    discard,
+  });
+}
+
+export async function writeFixtureArtifactAfterTransition(path, transition) {
+  const reservation = reserveFixtureArtifact(path);
+  try {
+    const artifact = await transition();
+    reservation.publish(artifact);
+    return artifact;
+  } catch (error) {
+    reservation.discard();
+    throw error;
+  }
+}
+
 async function main() {
   const command = process.argv[2] ?? 'status';
   if (
@@ -121,17 +228,17 @@ async function main() {
       )
     : undefined;
   if (command === 'fixture-apply' || command === 'fixture-restore') {
-    const token = protectedToken(
-      process.env.DNSOPS_FIXTURE_CONTROL_SECRET_FILE ??
-        `${process.env.HOME}/.config/dns-ops/fixture-control.env`,
-      'DNSOPS_FIXTURE_CONTROL_TOKEN'
-    );
-    const adapter = createFixtureControlAdapter({ manifest, token });
-    const artifact =
-      command === 'fixture-apply'
-        ? await adapter.apply(process.argv[3])
-        : await adapter.restore(fixtureRecoveryArtifact);
-    writeArtifact(process.argv[4], artifact);
+    const artifact = await writeFixtureArtifactAfterTransition(process.argv[4], async () => {
+      const token = protectedToken(
+        process.env.DNSOPS_FIXTURE_CONTROL_SECRET_FILE ??
+          `${process.env.HOME}/.config/dns-ops/fixture-control.env`,
+        'DNSOPS_FIXTURE_CONTROL_TOKEN'
+      );
+      const adapter = createFixtureControlAdapter({ manifest, token });
+      return command === 'fixture-apply'
+        ? adapter.apply(process.argv[3])
+        : adapter.restore(fixtureRecoveryArtifact);
+    });
     console.log(
       JSON.stringify({
         status:
