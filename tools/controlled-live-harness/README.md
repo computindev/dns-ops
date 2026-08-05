@@ -20,6 +20,24 @@ export RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT='runtime value omitted'
 
 The literal example values above are placeholders for local operator documentation only; do not commit real values. The runner validates that file and both printable DNS TXT values before constructing a provider request. Every provider request revalidates the full manifest, zone, all exact CNAME/TXT tuples, credential fingerprint, and the runtime TXT values.
 
+### Provision the local Railway secret
+
+An authorized operator can obtain the two values without copying them through a terminal or an artifact:
+
+```sh
+node tools/controlled-live-harness/railway-verification-secret-provisioner.mjs
+```
+
+The provisioner runs exactly two `railway domain status <pinned-domain-id> --project <pinned-project-id> --environment <pinned-environment-id> --service <pinned-service-id> --json` queries. It verifies the returned pinned domain ID/name and exact `_railway-verify` TXT record before atomically creating `$HOME/.config/dns-ops/railway-verification.env` at mode `0600`. It prints only a success status and file path, never a verification value. It does not call Cloudflare and has no Railway mutation command.
+
+It refuses to replace an existing secret file (and performs no Railway query in that case). Use this only when intentionally refreshing both Railway values:
+
+```sh
+node tools/controlled-live-harness/railway-verification-secret-provisioner.mjs --replace
+```
+
+Do not redirect output, use shell tracing, commit the generated file, or run the provisioner without authorization to read the pinned Railway project. It is deliberately separate from the `web-*` commands, which may contact Cloudflare.
+
 ```sh
 node tools/controlled-live-harness/runner.mjs web-preflight
 node tools/controlled-live-harness/runner.mjs web-bootstrap /secure/operator/web-bootstrap.json
