@@ -9,8 +9,9 @@
     "webHost": "asorin.ai",
     "mailSubdomain": "mail.asorin.ai"
   },
-  "allowlist": [
-    {"name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"]}
+  "allowlist": [{ "name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"] }],
+  "bootstrapAllowlist": [
+    { "name": "mail.asorin.ai", "type": "TXT", "content": "v=spf1 -all", "ttl": 60 }
   ],
   "rollbackAndRevocationOwner": "Antonio",
   "globalConstraints": [
@@ -33,7 +34,7 @@
     },
     "LIVE-03": {
       "host": "mail.asorin.ai",
-      "record": {"type": "TXT", "ttl": 60, "baselineValue": "v=spf1 -all"},
+      "record": { "type": "TXT", "ttl": 60, "baselineValue": "v=spf1 -all" },
       "fault": "Delete the sole approved SPF TXT record, producing deterministic no-SPF evidence.",
       "expectedSignal": "MAIL_DNS_CONFIGURATION_REGRESSION",
       "mailFlow": "None"
