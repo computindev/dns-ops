@@ -1,6 +1,6 @@
 {
   "evidenceId": "GATE3-DNS-OPS-EVIDENCE-SOURCE-PROBE",
-  "probedAt": "2026-08-05T18:25:37Z",
+  "probedAt": "2026-08-05T20:26:52Z",
   "purpose": "Read-only availability check for historical DNS Ops evidence sources before operational PASS collection.",
   "probes": [
     {
@@ -20,9 +20,19 @@
       "hostname": "dns-ops-web.pages.dev",
       "result": "NXDOMAIN_OR_UNRESOLVABLE",
       "mcpAttempted": false
+    },
+    {
+      "source": "latest historical GitHub deployment Railway project",
+      "githubDeploymentId": 4602893747,
+      "deployedAt": "2026-05-07T01:07:11Z",
+      "railwayProjectId": "47a76356-daa1-4409-8578-338550d64a23",
+      "railwayEnvironmentId": "088c7a03-98b2-468b-afc9-eec18801dda1",
+      "result": "PROJECT_NOT_FOUND_TO_CURRENT_RAILWAY_PRINCIPAL",
+      "mcpAttempted": false,
+      "scanAttempted": false
     }
   ],
-  "conclusion": "No current authorized DNS Ops MCP/application evidence source is reachable from the approved runtime.",
+  "conclusion": "No current authorized DNS Ops MCP/application evidence source is reachable from the approved runtime. The latest historical GitHub production deployment references a Railway project that is unavailable to the current Railway principal.",
   "missingForPass": [
     "Authorized current DNS Ops MCP endpoint",
     "Runtime-only scoped principal",
@@ -30,6 +40,7 @@
   ],
   "limitations": [
     "This availability probe is not a DNS Ops scan and cannot satisfy any LIVE scenario PASS requirement.",
+    "Railway's project-not-found response does not distinguish deletion from access revocation; the artifact makes no stronger lifecycle claim.",
     "No credentials, MCP calls, scans, provider mutations, or case mutations were performed."
   ]
 }
