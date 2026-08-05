@@ -1,5 +1,5 @@
-import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const modes = new Set(['healthy', 'redirect_fault', 'noindex_fault']);
@@ -20,7 +20,9 @@ function bearerMatches(request, expected) {
   if (!supplied) return false;
   const suppliedBytes = Buffer.from(supplied);
   const expectedBytes = Buffer.from(expected);
-  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+  return (
+    suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes)
+  );
 }
 
 async function readControlRequest(request) {
@@ -59,13 +61,28 @@ export function createFixtureServer({ apexHost, wwwHost, controlToken }) {
     }
 
     if (request.url === controlPath) {
-      if (request.method !== 'POST' || !bearerMatches(request, controlToken)) {
+      if (!bearerMatches(request, controlToken)) {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.method === 'GET') {
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+        });
+        response.end(JSON.stringify({ mode }));
+        return;
+      }
+      if (request.method !== 'POST') {
         response.writeHead(404).end();
         return;
       }
       try {
         mode = await readControlRequest(request);
-        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+        });
         response.end(JSON.stringify({ mode }));
       } catch {
         response.writeHead(400).end();
@@ -104,6 +121,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const wwwHost = requiredEnvironment('DNSOPS_FIXTURE_WWW_HOST');
   const controlToken = requiredEnvironment('DNSOPS_FIXTURE_CONTROL_TOKEN');
   const port = Number(process.env.PORT ?? 3000);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port');
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error('PORT must be a valid port');
   createFixtureServer({ apexHost, wwwHost, controlToken }).listen(port);
 }

@@ -15,7 +15,9 @@ async function withFixture(run) {
   try {
     await run(`http://127.0.0.1:${address.port}`);
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
   }
 }
 
@@ -70,6 +72,12 @@ test('control endpoint admits only an authenticated fixed mode and changes the e
     });
     assert.equal(invalid.status, 400);
 
+    const readHealthy = await request(baseUrl, '/__dnsops/live-mode', {
+      headers: { host: apexHost, authorization: `Bearer ${controlToken}` },
+    });
+    assert.equal(readHealthy.status, 200);
+    assert.deepEqual(JSON.parse(readHealthy.text()), { mode: 'healthy' });
+
     const setRedirectFault = await request(baseUrl, '/__dnsops/live-mode', {
       method: 'POST',
       headers: { host: apexHost, authorization: `Bearer ${controlToken}` },
@@ -77,6 +85,10 @@ test('control endpoint admits only an authenticated fixed mode and changes the e
     });
     assert.equal(setRedirectFault.status, 200);
     assert.equal((await request(baseUrl, '/', { headers: { host: wwwHost } })).status, 200);
+    const readRedirectFault = await request(baseUrl, '/__dnsops/live-mode', {
+      headers: { host: apexHost, authorization: `Bearer ${controlToken}` },
+    });
+    assert.deepEqual(JSON.parse(readRedirectFault.text()), { mode: 'redirect_fault' });
 
     const setNoindexFault = await request(baseUrl, '/__dnsops/live-mode', {
       method: 'POST',

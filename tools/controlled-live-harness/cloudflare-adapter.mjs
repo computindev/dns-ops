@@ -4,6 +4,7 @@ import {
   validateControlledFaultHarnessPolicy,
   validateFaultRunArtifact,
 } from '../../packages/contracts/dist/index.js';
+import { validateFixtureControlManifest } from './fixture-control.mjs';
 
 const API_ORIGIN = 'https://api.cloudflare.com/client/v4';
 const LIVE_03 = Object.freeze({ name: 'mail.asorin.ai', type: 'TXT', mutationId: 'LIVE-03' });
@@ -72,6 +73,7 @@ function freezeManifest(manifest) {
     bootstrapAllowlist: Object.freeze(
       manifest.bootstrapAllowlist.map((entry) => Object.freeze({ ...entry }))
     ),
+    fixtureControl: validateFixtureControlManifest(manifest),
   });
 }
 
@@ -130,6 +132,7 @@ export function validateCloudflareManifest(manifest) {
     )
       fail('manifest bootstrap allowlist is invalid');
   }
+  validateFixtureControlManifest(manifest);
   const policy = {
     testDomain: manifest.zone,
     testWebHost: manifest.testAssets.webHost,

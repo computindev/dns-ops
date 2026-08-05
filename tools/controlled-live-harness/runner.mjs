@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -8,6 +8,10 @@ import {
   policyFromCloudflareManifest,
   validateCloudflareManifest,
 } from './cloudflare-adapter.mjs';
+import {
+  createFixtureControlAdapter,
+  validateFixtureRecoveryArtifact,
+} from './fixture-control.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_MANIFEST = resolve(
@@ -62,9 +66,10 @@ function readArtifact(path) {
   }
 }
 
-function writeArtifact(path, artifact) {
+export function writeArtifact(path, artifact) {
   if (!path) fail('an output artifact path is required');
   writeFileSync(path, `${JSON.stringify(artifact, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 async function main() {
@@ -79,6 +84,8 @@ async function main() {
       'web-preflight',
       'web-verify',
       'web-bootstrap',
+      'fixture-apply',
+      'fixture-restore',
     ].includes(command)
   )
     fail('unsupported command');
@@ -88,7 +95,23 @@ async function main() {
     fail(`${command} requires an output artifact path before provider access`);
   if (['apply', 'restore'].includes(command) && (!process.argv[3] || !process.argv[4]))
     fail(`${command} requires input and output artifact paths before provider access`);
+  if (command === 'fixture-apply') {
+    if (!['LIVE-01', 'LIVE-02'].includes(process.argv[3] ?? ''))
+      fail(
+        'fixture-apply requires an approved LIVE-01 or LIVE-02 mutation ID before credential access'
+      );
+    if (!process.argv[4] || process.argv[5] !== undefined)
+      fail('fixture-apply requires one output artifact path before credential access');
+  }
+  if (command === 'fixture-restore') {
+    if (!process.argv[3] || !process.argv[4] || process.argv[5] !== undefined)
+      fail('fixture-restore requires input and output artifact paths before credential access');
+  }
+  const fixtureRecoveryArtifact =
+    command === 'fixture-restore' ? readArtifact(process.argv[3]) : undefined;
   const manifest = loadManifest();
+  if (command === 'fixture-restore')
+    validateFixtureRecoveryArtifact(fixtureRecoveryArtifact, manifest);
   // Railway TXT values are resolved and validated before the Cloudflare client exists.
   const railwayVerificationValues = command.startsWith('web-')
     ? protectedValues(
@@ -97,6 +120,30 @@ async function main() {
         ['RAILWAY_ASORIN_AI_VERIFICATION_TXT', 'RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT']
       )
     : undefined;
+  if (command === 'fixture-apply' || command === 'fixture-restore') {
+    const token = protectedToken(
+      process.env.DNSOPS_FIXTURE_CONTROL_SECRET_FILE ??
+        `${process.env.HOME}/.config/dns-ops/fixture-control.env`,
+      'DNSOPS_FIXTURE_CONTROL_TOKEN'
+    );
+    const adapter = createFixtureControlAdapter({ manifest, token });
+    const artifact =
+      command === 'fixture-apply'
+        ? await adapter.apply(process.argv[3])
+        : await adapter.restore(fixtureRecoveryArtifact);
+    writeArtifact(process.argv[4], artifact);
+    console.log(
+      JSON.stringify({
+        status:
+          command === 'fixture-apply'
+            ? 'FIXTURE_RECOVERY_ARTIFACT_WRITTEN'
+            : 'FIXTURE_RESTORE_ARTIFACT_WRITTEN',
+        artifactPath: process.argv[4],
+        runId: artifact.runId,
+      })
+    );
+    return;
+  }
   // Credential resolution is intentionally here rather than in DNS Ops/MCP or the adapter module.
   const token = protectedToken(
     process.env.DNSOPS_CLOUDFLARE_SECRET_FILE ??
