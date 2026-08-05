@@ -1,0 +1,35 @@
+{
+  "evidenceId": "GATE3-DNS-OPS-EVIDENCE-SOURCE-PROBE",
+  "probedAt": "2026-08-05T18:25:37Z",
+  "purpose": "Read-only availability check for historical DNS Ops evidence sources before operational PASS collection.",
+  "probes": [
+    {
+      "source": "historical Railway web",
+      "url": "https://web-production-a2cde.up.railway.app/api/health",
+      "result": "HTTP_404",
+      "authenticatedMcpAttempted": false
+    },
+    {
+      "source": "historical Railway collector",
+      "url": "https://dns-ops-production.up.railway.app/healthz",
+      "result": "HTTP_404",
+      "scanAttempted": false
+    },
+    {
+      "source": "historical Cloudflare Pages web",
+      "hostname": "dns-ops-web.pages.dev",
+      "result": "NXDOMAIN_OR_UNRESOLVABLE",
+      "mcpAttempted": false
+    }
+  ],
+  "conclusion": "No current authorized DNS Ops MCP/application evidence source is reachable from the approved runtime.",
+  "missingForPass": [
+    "Authorized current DNS Ops MCP endpoint",
+    "Runtime-only scoped principal",
+    "Timestamp-correlated scans, signals, cases, audit records, restorations, and LIVE-01 reopen proof"
+  ],
+  "limitations": [
+    "This availability probe is not a DNS Ops scan and cannot satisfy any LIVE scenario PASS requirement.",
+    "No credentials, MCP calls, scans, provider mutations, or case mutations were performed."
+  ]
+}
