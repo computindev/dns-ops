@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 import { randomBytes } from 'node:crypto';
+import { promises as dns } from 'node:dns';
 import {
   chmodSync,
   closeSync,
   fchmodSync,
+  constants as fsConstants,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
   openSync,
   readFileSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { domainToASCII, fileURLToPath } from 'node:url';
 import {
@@ -91,19 +95,53 @@ export function validateMcpEndpoint(value) {
   return endpoint;
 }
 
+/**
+ * Opens an operator secret once, without following its final path component.
+ * Its metadata and content are then read from that same descriptor, so a
+ * rename after open cannot replace the value that was validated.
+ */
+function readProtectedSecretFile(path, modeFailure) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (error) {
+    if (error?.code === 'ELOOP') fail('runtime secret file is invalid');
+    fail('runtime secret file is unavailable');
+  }
+  try {
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile()) fail('runtime secret file is invalid');
+    if ((metadata.mode & 0o777) !== 0o600) fail(modeFailure);
+    return readFileSync(descriptor, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('controlled-live harness:')) throw error;
+    fail('runtime secret file is unavailable');
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /** Reads the explicitly supplied, isolated MCP runtime secret. */
 export function loadMcpPreflightSecret(path) {
   if (!path || typeof path !== 'string' || !isAbsolute(path))
     fail('MCP preflight requires an explicit secret file path');
+  let contents;
   try {
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink())
-      fail('MCP preflight secret file is invalid');
+    contents = readProtectedSecretFile(path, 'runtime secret file must be mode 600');
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('controlled-live harness:')) throw error;
-    fail('MCP preflight secret file is unavailable');
+    if (
+      error instanceof Error &&
+      error.message === 'controlled-live harness: runtime secret file is invalid'
+    )
+      fail('MCP preflight secret file is invalid');
+    if (
+      error instanceof Error &&
+      error.message === 'controlled-live harness: runtime secret file is unavailable'
+    )
+      fail('MCP preflight secret file is unavailable');
+    throw error;
   }
-  const values = protectedValues(path, MCP_PREFLIGHT_SECRET_NAMES);
+  const values = parseProtectedValues(contents, MCP_PREFLIGHT_SECRET_NAMES);
   if (!/^[A-Za-z0-9_-]{32,}$/.test(values.DNSOPS_MCP_BEARER_TOKEN))
     fail('MCP preflight bearer token is invalid');
   return Object.freeze({
@@ -123,10 +161,123 @@ function validJsonRpcResult(value, id) {
   );
 }
 
-async function mcpRpc(fetchImpl, endpoint, token, id, method, params) {
+function ipv4IsPublic(address) {
+  if (isIP(address) !== 4) return false;
+  const [a, b] = address.split('.').map(Number);
+  return !(
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && (b === 18 || b === 19 || b === 51)) ||
+    (a === 203 && b === 0) ||
+    a >= 224
+  );
+}
+
+function ipv6IsPublic(address) {
+  if (isIP(address) !== 6) return false;
+  const normalized = address.toLowerCase();
+  // Global-unicast IPv6 is 2000::/3. Documentation addresses are excluded
+  // even though they fall within that allocation.
+  return normalized.startsWith('2') && !/^2001:(?:0{0,3}db8|0{0,3}2)(?::|$)/.test(normalized);
+}
+
+export function isPublicMcpAddress(address) {
+  return ipv4IsPublic(address) || ipv6IsPublic(address);
+}
+
+/**
+ * Resolves the endpoint once and rejects it unless every answer is public.
+ * The returned lookup callback only returns these vetted answers, preventing
+ * the TLS connection from performing a second, attacker-controlled lookup.
+ */
+export async function resolveMcpEndpoint(endpoint, resolveHostname = dns.lookup) {
+  let addresses;
+  try {
+    addresses = await resolveHostname(endpoint.hostname, { all: true, verbatim: true });
+  } catch {
+    fail('MCP endpoint resolution failed');
+  }
+  if (
+    !Array.isArray(addresses) ||
+    addresses.length === 0 ||
+    addresses.some(
+      (entry) =>
+        !entry ||
+        (entry.family !== 4 && entry.family !== 6) ||
+        typeof entry.address !== 'string' ||
+        !isPublicMcpAddress(entry.address)
+    )
+  )
+    fail('MCP endpoint resolution failed');
+
+  const vettedAddresses = Object.freeze(
+    addresses.map(({ address, family }) => Object.freeze({ address, family }))
+  );
+  let nextAddress = 0;
+  const lookup = (hostname, options, callback) => {
+    if (hostname !== endpoint.hostname) {
+      callback(new Error('MCP endpoint lookup rejected'));
+      return;
+    }
+    const requestedFamily = typeof options === 'object' ? options.family : 0;
+    const candidates = vettedAddresses.filter(
+      ({ family }) => !requestedFamily || family === requestedFamily
+    );
+    if (candidates.length === 0) {
+      callback(new Error('MCP endpoint lookup rejected'));
+      return;
+    }
+    if (options?.all) {
+      callback(null, candidates);
+      return;
+    }
+    const selected = candidates[nextAddress % candidates.length];
+    nextAddress += 1;
+    callback(null, selected.address, selected.family);
+  };
+  return Object.freeze({ endpoint, addresses: vettedAddresses, lookup });
+}
+
+/** Performs one HTTPS request using the vetted lookup supplied by resolveMcpEndpoint. */
+async function pinnedHttpsFetch(endpoint, init) {
+  return new Promise((resolveResponse, reject) => {
+    const request = httpsRequest(
+      endpoint,
+      {
+        method: init.method,
+        headers: init.headers,
+        lookup: init.lookup,
+        servername: endpoint.hostname,
+        agent: false,
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf8');
+          resolveResponse({
+            ok: response.statusCode >= 200 && response.statusCode < 300,
+            status: response.statusCode,
+            json: async () => JSON.parse(body),
+          });
+        });
+      }
+    );
+    request.on('error', reject);
+    request.end(init.body);
+  });
+}
+
+async function mcpRpc(fetchImpl, resolvedEndpoint, token, id, method, params) {
   let response;
   try {
-    response = await fetchImpl(endpoint, {
+    response = await fetchImpl(resolvedEndpoint.endpoint, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -134,7 +285,7 @@ async function mcpRpc(fetchImpl, endpoint, token, id, method, params) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-      redirect: 'error',
+      lookup: resolvedEndpoint.lookup,
     });
   } catch {
     safeMcpFailure(method);
@@ -186,13 +337,19 @@ function verifyMcpDiscovery(initializeResult, toolsResult) {
  * Performs MCP discovery only. It does not invoke an MCP tool or expose a
  * response body; the final artifact is atomically published only on success.
  */
-export async function runMcpEvidencePreflight({ secretFile, artifactPath, fetchImpl = fetch }) {
+export async function runMcpEvidencePreflight({
+  secretFile,
+  artifactPath,
+  fetchImpl = pinnedHttpsFetch,
+  resolveHostname = dns.lookup,
+}) {
   const secret = loadMcpPreflightSecret(secretFile);
   const reservation = reserveFixtureArtifact(artifactPath);
   try {
+    const resolvedEndpoint = await resolveMcpEndpoint(secret.endpoint, resolveHostname);
     const initialized = await mcpRpc(
       fetchImpl,
-      secret.endpoint,
+      resolvedEndpoint,
       secret.token,
       'dnsops-mcp-preflight-initialize',
       'initialize',
@@ -204,7 +361,7 @@ export async function runMcpEvidencePreflight({ secretFile, artifactPath, fetchI
     );
     const tools = await mcpRpc(
       fetchImpl,
-      secret.endpoint,
+      resolvedEndpoint,
       secret.token,
       'dnsops-mcp-preflight-tools-list',
       'tools/list',
@@ -233,17 +390,16 @@ export async function runMcpEvidencePreflight({ secretFile, artifactPath, fetchI
 
 /** Reads the runtime secret only from this isolated harness process. */
 export function protectedToken(path, name) {
-  if ((statSync(path).mode & 0o777) !== 0o600) fail(`${name} secret file must be mode 600`);
-  const match = readFileSync(path, 'utf8').match(new RegExp(`^export ${name}='([^'\\n]+)'\\n?$`));
+  const contents = readProtectedSecretFile(path, `${name} secret file must be mode 600`);
+  const match = contents.match(new RegExp(`^export ${name}='([^'\\n]+)'\\n?$`));
   if (!match) fail(`${name} secret file has invalid format`);
   return match[1];
 }
 
-export function protectedValues(path, names) {
+function parseProtectedValues(contents, names) {
   if (!Array.isArray(names) || names.length === 0 || new Set(names).size !== names.length)
     fail('protected runtime value names are invalid');
-  if ((statSync(path).mode & 0o777) !== 0o600) fail('runtime secret file must be mode 600');
-  const lines = readFileSync(path, 'utf8').split('\n');
+  const lines = contents.split('\n');
   if (lines.at(-1) !== '') fail('runtime secret file has invalid format');
   lines.pop();
   if (lines.length !== names.length) fail('runtime secret file has invalid format');
@@ -257,6 +413,13 @@ export function protectedValues(path, names) {
   }
   if (Object.keys(values).length !== names.length) fail('runtime secret file has invalid format');
   return Object.freeze(values);
+}
+
+export function protectedValues(path, names) {
+  return parseProtectedValues(
+    readProtectedSecretFile(path, 'runtime secret file must be mode 600'),
+    names
+  );
 }
 
 export function loadManifest(path = DEFAULT_MANIFEST) {

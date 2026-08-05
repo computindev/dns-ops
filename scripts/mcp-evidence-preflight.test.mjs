@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,21 +15,28 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  loadMcpPreflightSecret,
   REQUIRED_MCP_TOOLS,
+  resolveMcpEndpoint,
   runMcpEvidencePreflight,
   validateMcpEndpoint,
 } from '../tools/controlled-live-harness/runner.mjs';
 
 const endpoint = 'https://mcp.example.test/mcp';
 const token = 'mcp-preflight-token-with-sufficient-entropy-123456';
+const publicAddresses = Object.freeze([
+  Object.freeze({ address: '93.184.216.34', family: 4 }),
+  Object.freeze({ address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }),
+]);
+const resolvePublic = async () => publicAddresses;
 
 function secret(values = { DNSOPS_MCP_ENDPOINT: endpoint, DNSOPS_MCP_BEARER_TOKEN: token }) {
   const path = join(mkdtempSync(join(tmpdir(), 'dnsops-mcp-')), 'mcp-preflight.env');
   writeFileSync(
     path,
-    Object.entries(values)
+    `${Object.entries(values)
       .map(([name, value]) => `export ${name}='${value}'`)
-      .join('\n') + '\n',
+      .join('\n')}\n`,
     { mode: 0o600 }
   );
   chmodSync(path, 0o600);
@@ -71,6 +79,7 @@ test('MCP evidence preflight initializes, discovers the complete scoped contract
     secretFile: secret(),
     artifactPath,
     fetchImpl: mocked.fetch,
+    resolveHostname: resolvePublic,
   });
 
   assert.equal(artifact.status, 'MCP_EVIDENCE_PREFLIGHT_OK');
@@ -84,10 +93,19 @@ test('MCP evidence preflight initializes, discovers the complete scoped contract
     [`Bearer ${token}`, `Bearer ${token}`]
   );
   assert.equal(mocked.calls[0].url.toString(), endpoint);
-  assert.deepEqual(
-    mocked.calls.map(({ init }) => init.redirect),
-    ['error', 'error']
-  );
+  for (const { init } of mocked.calls) {
+    assert.equal(typeof init.lookup, 'function');
+    await new Promise((resolve, reject) =>
+      init.lookup('mcp.example.test', { family: 0 }, (error, address, family) => {
+        if (error) reject(error);
+        else {
+          assert.ok(publicAddresses.some((entry) => entry.address === address));
+          assert.ok([4, 6].includes(family));
+          resolve();
+        }
+      })
+    );
+  }
   assert.equal(statSync(artifactPath).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(readFileSync(artifactPath, 'utf8')), artifact);
   const emitted = JSON.stringify(artifact);
@@ -168,7 +186,12 @@ test('MCP evidence preflight fails closed and leaves no artifact when a required
   const mocked = discoveryFetch(REQUIRED_MCP_TOOLS.filter(([name]) => name !== 'scan_request'));
 
   await assert.rejects(
-    runMcpEvidencePreflight({ secretFile: secret(), artifactPath, fetchImpl: mocked.fetch }),
+    runMcpEvidencePreflight({
+      secretFile: secret(),
+      artifactPath,
+      fetchImpl: mocked.fetch,
+      resolveHostname: resolvePublic,
+    }),
     /MCP tools\/list failed/
   );
   assert.equal(mocked.calls.length, 2);
@@ -187,6 +210,7 @@ test('MCP evidence preflight rejects a wrong required scope without publishing a
       secretFile: secret(),
       artifactPath,
       fetchImpl: discoveryFetch(tools).fetch,
+      resolveHostname: resolvePublic,
     }),
     /MCP tools\/list failed/
   );
@@ -206,6 +230,7 @@ test('MCP errors do not disclose a response body or bearer token', async () => {
         status: 401,
         json: async () => ({ error: responseBody }),
       }),
+      resolveHostname: resolvePublic,
     }),
     (error) =>
       error instanceof Error &&
@@ -214,6 +239,68 @@ test('MCP errors do not disclose a response body or bearer token', async () => {
       !error.message.includes(responseBody)
   );
   assert.equal(existsSync(artifactPath), false);
+});
+
+test('MCP endpoint resolution rejects every private, special, and mixed DNS answer before a request', async () => {
+  const privateAnswers = [
+    { address: '127.0.0.1', family: 4 },
+    { address: '10.0.0.1', family: 4 },
+    { address: '169.254.169.254', family: 4 },
+    { address: '192.168.1.1', family: 4 },
+    { address: '::1', family: 6 },
+    { address: 'fd00::1', family: 6 },
+    { address: 'fe80::1', family: 6 },
+    { address: '2001:0db8::1', family: 6 },
+  ];
+  for (const answer of privateAnswers) {
+    await assert.rejects(
+      resolveMcpEndpoint(validateMcpEndpoint(endpoint), async () => [answer]),
+      /MCP endpoint resolution failed/
+    );
+  }
+  await assert.rejects(
+    resolveMcpEndpoint(validateMcpEndpoint(endpoint), async () => [
+      publicAddresses[0],
+      privateAnswers[0],
+    ]),
+    /MCP endpoint resolution failed/
+  );
+});
+
+test('MCP endpoint connection lookup is pinned to the vetted DNS answers', async () => {
+  const resolved = await resolveMcpEndpoint(validateMcpEndpoint(endpoint), resolvePublic);
+  await new Promise((resolve, reject) =>
+    resolved.lookup('mcp.example.test', { family: 6 }, (error, address, family) => {
+      if (error) reject(error);
+      else {
+        assert.equal(address, publicAddresses[1].address);
+        assert.equal(family, 6);
+        resolve();
+      }
+    })
+  );
+  await assert.rejects(
+    new Promise((resolve, reject) =>
+      resolved.lookup('rebound.example.test', { family: 0 }, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+    /lookup rejected/
+  );
+});
+
+test('MCP preflight rejects a symlinked secret before parsing its target', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-mcp-'));
+  const target = join(directory, 'target.env');
+  writeFileSync(
+    target,
+    `export DNSOPS_MCP_ENDPOINT='${endpoint}'\nexport DNSOPS_MCP_BEARER_TOKEN='${token}'\n`,
+    { mode: 0o600 }
+  );
+  chmodSync(target, 0o600);
+  const link = join(directory, 'mcp-preflight.env');
+  symlinkSync(target, link);
+  assert.throws(() => loadMcpPreflightSecret(link), /MCP preflight secret file is invalid/);
 });
 
 test('MCP endpoint validation permits only a public HTTPS /mcp URL', () => {
