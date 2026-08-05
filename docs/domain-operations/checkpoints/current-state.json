@@ -126,6 +126,7 @@
       "Audit IDs for scan, signal, case, and restoration lifecycle",
       "An authorized tenant-scoped web-session read path for GET /api/portfolio/audit to retrieve audit evidence",
       "An authorized tenant-scoped web-session read path for GET /api/alerts to verify LIVE-01 reopen alert deduplication",
+      "Successful redacted MCP and web-evidence preflight artifacts from their separate protected runtime secret files",
       "An authorized DNS Ops MCP endpoint and principal with required scopes"
     ]
   },
@@ -158,8 +159,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain authorized DNS Ops MCP access plus authorized web-session GET /api/portfolio/audit and GET /api/alerts access; collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
+    "Obtain authorized DNS Ops MCP access plus authorized web-session GET /api/portfolio/audit and GET /api/alerts access; run both required redacted preflights, then collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-05T19:50:55Z"
+  "updatedAt": "2026-08-05T20:12:53Z"
 }
