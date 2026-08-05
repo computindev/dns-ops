@@ -1,0 +1,17 @@
+{
+  "kind": "CLOUDFLARE_LIVE03_BASELINE",
+  "manifestId": "ASORIN-AI-CONTROLLED-LIVE-01-03",
+  "zoneId": "7391960081e72b26c9c5066133013ab2",
+  "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+  "baselineHash": "sha256:aa1d1ab42e96128213c38552fea196e9365fdf57d83a6605a2aa178ecd7452ba",
+  "record": {
+    "id": "385269cad25754090695c7b28cf9e548",
+    "name": "mail.asorin.ai",
+    "type": "TXT",
+    "content": "v=spf1 -all",
+    "ttl": 60
+  },
+  "providerResponses": [
+    "cloudflare.dns_bootstrap_read: 200"
+  ]
+}

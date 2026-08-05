@@ -53,6 +53,19 @@ function artifact(): FaultRunArtifact {
   };
 }
 
+function restoredPendingEvidenceArtifact(): FaultRunArtifact {
+  return {
+    ...artifact(),
+    authoritativeEvidenceIds: [],
+    recursiveEvidenceIds: [],
+    scanTaskIds: [],
+    signalIds: [],
+    caseIds: [],
+    auditEventIds: [],
+    result: 'RESTORED_PENDING_EVIDENCE',
+  };
+}
+
 describe('controlled live-fault harness policy', () => {
   it('authorizes an exact allowlisted mutation without holding a credential value', () => {
     const authorization = authorizeControlledFaultMutation(policy(), {
@@ -276,8 +289,46 @@ describe('controlled live-fault harness policy', () => {
     ).toThrow('strict subdomain');
   });
 
-  it('accepts a bounded, redacted fault-run artifact', () => {
+  it('accepts a fully evidenced PASS artifact for a future independently verified integration', () => {
     expect(() => validateFaultRunArtifact(artifact())).not.toThrow();
+  });
+
+  it('accepts provider-restored artifacts pending external completion evidence', () => {
+    expect(() => validateFaultRunArtifact(restoredPendingEvidenceArtifact())).not.toThrow();
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...restoredPendingEvidenceArtifact(),
+        restoredAt: undefined,
+      })
+    ).toThrow('RESTORED_PENDING_EVIDENCE requires appliedAt and restoredAt');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...restoredPendingEvidenceArtifact(),
+        authoritativeEvidenceIds: ['authoritative-01'],
+      })
+    ).toThrow(
+      'RESTORED_PENDING_EVIDENCE requires authoritative, scan, signal, case, and audit evidence to be unavailable'
+    );
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...restoredPendingEvidenceArtifact(),
+        recovery: {
+          provider: 'example-provider',
+          zoneId: 'zone-123',
+          records: [
+            {
+              name: 'mail.faults.example.test',
+              type: 'TXT',
+              desiredValue: 'v=spf1 -all',
+            },
+          ],
+          operatorCommands: ['restore-record: 200'],
+        },
+      })
+    ).toThrow('recovery is only permitted when result is RECOVERY_REQUIRED');
   });
 
   it('rejects artifact secrets, malformed hashes, and incomplete recovery instructions', () => {
@@ -355,6 +406,13 @@ describe('controlled live-fault harness policy', () => {
       delete artifactWithoutRestoration.restoredAt;
       validateFaultRunArtifact(artifactWithoutRestoration);
     }).toThrow('PASS requires appliedAt and restoredAt');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
+        authoritativeEvidenceIds: [],
+      })
+    ).toThrow('PASS requires authoritative, scan, signal, case, and audit evidence');
 
     expect(() =>
       validateFaultRunArtifact({
