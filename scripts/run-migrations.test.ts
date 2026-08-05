@@ -141,10 +141,9 @@ describe.skipIf(!DATABASE_URL)('run-migrations integration (real PostgreSQL)', (
   });
 });
 
-// A database populated by the legacy (pre-ledger) runner already has the
-// migration's objects. The bridge must record such a migration as applied
-// instead of failing the deploy — and must NOT count it as freshly applied.
-describe.skipIf(!DATABASE_URL)('run-migrations legacy bootstrap bridge (real PostgreSQL)', () => {
+// A pre-existing migration object can be evidence of a partial legacy run.
+// The runner must fail closed rather than claim the migration was applied.
+describe.skipIf(!DATABASE_URL)('run-migrations partial legacy state (real PostgreSQL)', () => {
   let migrationDir: string;
 
   beforeAll(async () => {
@@ -171,31 +170,32 @@ describe.skipIf(!DATABASE_URL)('run-migrations legacy bootstrap bridge (real Pos
     });
   });
 
-  it('records an already-existing migration as bootstrapped, not applied', async () => {
-    const result = await runMigrations({ databaseUrl: LEGACY_DB_URL, migrationDir });
-
-    expect(result.applied).not.toContain('0011_test.sql');
-    expect(result.bootstrapped).toContain('0011_test.sql');
+  it('rejects an already-existing object without recording the migration', async () => {
+    await expect(runMigrations({ databaseUrl: LEGACY_DB_URL, migrationDir })).rejects.toThrow(
+      /already exists/
+    );
 
     await withClient(LEGACY_DB_URL, async (client) => {
       const ledger = await client.query(
-        "SELECT name, checksum FROM _migrations_applied WHERE name = '0011_test.sql'"
+        "SELECT name FROM _migrations_applied WHERE name = '0011_test.sql'"
       );
-      expect(ledger.rows).toHaveLength(1);
-      expect(String(ledger.rows[0].checksum)).toMatch(/^[0-9a-f]{64}$/);
+      expect(ledger.rows).toHaveLength(0);
 
-      // The INSERT from the migration did NOT execute (the CREATE raised
-      // "already exists" first and the transaction rolled back) — marker stays empty.
       const marker = await client.query(`SELECT count(*)::int AS c FROM ${MARKER_TABLE}`);
       expect(marker.rows[0].c).toBe(0);
     });
   });
 
-  it('skips the bootstrapped migration on the next run (ledger now populated)', async () => {
-    const result = await runMigrations({ databaseUrl: LEGACY_DB_URL, migrationDir });
+  it('continues to fail on re-run until an operator reconciles the legacy state', async () => {
+    await expect(runMigrations({ databaseUrl: LEGACY_DB_URL, migrationDir })).rejects.toThrow(
+      /already exists/
+    );
 
-    expect(result.applied).not.toContain('0011_test.sql');
-    expect(result.bootstrapped).not.toContain('0011_test.sql');
-    expect(result.skipped).toContain('0011_test.sql');
+    await withClient(LEGACY_DB_URL, async (client) => {
+      const ledger = await client.query(
+        "SELECT name FROM _migrations_applied WHERE name = '0011_test.sql'"
+      );
+      expect(ledger.rows).toHaveLength(0);
+    });
   });
 });

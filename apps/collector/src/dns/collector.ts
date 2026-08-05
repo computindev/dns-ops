@@ -5,7 +5,7 @@
  * Evaluates rules and persists findings immediately after collection.
  */
 
-import { determineStatus } from '@dns-ops/contracts';
+import { type AuthoritativeEvidenceCoverage, determineStatus } from '@dns-ops/contracts';
 import type {
   IDatabaseAdapter,
   NewFinding,
@@ -225,12 +225,12 @@ export class DNSCollector {
     const resultState = this.calculateResultState(allResults, errors);
 
     // Store results to database via domain/snapshot/observation repositories
-    const snapshotId = await this.storeResults(allResults, resultState, delegationData);
+    const stored = await this.storeResults(allResults, resultState, delegationData);
 
     return {
-      snapshotId,
+      snapshotId: stored.snapshotId,
       domain: this.config.domain,
-      resultState,
+      resultState: stored.resultState,
       observationCount: allResults.length,
       duration: Date.now() - startTime,
       errors,
@@ -400,6 +400,14 @@ export class DNSCollector {
     const successCount = results.filter((r) => r.success).length;
     const totalCount = results.length;
 
+    if (this.config.zoneManagement === 'managed') {
+      const authoritativeResults = results.filter((r) => r.vantage.type === 'authoritative');
+      const lacksAuthoritativeProof =
+        authoritativeResults.length === 0 ||
+        authoritativeResults.some((result) => result.success && result.flags?.aa !== true);
+      if (lacksAuthoritativeProof) return 'partial';
+    }
+
     if (successCount === totalCount) {
       return this.config.zoneManagement === 'unmanaged' ? 'partial' : 'complete';
     }
@@ -411,6 +419,37 @@ export class DNSCollector {
     return 'failed';
   }
 
+  private getAuthoritativeEvidenceCoverage(
+    results: DNSQueryResult[]
+  ): AuthoritativeEvidenceCoverage {
+    if (this.config.zoneManagement !== 'managed') {
+      return { state: 'NOT_REQUESTED', nameservers: [] };
+    }
+
+    const authoritative = results.filter((result) => result.vantage.type === 'authoritative');
+    const nameservers = [...new Set(authoritative.map((result) => result.vantage.identifier))];
+    const verified =
+      authoritative.length > 0 &&
+      authoritative.every((result) => result.success && result.flags?.aa === true);
+
+    if (verified) return { state: 'VERIFIED', nameservers };
+
+    return {
+      state: 'UNKNOWN',
+      nameservers,
+      unknown: {
+        reason: 'AUTHORITATIVE_EVIDENCE_UNAVAILABLE',
+        explanation:
+          authoritative.length === 0
+            ? 'No direct authoritative response was captured.'
+            : 'At least one direct nameserver response failed or lacked the authoritative-answer flag.',
+        action: 'RETRY_PROBE',
+        actionLabel: 'Retry authoritative DNS collection',
+        blocking: true,
+      },
+    };
+  }
+
   /**
    * Store results in database
    */
@@ -418,7 +457,10 @@ export class DNSCollector {
     results: DNSQueryResult[],
     resultState: 'complete' | 'partial' | 'failed',
     delegationData?: import('../delegation/collector.js').DelegationSummary | null
-  ): Promise<string> {
+  ): Promise<{
+    snapshotId: string;
+    resultState: 'complete' | 'partial' | 'failed';
+  }> {
     const { tenantId, domain, zoneManagement, triggeredBy } = this.config;
     // Find or create domain within the current tenant scope.
     // The same normalized domain may legitimately exist in multiple tenant portfolios.
@@ -446,6 +488,7 @@ export class DNSCollector {
       metadata: {
         // Vantage identifiers (IPs/hostnames) for detailed tracking
         vantageIdentifiers: [...new Set(results.map((r) => r.vantage.identifier))],
+        authoritativeEvidence: this.getAuthoritativeEvidenceCoverage(results),
         // Delegation data if available (Bead 12, dns-ops-1j4.6.4)
         ...(delegationData
           ? {
@@ -546,20 +589,24 @@ export class DNSCollector {
     // Evaluate rules and persist findings immediately
     // This ensures findings are available for portfolio views without
     // requiring a separate API call
-    const { findingsCount, suggestionsCount } = await this.evaluateAndPersistFindings(
-      snapshot.id,
-      domainRecord.id,
-      domain,
-      zoneManagement as 'managed' | 'unmanaged' | 'unknown',
-      createdObservations,
-      createdRecordSets
-    );
+    const { findingsCount, suggestionsCount, evaluationErrors } =
+      await this.evaluateAndPersistFindings(
+        snapshot.id,
+        domainRecord.id,
+        domain,
+        zoneManagement as 'managed' | 'unmanaged' | 'unknown',
+        createdObservations,
+        createdRecordSets
+      );
 
     if (findingsCount > 0) {
       logger.info('Persisted findings', { domain, findingsCount, suggestionsCount });
     }
 
-    return snapshot.id;
+    return {
+      snapshotId: snapshot.id,
+      resultState: evaluationErrors > 0 && resultState === 'complete' ? 'partial' : resultState,
+    };
   }
 
   /**
@@ -603,7 +650,7 @@ export class DNSCollector {
     zoneManagement: 'managed' | 'unmanaged' | 'unknown',
     observations: Observation[],
     recordSets: RecordSet[]
-  ): Promise<{ findingsCount: number; suggestionsCount: number }> {
+  ): Promise<{ findingsCount: number; suggestionsCount: number; evaluationErrors: number }> {
     try {
       // Create ruleset and engine
       const ruleset = createCombinedRuleset();
@@ -647,11 +694,16 @@ export class DNSCollector {
         rulesetVersion: ruleset.version,
       };
 
-      // Evaluate rules
-      const { findings, suggestions } = engine.evaluate(context);
+      // Evaluate rules. Per-rule failures are explicit UNKNOWN coverage, not
+      // absence of findings. Persist coverage before any early return.
+      const { findings, suggestions, errors, complete } = engine.evaluate(context);
+      await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
+        state: complete ? 'COMPLETE' : 'PARTIAL',
+        errors,
+      });
 
       if (findings.length === 0) {
-        return { findingsCount: 0, suggestionsCount: 0 };
+        return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: errors.length };
       }
 
       // Persist findings
@@ -710,15 +762,37 @@ export class DNSCollector {
       return {
         findingsCount: persistedFindings.length,
         suggestionsCount: suggestionsToInsert.length,
+        evaluationErrors: errors.length,
       };
     } catch (error) {
-      // Log error but don't fail the collection
+      // Preserve a typed, sanitized UNKNOWN even when evaluation infrastructure
+      // fails outside an individual rule. The detailed exception stays in logs.
       logger.error(
         'Error evaluating and persisting findings',
         error instanceof Error ? error : new Error(String(error)),
         { domain: this.config.domain }
       );
-      return { findingsCount: 0, suggestionsCount: 0 };
+      await this.snapshotRepo
+        .updateEvaluationCoverage(snapshotId, {
+          state: 'PARTIAL',
+          errors: [
+            {
+              code: 'RULE_EXECUTION_FAILED',
+              ruleId: 'ruleset',
+              message: 'Ruleset evaluation could not be completed',
+              status: 'UNKNOWN',
+              unknown: {
+                reason: 'CHECK_EVALUATION_FAILED',
+                explanation: 'The ruleset failed before every check produced a trustworthy result.',
+                action: 'RUN_FRESH_SCAN',
+                actionLabel: 'Run a fresh scan',
+                blocking: true,
+              },
+            },
+          ],
+        })
+        .catch(() => undefined);
+      return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: 1 };
     }
   }
 }

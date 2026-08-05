@@ -1,0 +1,34 @@
+{
+  "evidenceId": "FIX-05-STALE-TLS-EVIDENCE",
+  "recordedAt": "2026-07-29T18:09:00Z",
+  "implementationSha": "708013e28290799d425937474fd130e15a0db9a6",
+  "scope": "Deterministic non-live stale TLS evidence classification",
+  "fixture": {
+    "baseline": "accepted TLS certificate baseline with maxEvidenceAgeSeconds=1",
+    "observation": "TLS_CERTIFICATE probe captured two seconds before deterministic evaluation time",
+    "violationFields": {
+      "hostnameAuthorized": false,
+      "chainAuthorized": true
+    }
+  },
+  "expected": {
+    "classification": "EVIDENCE_STALE setup/evidence",
+    "canonicalObservation": false,
+    "alertDelivery": false
+  },
+  "proof": {
+    "test": "apps/collector/src/jobs/operational-condition-finalizer.test.ts :: does not send stale TLS evidence",
+    "assertions": [
+      "evaluation.setupEvidence contains EVIDENCE_STALE",
+      "observer.observe is not called",
+      "send is not called"
+    ],
+    "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+    "result": "2713 passed, 41 skipped"
+  },
+  "safety": {
+    "liveDns": false,
+    "providerWrites": false,
+    "productionWrites": false
+  }
+}

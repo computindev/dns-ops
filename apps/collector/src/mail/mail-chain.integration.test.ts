@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock DNS for mail checks
 vi.mock('./dns.js', () => ({
+  resolveDomainExists: vi.fn().mockResolvedValue(true),
   resolveTXT: vi.fn(),
 }));
 
@@ -85,7 +86,7 @@ describe('MAIL-001: Mail Chain Integration', () => {
       expect(result.dkim.present).toBe(false);
 
       // Error states should be captured
-      expect(result.dmarc.errors).toContain('DNS error: NXDOMAIN');
+      expect(result.dmarc.dmarcDiscovery?.status).toBe('UNKNOWN');
       expect(result.spf.errors).toContain('DNS error: NXDOMAIN');
     });
 

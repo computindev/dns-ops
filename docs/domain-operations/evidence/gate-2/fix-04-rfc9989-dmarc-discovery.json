@@ -1,0 +1,63 @@
+{
+  "fixtureId": "FIX-04",
+  "recordedAt": "2026-07-28T23:42:19Z",
+  "implementationBaseSha": "cf639df6ccc2a578d9093d9aba1885a8baf4c2d0",
+  "standard": {
+    "document": "RFC 9989",
+    "sections": ["4.7", "4.8", "4.10", "4.10.1"],
+    "source": "https://www.rfc-editor.org/rfc/rfc9989.html"
+  },
+  "postFixAssertions": [
+    "Policy discovery queries the Author Domain first and performs no more than eight DMARC TXT queries",
+    "Author Domains longer than eight labels jump to the seven-label suffix after the direct query",
+    "Only an exact case-sensitive DMARC1 first version tag is accepted, including RFC-permitted WSP",
+    "Multiple current-version records at one target are discarded",
+    "psd=n and psd=y stop the walk and organizational/PSD selection remains explicit",
+    "psd=u is accepted without falsely asserting an Organizational Domain",
+    "DNS failures yield actionable UNKNOWN while ENOTFOUND/ENODATA are handled as absence evidence",
+    "Inherited effective policy follows existing sp->p and non-existent np->sp->p precedence",
+    "Domain-existence evidence is required before inherited policy can be marked determined",
+    "Invalid or duplicate p/sp/np tags use p=none only when at least one syntactically valid reporting URI exists",
+    "t=y lowers reject to quarantine and quarantine to none",
+    "Scoring uses only the determined effective policy and never raw inherited p",
+    "SPF remains partial-credit only because Phase 0–1 does not recursively evaluate it"
+  ],
+  "tests": {
+    "targeted": {
+      "command": "bunx vitest run apps/collector/src/mail/dmarc-discovery.test.ts apps/collector/src/mail/checker.test.ts packages/parsing/src/mail/index.test.ts packages/parsing/src/mail/result.test.ts packages/parsing/src/e2e/result-integration.e2e.test.ts",
+      "result": "123 passed in 5 files"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "typecheck": {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed"
+    },
+    "deterministicSuite": {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2566 passed, 41 skipped; 141 files passed, 3 skipped"
+    },
+    "build": {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "schemaDrift": {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "NO DRIFT"
+    }
+  },
+  "review": {
+    "method": "Four fresh-context independent reviewer passes against RFC 9989",
+    "resolvedFindings": [
+      "Version-tag grammar and public parser consistency",
+      "Malformed and duplicate policy-tag handling",
+      "np/sp/p precedence and domain-existence evidence",
+      "psd=u and walk-start psd=y behavior",
+      "t=y policy reduction",
+      "RFC URI percent-escape validation",
+      "Safe score derivation"
+    ]
+  }
+}

@@ -8,7 +8,6 @@
 import type { Finding, Suggestion } from '@dns-ops/db/schema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface MailFindingsPanelProps {
@@ -32,6 +31,18 @@ interface MailFindingsData {
   domain: string;
   rulesetVersion: string;
   persisted: boolean;
+  evaluationCoverage: {
+    state: 'COMPLETE' | 'PARTIAL';
+    errors: Array<{
+      ruleId: string;
+      message: string;
+      status: 'UNKNOWN';
+      unknown: {
+        explanation: string;
+        actionLabel: string;
+      };
+    }>;
+  };
   mailConfig: MailConfig;
   findings: Finding[];
   suggestions: Suggestion[];
@@ -80,6 +91,23 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
 
   return (
     <div className="space-y-6">
+      {data.evaluationCoverage.state === 'PARTIAL' && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4" role="status">
+          <h4 className="font-semibold text-amber-900">Needs setup/evidence</h4>
+          <p className="mt-1 text-sm text-amber-800">
+            One or more checks could not be evaluated. Missing results are UNKNOWN, not healthy.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {data.evaluationCoverage.errors.map((evaluationError) => (
+              <li key={evaluationError.ruleId} className="text-sm text-amber-900">
+                <strong>{evaluationError.ruleId}:</strong> {evaluationError.unknown.explanation}{' '}
+                <span className="font-medium">{evaluationError.unknown.actionLabel}.</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 border border-indigo-100">
         <div className="flex items-center justify-between">
           <div>
@@ -89,7 +117,15 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <ScoreCircle score={mailConfig.securityScore} />
+            {data.evaluationCoverage.state === 'COMPLETE' ? (
+              <ScoreCircle score={mailConfig.securityScore} />
+            ) : (
+              <div className="rounded-full border-4 border-gray-300 px-3 py-4 text-center text-xs font-semibold text-gray-600">
+                Score
+                <br />
+                unavailable
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -145,9 +181,11 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
           )}
         </div>
 
-        {findings.length === 0 && (
+        {findings.length === 0 && data.evaluationCoverage.state === 'COMPLETE' && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-800 text-sm">✓ No mail configuration issues detected.</p>
+            <p className="text-green-800 text-sm">
+              ✓ No mail configuration issues detected by the checks that completed.
+            </p>
           </div>
         )}
 
@@ -359,28 +397,9 @@ interface MailSuggestionCardProps {
   domain: string;
 }
 
-function MailSuggestionCard({ suggestion, domain }: MailSuggestionCardProps) {
+function MailSuggestionCard({ suggestion, domain: _domain }: MailSuggestionCardProps) {
   const queryClient = useQueryClient();
-  const [showConfirm, setShowConfirm] = useState(false);
-
   const isPending = !suggestion.appliedAt && !suggestion.dismissedAt;
-
-  const applyMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch(`/api/suggestions/${suggestion.id}/apply`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmApply: suggestion.reviewOnly ? true : undefined }),
-      });
-      if (!response.ok) {
-        const error = (await response.json()) as { error?: string; code?: string };
-        throw new Error(error.error || 'Failed to apply suggestion');
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['mail-findings'] });
-    },
-  });
 
   const dismissMutation = useMutation({
     mutationFn: async () => {
@@ -396,102 +415,57 @@ function MailSuggestionCard({ suggestion, domain }: MailSuggestionCardProps) {
     },
   });
 
-  const handleApply = () => {
-    if (suggestion.reviewOnly && !showConfirm) {
-      setShowConfirm(true);
-      return;
-    }
-    applyMutation.mutate();
-  };
-
-  const handleDismiss = () => {
-    dismissMutation.mutate();
-  };
-
   return (
-    <>
-      <div
-        className={`p-3 rounded-lg ${
-          suggestion.reviewOnly
-            ? 'bg-amber-100/50 border border-amber-200'
-            : 'bg-blue-50 border border-blue-200'
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h6 className="font-medium text-gray-900">{suggestion.title}</h6>
-              {suggestion.reviewOnly && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-200 text-amber-800">
-                  ⚠️ Review Required
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-gray-600 mt-1">{suggestion.description}</p>
-            <div className="mt-2 p-2 bg-white/50 rounded text-sm font-mono text-gray-700 whitespace-pre-wrap">
-              {suggestion.action}
+    <div
+      className={`p-3 rounded-lg ${
+        suggestion.reviewOnly
+          ? 'bg-amber-100/50 border border-amber-200'
+          : 'bg-blue-50 border border-blue-200'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h6 className="font-medium text-gray-900">{suggestion.title}</h6>
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-200 text-amber-800">
+              Guidance only
+            </span>
+          </div>
+          <p className="text-sm text-gray-600 mt-1">{suggestion.description}</p>
+          <div className="mt-2 p-2 bg-white/50 rounded text-sm text-gray-700 whitespace-pre-wrap">
+            <strong>Playbook reference:</strong> {suggestion.action.replace(/^Playbook:\s*/, '')}
+            <div className="mt-1 text-xs text-amber-800">
+              Requires provider and domain-purpose confirmation. No executable mutation is
+              available.
             </div>
           </div>
         </div>
-
-        {isPending && (
-          <div className="mt-3 flex items-center gap-2 pt-2 border-t border-gray-200/50">
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={applyMutation.isPending || dismissMutation.isPending}
-              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              {applyMutation.isPending ? 'Applying...' : 'Apply'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDismiss}
-              disabled={applyMutation.isPending || dismissMutation.isPending}
-              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              {dismissMutation.isPending ? 'Dismissing...' : 'Dismiss'}
-            </button>
-          </div>
-        )}
-
-        {suggestion.appliedAt && (
-          <div className="mt-2 pt-2 border-t border-gray-200/50 text-xs text-green-600">
-            ✓ Applied {suggestion.appliedBy ? `by ${suggestion.appliedBy}` : ''}
-          </div>
-        )}
-
-        {suggestion.dismissedAt && (
-          <div className="mt-2 pt-2 border-t border-gray-200/50 text-xs text-gray-500">
-            Dismissed {suggestion.dismissedBy ? `by ${suggestion.dismissedBy}` : ''}
-          </div>
-        )}
       </div>
 
-      <ConfirmDialog
-        isOpen={showConfirm}
-        title="Apply Review-Only Suggestion?"
-        message={
-          <div className="space-y-3">
-            <p>
-              This suggestion is marked as <strong>review-required</strong> because it may have
-              significant impact:
-            </p>
-            <ul className="list-disc list-inside text-sm text-gray-600">
-              <li>Risk posture: {suggestion.riskPosture}</li>
-              <li>Blast radius: {suggestion.blastRadius.replace(/-/g, ' ')}</li>
-            </ul>
-            <p className="text-amber-700 font-medium">
-              This change may affect mail delivery for {domain}. Proceed with caution.
-            </p>
-          </div>
-        }
-        confirmLabel="Apply Anyway"
-        cancelLabel="Cancel"
-        variant="warning"
-        onConfirm={handleApply}
-        onCancel={() => setShowConfirm(false)}
-      />
-    </>
+      {isPending && (
+        <div className="mt-3 flex items-center gap-2 pt-2 border-t border-gray-200/50">
+          <button
+            type="button"
+            onClick={() => dismissMutation.mutate()}
+            disabled={dismissMutation.isPending}
+            className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            {dismissMutation.isPending ? 'Hiding...' : 'Hide guidance'}
+          </button>
+        </div>
+      )}
+
+      {suggestion.appliedAt && (
+        <div className="mt-2 pt-2 border-t border-gray-200/50 text-xs text-green-600">
+          Previously acknowledged {suggestion.appliedBy ? `by ${suggestion.appliedBy}` : ''}
+        </div>
+      )}
+
+      {suggestion.dismissedAt && (
+        <div className="mt-2 pt-2 border-t border-gray-200/50 text-xs text-gray-500">
+          Dismissed {suggestion.dismissedBy ? `by ${suggestion.dismissedBy}` : ''}
+        </div>
+      )}
+    </div>
   );
 }

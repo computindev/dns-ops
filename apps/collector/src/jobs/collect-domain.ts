@@ -49,7 +49,9 @@ import {
   trackCollectionError,
   trackCollectionResult,
 } from '../middleware/error-tracking.js';
+import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import type { Env } from '../types.js';
+import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
 
 const logger = getCollectorLogger();
 
@@ -166,6 +168,39 @@ collectDomainRoutes.post('/domain', async (c) => {
     // Run collection
     const collector = new DNSCollector(config, db);
     const result = await collector.collect();
+
+    const collectedDomain = await domainRepo.findByNameForTenant(normalizedDomain, tenantId);
+    if (collectedDomain) {
+      try {
+        await collectAndPersistDomainEvidence(db, {
+          snapshotId: result.snapshotId,
+          tenantId,
+          domainId: collectedDomain.id,
+          domain: collectedDomain.normalizedName,
+        });
+      } catch (evidenceError) {
+        logger.warn('External evidence collection failed (non-fatal)', {
+          snapshotId: result.snapshotId,
+          error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+        });
+      }
+      try {
+        await finalizePersistedCanonicalConditions(db, {
+          snapshotId: result.snapshotId,
+          tenantId,
+          domainId: collectedDomain.id,
+          domainName: collectedDomain.normalizedName,
+        });
+      } catch (finalizationError) {
+        logger.warn('Canonical condition finalization failed (non-fatal)', {
+          snapshotId: result.snapshotId,
+          error:
+            finalizationError instanceof Error
+              ? finalizationError.message
+              : String(finalizationError),
+        });
+      }
+    }
 
     trackCollectionResult({
       domain: normalizedDomain,

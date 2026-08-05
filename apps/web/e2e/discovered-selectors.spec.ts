@@ -19,6 +19,10 @@ function mailFindingsPayload(snapshotId: string) {
     domain: TEST_DOMAIN,
     rulesetVersion: '1.0.0',
     persisted: true,
+    evaluationCoverage: {
+      state: 'COMPLETE',
+      errors: [],
+    },
     mailConfig: {
       hasMx: true,
       hasSpf: true,

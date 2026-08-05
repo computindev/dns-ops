@@ -6,6 +6,7 @@ import { AuthPending } from '../../components/AuthPending.js';
 import { DelegationPanel } from '../../components/DelegationPanel.js';
 import { DiscoveredSelectors } from '../../components/DiscoveredSelectors.js';
 import { DNSViews } from '../../components/DNSViews.js';
+import { DomainEvidencePanel } from '../../components/DomainEvidencePanel.js';
 import { MailFindingsPanel } from '../../components/MailFindingsPanel.js';
 import { MailDiagnostics } from '../../components/mail/index.js';
 import { NotesPanel } from '../../components/NotesPanel.js';
@@ -47,6 +48,7 @@ const ALL_TABS: DomainTabId[] = DELEGATION_ENABLED ? [...BASE_TABS, 'delegation'
 const VALID_TABS: DomainTabId[] = ALL_TABS;
 
 import { requireAuthGuard } from '../../lib/auth-guard.js';
+import { invalidateDomainEvidenceQueries } from '../../lib/evidence-query-cache.js';
 
 export const Route = createFileRoute('/domain/$domain')({
   component: Domain360Page,
@@ -183,6 +185,7 @@ function Domain360Page() {
         window.history.replaceState(window.history.state, '', url.toString());
       }
       queryClient.invalidateQueries({ queryKey: ['domain-data', domain] });
+      void invalidateDomainEvidenceQueries(queryClient, domain);
       queryClient.invalidateQueries({ queryKey: ['domain-resolve', domain, true] });
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       queryClient.invalidateQueries({ queryKey: ['tags'] });
@@ -293,13 +296,30 @@ function Domain360Page() {
         </div>
 
         {snapshot ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <ZoneManagementBadge type={snapshot.zoneManagement} />
-            <ResultStateBadge state={snapshot.resultState} />
-            <span className="text-sm text-gray-500 tabular-nums">
-              Last updated: {new Date(snapshot.createdAt).toLocaleString()}
-            </span>
-          </div>
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <ZoneManagementBadge type={snapshot.zoneManagement} />
+              <ResultStateBadge state={snapshot.resultState} />
+              <span className="text-sm text-gray-500 tabular-nums">
+                Last updated: {new Date(snapshot.createdAt).toLocaleString()}
+              </span>
+            </div>
+            {snapshot.metadata?.authoritativeEvidence?.state === 'UNKNOWN' && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <strong>Authoritative evidence UNKNOWN.</strong>{' '}
+                {snapshot.metadata.authoritativeEvidence.unknown?.explanation}{' '}
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshMutation.isPending}
+                  className="font-semibold underline disabled:opacity-50"
+                >
+                  {snapshot.metadata.authoritativeEvidence.unknown?.actionLabel ??
+                    'Retry authoritative DNS collection'}
+                </button>
+              </div>
+            )}
+          </>
         ) : loaderError ? (
           <div
             className={`mt-4 p-4 rounded-lg border ${
@@ -467,6 +487,8 @@ function OverviewTab({
           <p className="text-gray-500">No DNS evidence available yet for {domain}.</p>
         </div>
 
+        <DomainEvidencePanel domain={domain} />
+
         <div className="space-y-4">
           <div>
             <h3 className="font-semibold text-gray-900">Operator Context</h3>
@@ -501,11 +523,13 @@ function OverviewTab({
         />
       </div>
 
+      <DomainEvidencePanel domain={domain} />
+
       {SIMULATION_ENABLED && (
         <div>
-          <h3 className="font-semibold text-gray-900 mb-2">Fix Simulation</h3>
+          <h3 className="font-semibold text-gray-900 mb-2">Remediation Guidance</h3>
           <p className="text-sm text-gray-500 mb-3">
-            Simulate DNS changes to see which findings would be resolved.
+            Review non-executable playbooks. Exact changes require confirmed provider context.
           </p>
           <SimulationPanel snapshotId={snapshot.id} />
         </div>

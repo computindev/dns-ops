@@ -1,0 +1,48 @@
+{
+  "fixtureId": "FIX-03",
+  "recordedAt": "2026-07-28T23:08:38Z",
+  "implementationBaseSha": "e8bdf0564e0b516cf01c2fd05930494723248752",
+  "postFixAssertions": [
+    "SPF assessment scope is always FIRST_LEVEL_ONLY",
+    "Direct DNS lookup terms count only the published record and include redirect exactly once",
+    "Include domains and redirect target are returned as unresolved dependencies",
+    "completeEvaluation is always false",
+    "The limitation explicitly disclaims recursive lookup-budget, cycle, void lookup, nested validity, and sender authorization",
+    "Rule and preview output expose the limited scope",
+    "Malformed directly visible mechanisms are rejected",
+    "The stale benchmark no longer claims recursive ten-term compliance"
+  ],
+  "tests": {
+    "targeted": {
+      "command": "bunx vitest run packages/parsing/src/mail/index.test.ts packages/rules/src/mail/rules.test.ts apps/collector/src/mail/checker.test.ts",
+      "result": "55 passed in 3 files"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed; the later non-null-assertion cleanup also passes Biome"
+    },
+    "typecheck": {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed"
+    },
+    "deterministicSuite": {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2546 passed, 41 skipped; 140 files passed, 3 skipped"
+    },
+    "build": {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "schemaDrift": {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "NO DRIFT"
+    }
+  },
+  "exclusionsConfirmed": [
+    "No recursive include traversal",
+    "No cycle detection",
+    "No void-lookup evaluator",
+    "No global ten-term budget claim",
+    "No sender authorization claim"
+  ]
+}

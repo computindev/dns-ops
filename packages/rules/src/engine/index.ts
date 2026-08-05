@@ -5,7 +5,7 @@
  * All findings are evidence-backed and versioned by ruleset.
  */
 
-import type { BlastRadius, Confidence, Severity } from '@dns-ops/contracts';
+import type { BlastRadius, Confidence, RuleEvaluationFailure, Severity } from '@dns-ops/contracts';
 import type { NewFinding, NewSuggestion, Observation, RecordSet } from '@dns-ops/db';
 
 // Result-based error handling
@@ -57,6 +57,13 @@ export interface Ruleset {
   createdAt: Date;
 }
 
+export interface RulesEvaluationResult {
+  findings: NewFinding[];
+  suggestions: NewSuggestion[];
+  errors: RuleEvaluationFailure[];
+  complete: boolean;
+}
+
 /**
  * Rules Engine - evaluates observations against rules and produces findings
  */
@@ -70,9 +77,10 @@ export class RulesEngine {
   /**
    * Evaluate all rules in the ruleset against the context
    */
-  evaluate(context: RuleContext): { findings: NewFinding[]; suggestions: NewSuggestion[] } {
+  evaluate(context: RuleContext): RulesEvaluationResult {
     const findings: NewFinding[] = [];
     const suggestions: NewSuggestion[] = [];
+    const errors: RuleEvaluationFailure[] = [];
 
     for (const rule of this.ruleset.rules) {
       if (!rule.enabled) continue;
@@ -100,13 +108,24 @@ export class RulesEngine {
             }
           }
         }
-      } catch (error) {
-        console.error(`Rule ${rule.id} failed:`, error);
-        // Continue with other rules - don't let one failing rule break the engine
+      } catch (_error) {
+        errors.push({
+          code: 'RULE_EXECUTION_FAILED',
+          ruleId: rule.id,
+          message: `Rule ${rule.id} could not be evaluated`,
+          status: 'UNKNOWN',
+          unknown: {
+            reason: 'CHECK_EVALUATION_FAILED',
+            explanation: `The ${rule.name} check failed before it could produce a trustworthy result.`,
+            action: 'RUN_FRESH_SCAN',
+            actionLabel: 'Run a fresh scan',
+            blocking: true,
+          },
+        });
       }
     }
 
-    return { findings, suggestions };
+    return { findings, suggestions, errors, complete: errors.length === 0 };
   }
 
   /**

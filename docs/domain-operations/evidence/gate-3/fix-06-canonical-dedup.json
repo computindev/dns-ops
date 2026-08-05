@@ -1,0 +1,37 @@
+{
+  "evidenceId": "FIX-06-CANONICAL-DEDUPE-AND-DELIVERY",
+  "recordedAt": "2026-07-29T18:09:00Z",
+  "implementationSha": "708013e28290799d425937474fd130e15a0db9a6",
+  "scope": "Deterministic non-live duplicate observation, canonical lifecycle, and notification proof",
+  "fixture": {
+    "condition": "MAIL_DNS_CONFIGURATION_REGRESSION",
+    "tenant": "tenant-1",
+    "domain": "domain-1",
+    "duplicateInput": "same complete snapshot and canonical observation submitted twice"
+  },
+  "expected": {
+    "signals": 1,
+    "activeCases": 1,
+    "activeAlerts": 1,
+    "firstDelivery": 1,
+    "duplicateDelivery": 0,
+    "reopenDelivery": 1
+  },
+  "proof": {
+    "persistenceTest": "packages/db/src/repos/operations.test.ts :: deduplicates repeated observations to one signal, case, and alert",
+    "lifecycleTest": "packages/db/src/repos/operations.test.ts :: resolves from fresh evidence and reopens the same operational objects",
+    "deliveryTest": "apps/collector/src/jobs/operational-condition-finalizer.test.ts :: sends only newly-created or reopened canonical alerts",
+    "assertions": [
+      "two repeated observations create one internal signal, one internal case, one alert, and one opening event",
+      "resolution and a newer regression reuse those same operational object IDs",
+      "delivery occurs for initial create and reopen only, never for the duplicate observation"
+    ],
+    "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+    "result": "2713 passed, 41 skipped"
+  },
+  "safety": {
+    "liveDns": false,
+    "providerWrites": false,
+    "productionWrites": false
+  }
+}

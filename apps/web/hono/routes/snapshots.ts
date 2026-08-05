@@ -7,6 +7,7 @@
  * - Diff highlighting for records, TTLs, findings, scope
  */
 
+import { evaluationCoverageOrUnknown, isEvaluationComplete } from '@dns-ops/contracts';
 import { DomainRepository, SnapshotRepository } from '@dns-ops/db';
 import { findings, recordSets } from '@dns-ops/db/schema';
 import { compareSnapshots } from '@dns-ops/parsing';
@@ -67,7 +68,8 @@ snapshotRoutes.get('/:domain', async (c) => {
         id: s.id,
         createdAt: s.createdAt,
         rulesetVersionId: s.rulesetVersionId,
-        findingsEvaluated: s.rulesetVersionId !== null,
+        findingsEvaluated: isEvaluationComplete(s.metadata?.evaluation),
+        evaluationCoverage: evaluationCoverageOrUnknown(s.metadata?.evaluation),
         queryScope: {
           names: s.queriedNames,
           types: s.queriedTypes,
@@ -131,7 +133,8 @@ snapshotRoutes.get('/:domain/latest', async (c) => {
       domain: domainName,
       createdAt: snapshot.createdAt,
       rulesetVersionId: snapshot.rulesetVersionId,
-      findingsEvaluated: snapshot.rulesetVersionId !== null,
+      findingsEvaluated: isEvaluationComplete(snapshot.metadata?.evaluation),
+      evaluationCoverage: evaluationCoverageOrUnknown(snapshot.metadata?.evaluation),
       queryScope: {
         names: snapshot.queriedNames,
         types: snapshot.queriedTypes,
@@ -198,7 +201,8 @@ snapshotRoutes.get('/:domain/:id', async (c) => {
       domainId: snapshot.domainId,
       createdAt: snapshot.createdAt,
       rulesetVersionId: snapshot.rulesetVersionId,
-      findingsEvaluated: snapshot.rulesetVersionId !== null,
+      findingsEvaluated: isEvaluationComplete(snapshot.metadata?.evaluation),
+      evaluationCoverage: evaluationCoverageOrUnknown(snapshot.metadata?.evaluation),
       queryScope: {
         names: snapshot.queriedNames,
         types: snapshot.queriedTypes,
@@ -288,9 +292,9 @@ snapshotRoutes.post('/:domain/diff', async (c) => {
       db.selectWhere(findings, eq(findings.snapshotId, snapshotB)),
     ]);
 
-    // Check if findings were evaluated for each snapshot
-    const findingsEvaluatedA = snapA.rulesetVersionId !== null;
-    const findingsEvaluatedB = snapB.rulesetVersionId !== null;
+    // Only explicit complete coverage can participate in a findings diff.
+    const findingsEvaluatedA = isEvaluationComplete(snapA.metadata?.evaluation);
+    const findingsEvaluatedB = isEvaluationComplete(snapB.metadata?.evaluation);
 
     // Generate diff
     const diff = compareSnapshots(
@@ -425,9 +429,9 @@ snapshotRoutes.post('/:domain/compare-latest', async (c) => {
       db.selectWhere(findings, eq(findings.snapshotId, snapB.id)),
     ]);
 
-    // Check if findings were evaluated for each snapshot
-    const findingsEvaluatedA = snapA.rulesetVersionId !== null;
-    const findingsEvaluatedB = snapB.rulesetVersionId !== null;
+    // Only explicit complete coverage can participate in a findings diff.
+    const findingsEvaluatedA = isEvaluationComplete(snapA.metadata?.evaluation);
+    const findingsEvaluatedB = isEvaluationComplete(snapB.metadata?.evaluation);
 
     const diff = compareSnapshots(
       {

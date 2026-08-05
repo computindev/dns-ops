@@ -9,7 +9,7 @@
  *   DATABASE_URL=postgres://... npx tsx scripts/verify-migrations.ts
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -110,22 +110,16 @@ async function verifyMigrations(
 
     for (const file of migrationFiles) {
       const sql = readFileSync(join(migrationDir, file), 'utf-8');
-      const statements = sql
-        .split('--> statement-breakpoint')
-        .map((statement) => statement.trim())
-        .filter(Boolean);
+      console.log(`   ${file}: transactionally applying migration`);
 
-      console.log(`   ${file}: ${statements.length} statements`);
-
-      for (let index = 0; index < statements.length; index += 1) {
-        try {
-          await client.query(statements[index]);
-        } catch (error) {
-          const err = error as Error;
-          if (!err.message.includes('already exists') && !err.message.includes('duplicate_object')) {
-            result.errors.push(`${file} statement ${index + 1}: ${err.message}`);
-          }
-        }
+      await client.query('BEGIN');
+      try {
+        await client.query(sql);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        result.errors.push(`${file}: ${(error as Error).message}`);
+        break;
       }
     }
 
@@ -162,7 +156,9 @@ async function verifyMigrations(
       [TEST_SCHEMA]
     );
     result.enumsFound = enumsResult.rows.map((row) => row.typname);
-    result.enumsMissing = manifest.enums.filter((enumName) => !result.enumsFound.includes(enumName));
+    result.enumsMissing = manifest.enums.filter(
+      (enumName) => !result.enumsFound.includes(enumName)
+    );
     console.log(`   Found ${result.enumsFound.length} enums`);
 
     console.log('\n5. Verifying foreign key constraints...');
@@ -194,7 +190,7 @@ function printResult(
   result: VerificationResult,
   manifest: { tables: string[]; enums: string[] }
 ): void {
-  console.log('\n' + '═'.repeat(60));
+  console.log(`\n${'═'.repeat(60)}`);
   console.log('VERIFICATION RESULT');
   console.log('═'.repeat(60));
 
@@ -240,7 +236,7 @@ function printResult(
     }
   }
 
-  console.log('\n' + '═'.repeat(60));
+  console.log(`\n${'═'.repeat(60)}`);
 }
 
 main();

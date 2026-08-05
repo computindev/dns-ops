@@ -33,6 +33,18 @@ const REQUIRED_TABLES = [
 
 const hasDatabaseUrl = !!process.env.DATABASE_URL;
 
+// These tables enforce tenancy indirectly through their domain/snapshot parent,
+// so requiring a redundant direct tenant_id would contradict the schema model.
+const INDIRECTLY_SCOPED_TABLES = new Set([
+  'ruleset_versions',
+  'snapshots',
+  'observations',
+  'record_sets',
+  'findings',
+  'suggestions',
+  'probe_observations',
+]);
+
 type QueryRows<T> = { rows?: T[] };
 
 describe.skipIf(!hasDatabaseUrl)('Database Schema', () => {
@@ -83,7 +95,11 @@ describe.skipIf(!hasDatabaseUrl)('Database Schema', () => {
         }
 
         // Check tenant_id for multi-tenant tables
-        if (!['users', 'sessions'].includes(table) && !columns.includes('tenant_id')) {
+        if (
+          !['users', 'sessions'].includes(table) &&
+          !INDIRECTLY_SCOPED_TABLES.has(table) &&
+          !columns.includes('tenant_id')
+        ) {
           issues.push(`${table}: missing 'tenant_id'`);
         }
       }

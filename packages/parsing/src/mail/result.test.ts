@@ -158,14 +158,11 @@ describe('Mail Record Result Utilities', () => {
       }
     });
 
-    it('should return Err for DMARC missing policy', () => {
+    it('applies RFC 9989 p=none fallback when p is missing and rua is valid', () => {
       const result = parseDMARCResult('v=DMARC1; rua=mailto:test@example.com');
 
-      expect(result.isErr()).toBe(true);
-      if (result.isErr()) {
-        expect(result.error.code).toBe('MISSING_REQUIRED_FIELD');
-        expect(result.error.details?.field).toBe('p');
-      }
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) expect(result.value.policy).toBe('none');
     });
 
     it('should support error pattern matching', () => {
@@ -355,11 +352,10 @@ describe('Mail Record Result Utilities', () => {
       expect(detected.result?.isOk()).toBe(true);
     });
 
-    it('should detect DMARC record', () => {
-      const detected = parseAnyMailRecord('v=DMARC1; p=reject');
-
-      expect(detected.type).toBe('dmarc');
-      expect(detected.result?.isOk()).toBe(true);
+    it('should detect only exact DMARC1 records including RFC whitespace', () => {
+      expect(parseAnyMailRecord('v=DMARC1; p=reject').type).toBe('dmarc');
+      expect(parseAnyMailRecord('v = DMARC1 ; p=none').type).toBe('dmarc');
+      expect(parseAnyMailRecord('v=DMARC10; p=reject').type).toBe('unknown');
     });
 
     it('should detect DKIM record', () => {

@@ -1,0 +1,31 @@
+{
+  "evidenceId": "GATE4-ISOLATED-POSTGRES-MIGRATION-CONCURRENCY",
+  "recordedAt": "2026-07-29T18:41:00Z",
+  "implementationSha": "0c8167f",
+  "environment": {
+    "type": "ephemeral local Docker PostgreSQL 16 alpine",
+    "productionDatabase": false,
+    "containerRemovedAfterVerification": true
+  },
+  "migrationVerification": {
+    "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-migrations",
+    "result": "passed",
+    "tables": "32/32",
+    "enums": "32/32",
+    "foreignKeyConstraints": 28,
+    "migrationRepair": "0020_users_sessions.sql adds schema-exported users and sessions tables that were missing from fresh migration output"
+  },
+  "concurrencyVerification": {
+    "command": "DATABASE_URL=<isolated> bun run --filter @dns-ops/db verify-operations-concurrency",
+    "result": "passed",
+    "assertions": [
+      "two concurrent inserts for the same tenant and canonical condition admit exactly one row and reject the other with PostgreSQL 23505",
+      "two concurrent internal-case updates guarded by version=1 affect exactly one row"
+    ]
+  },
+  "safety": {
+    "providerWrites": false,
+    "liveDns": false,
+    "productionWrites": false
+  }
+}

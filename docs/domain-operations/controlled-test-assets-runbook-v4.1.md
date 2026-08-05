@@ -100,11 +100,22 @@ export type FaultRunArtifact = {
   caseIds: string[];
   auditEventIds: string[];
   result: "PASS" | "FAIL" | "RECOVERY_REQUIRED";
-  recoveryInstructions?: string;
+  recovery?: {
+    provider: string;
+    zoneId: string;
+    records: Array<{
+      name: string;
+      type: "A" | "AAAA" | "CNAME" | "TXT";
+      desiredValue: string;
+    }>;
+    operatorCommands: string[];
+  };
 };
 ```
 
-Secrets and full provider response headers must be redacted.
+Secrets and full provider response headers must be redacted. For `RECOVERY_REQUIRED`, the recovery zone must equal the artifact zone and every recovery record must be one of the artifact's declared targets.
+
+`operatorCommands` are audited provider-operation references in `operation: STATUS` form, not shell text or copyable credential-bearing commands. A harness must never execute them as shell text. The future `recover` command must resolve a provider-specific, allowlisted operation from the structured provider/zone/record data and reject any tuple outside its approved policy.
 
 ---
 

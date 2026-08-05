@@ -110,19 +110,23 @@ const now = new Date();
 const yesterday = new Date(now.getTime() - 86400000);
 
 function makeSnapshot(overrides: Record<string, unknown> = {}) {
-  return {
+  const snapshot = {
     id: 'snap-1',
     domainId: 'domain-1',
     domainName: 'example.com',
     resultState: 'complete',
-    rulesetVersionId: null,
+    rulesetVersionId: null as string | null,
     queriedNames: ['example.com'],
     queriedTypes: ['A', 'MX'],
     vantages: ['google-dns'],
-    metadata: {},
+    metadata: {} as Record<string, unknown>,
     createdAt: now,
     ...overrides,
   };
+  if (snapshot.rulesetVersionId && !('metadata' in overrides)) {
+    snapshot.metadata = { evaluation: { state: 'COMPLETE', errors: [] } };
+  }
+  return snapshot;
 }
 
 describe('snapshotRoutes runtime', () => {
@@ -207,6 +211,40 @@ describe('snapshotRoutes runtime', () => {
       expect(json.id).toBe('snap-new');
       expect(json.domain).toBe('example.com');
       expect(json.findingsEvaluated).toBe(true);
+    });
+
+    it('treats a legacy ruleset ID without coverage evidence as UNKNOWN', async () => {
+      const state: MockState = {
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-1',
+          },
+        ],
+        snapshots: [
+          makeSnapshot({
+            id: 'legacy-snapshot',
+            rulesetVersionId: 'rv-legacy',
+            metadata: {},
+          }),
+        ],
+        recordSets: [],
+        findings: [],
+      };
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshots/example.com/latest');
+      const json = (await response.json()) as {
+        findingsEvaluated: boolean;
+        evaluationCoverage: { state: string; errors: Array<{ status: string }> };
+      };
+
+      expect(response.status).toBe(200);
+      expect(json.findingsEvaluated).toBe(false);
+      expect(json.evaluationCoverage.state).toBe('PARTIAL');
+      expect(json.evaluationCoverage.errors[0]?.status).toBe('UNKNOWN');
     });
 
     it('returns 404 when domain has no snapshots', async () => {

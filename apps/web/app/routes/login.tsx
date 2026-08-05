@@ -1,5 +1,10 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useId, useState } from 'react';
+import {
+  clearAuthenticatedQueryCache,
+  notifyAuthenticationChange,
+} from '../lib/evidence-query-cache.js';
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -7,6 +12,7 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const emailId = useId();
   const passwordId = useId();
   const [email, setEmail] = useState('');
@@ -36,6 +42,8 @@ function LoginPage() {
       const data = (await response.json()) as Record<string, unknown>;
 
       if (response.ok) {
+        await clearAuthenticatedQueryCache(queryClient);
+        notifyAuthenticationChange();
         navigate({ to: '/' });
       } else {
         setError((data.error as string | undefined) || 'Login failed');

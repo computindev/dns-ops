@@ -246,6 +246,8 @@ export interface UpdateRemediationRequest {
   status?: RemediationStatus;
   assignedTo?: string;
   notes?: string;
+  /** Required when transitioning to resolved/closed; must be fresh and complete. */
+  verificationSnapshotId?: string;
 }
 
 export interface UpdateRemediationResponse {

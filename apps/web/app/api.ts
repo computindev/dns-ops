@@ -35,7 +35,6 @@ app.use('*', authMiddleware);
 
 // Public API routes (no auth required)
 app.route('/api/auth', authRoutes);
-
 // All other API routes require authentication. enforceTenantIsolation runs as
 // a structural chokepoint right after auth populates the tenant context, so
 // tenant scoping is guaranteed for every authenticated /api route and is not

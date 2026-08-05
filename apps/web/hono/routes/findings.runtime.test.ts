@@ -277,9 +277,9 @@ describe('findingsRoutes runtime', () => {
           {
             id: 'sug-1',
             findingId: 'finding-1',
-            title: 'Fix authoritative',
-            description: 'Fix it',
-            action: 'manual',
+            title: 'Legacy executable suggestion',
+            description: 'Copy this value',
+            action: 'Add TXT record: v=spf1 include:_spf.google.com ~all',
           },
         ],
       });
@@ -293,6 +293,7 @@ describe('findingsRoutes runtime', () => {
         idempotent: boolean;
         persisted: boolean;
         summary: { totalFindings: number; dnsFindings: number; mailFindings: number };
+        suggestions: Array<{ title: string; description: string; action: string }>;
       };
       expect(json.snapshotId).toBe('snap-1');
       expect(json.idempotent).toBe(true);
@@ -300,6 +301,13 @@ describe('findingsRoutes runtime', () => {
       expect(json.summary.totalFindings).toBe(1);
       expect(json.summary.dnsFindings).toBe(1);
       expect(json.summary.mailFindings).toBe(0);
+      expect(json.suggestions).toEqual([
+        expect.objectContaining({
+          title: 'Review the evidence and applicable operator playbook',
+          action: 'Playbook: operations.manual-evidence-review',
+        }),
+      ]);
+      expect(JSON.stringify(json.suggestions)).not.toContain('_spf.google.com');
     });
 
     it('evaluates and persists findings when no cached version exists', async () => {
@@ -836,6 +844,58 @@ describe('findingsRoutes runtime', () => {
       expect(json.findings.every((f) => f.type.startsWith('mail.'))).toBe(true);
       expect(json.summary.totalFindings).toBe(1);
       expect(json.mailConfig.hasSpf).toBe(true);
+    });
+
+    it('FIX-01: exposes partial UNKNOWN coverage even when no mail issue finding exists', async () => {
+      const evaluationCoverage = {
+        state: 'PARTIAL',
+        errors: [
+          {
+            code: 'RULE_EXECUTION_FAILED',
+            ruleId: 'mail.test-throw',
+            message: 'Rule mail.test-throw could not be evaluated',
+            status: 'UNKNOWN',
+            unknown: {
+              reason: 'CHECK_EVALUATION_FAILED',
+              explanation: 'The mail check failed before it produced a trustworthy result.',
+              action: 'RUN_FRESH_SCAN',
+              actionLabel: 'Run a fresh scan',
+              blocking: true,
+            },
+          },
+        ],
+      };
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            resultState: 'partial',
+            metadata: { evaluation: evaluationCoverage },
+          },
+        ],
+        findings: [
+          {
+            id: 'dns-only',
+            snapshotId: 'snap-1',
+            type: 'dns.partial-coverage-unmanaged',
+            title: 'Coverage is partial',
+            severity: 'info',
+            ruleVersion: '1.0.0',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/mail');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        findings: unknown[];
+        evaluationCoverage: typeof evaluationCoverage;
+      };
+      expect(json.findings).toEqual([]);
+      expect(json.evaluationCoverage).toEqual(evaluationCoverage);
+      expect(json.evaluationCoverage.errors[0]?.status).toBe('UNKNOWN');
     });
   });
 });

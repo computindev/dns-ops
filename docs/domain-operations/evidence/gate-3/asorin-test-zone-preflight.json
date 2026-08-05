@@ -1,0 +1,62 @@
+{
+  "evidenceId": "GATE3-ASORIN-TEST-ZONE-PREFLIGHT",
+  "recordedAt": "2026-08-04T16:36:46Z",
+  "status": "READ_ONLY_PREFLIGHT_PASS_PENDING_HOST_DEPLOYMENT_AUTHORIZATION",
+  "founderAuthorization": {
+    "testDomain": "asorin.ai",
+    "declaration": "asorin.ai has no production traffic, clients, or real mail dependency and is authorized as the complete controlled-test zone.",
+    "rollbackAndRevocationOwner": "Antonio"
+  },
+  "cloudflareReadOnlyVerification": {
+    "zoneId": "7391960081e72b26c9c5066133013ab2",
+    "zoneStatus": "active",
+    "paused": false,
+    "authoritativeNameservers": [
+      "mcgrory.ns.cloudflare.com",
+      "olivia.ns.cloudflare.com"
+    ],
+    "tokenVerificationSucceeded": true,
+    "zoneReadSucceeded": true,
+    "dnsRecordReadSucceeded": true,
+    "recordCountObserved": 0,
+    "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+    "credentialValueRecorded": false
+  },
+  "scopeCaveat": "The successful token verification and asorin.ai readback prove usable access to this zone. Cloudflare Dashboard configuration remains the authority for confirming its intended least-privilege policy; no token value is stored in this repository.",
+  "railwayFixture": {
+    "projectId": "0e240f31-311a-4140-9dbf-c18c485d9820",
+    "projectName": "dnsops-live-fixtures",
+    "environmentId": "e6c3a4d7-2cce-4e2a-8d81-9b7e433dcd1d",
+    "serviceId": "4197eca1-a820-4f2f-8706-46cba7a0740d",
+    "serviceName": "controlled-live-web",
+    "status": "DEPLOYED_PENDING_CLOUDFLARE_DNS_CONFIGURATION",
+    "deploymentId": "258377b9-bf88-422f-947c-a41d691cb8af",
+    "serviceDomain": "controlled-live-web-production.up.railway.app",
+    "customDomains": {
+      "asorin.ai": {
+        "railwayDomainId": "110e3e42-141b-4f3a-9328-3a6dff4b9851",
+        "requiredCnameTarget": "epgybwo0.up.railway.app",
+        "requiredVerificationHost": "_railway-verify",
+        "verificationTokenPresent": true
+      },
+      "www.asorin.ai": {
+        "railwayDomainId": "efe59266-2b4a-476b-b189-f5e660ac8da8",
+        "requiredCnameTarget": "4xbfxxr5.up.railway.app",
+        "requiredVerificationHost": "_railway-verify.www",
+        "verificationTokenPresent": true
+      }
+    }
+  },
+  "remainingInputs": [
+    "A locally stored DNSOPS_FIXTURE_CONTROL_TOKEN for the Railway fixture; its value must not be sent to chat or Git",
+    "A non-production web-host deployment mechanism for LIVE-01 redirect and LIVE-02 indexability mutations",
+    "Exact test hostnames, DNS record allowlist, initial values, and previous TTLs",
+    "DNSOPS_TEST_MAIL_SUBDOMAIN and an explicit no-real-mail dependency assertion for that hostname",
+    "Manual-work baseline, portfolio classification, and playbook approval"
+  ],
+  "prohibitedActionsUntilRemainingInputsExist": [
+    "DNS record mutations",
+    "Provider harness apply/restore operations",
+    "LIVE-01 through LIVE-03 execution"
+  ]
+}

@@ -15,14 +15,15 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "bun run --filter @dns-ops/contracts build && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src",
     "test": "echo 'No unit tests - schema only'",
-    "migrate": "drizzle-kit migrate",
+    "migrate": "node ../../scripts/run-migrations.mjs",
     "generate": "drizzle-kit generate:pg",
     "studio": "drizzle-kit studio",
     "verify-migrations": "npx tsx scripts/verify-migrations.ts",
+    "verify-operations-concurrency": "npx tsx scripts/verify-operations-concurrency.ts",
     "check-drift": "npx tsx scripts/check-drift.ts"
   },
   "dependencies": {

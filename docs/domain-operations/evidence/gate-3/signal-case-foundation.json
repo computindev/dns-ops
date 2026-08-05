@@ -1,0 +1,38 @@
+{
+  "evidenceId": "GATE3-SIGNAL-CASE-FOUNDATION",
+  "recordedAt": "2026-07-29T18:09:00Z",
+  "implementationBaseSha": "708013e28290799d425937474fd130e15a0db9a6",
+  "scope": "Non-live persistence and lifecycle foundation; superseded for deterministic FIX-06 proof by fix-06-canonical-dedup.json",
+  "assertions": [
+    "Exactly six InternalSignalKind values and five InternalCaseStatus values are typed",
+    "Tenant plus bounded canonical condition key uniquely identifies a signal",
+    "One case and one alert are uniquely linked to each signal",
+    "Repeated sequential observation reuses one signal, case, and alert",
+    "Observation validates tenant ownership of domain, snapshot, monitored domain, and optional finding",
+    "Observation and resolution use transactions plus optimistic predicates with bounded conflict retry",
+    "Resolution requires newer complete evidence and an exact cleared condition key",
+    "Verification evidence cannot be replayed as reopening evidence",
+    "A newer concurrent scan can reopen even when captured before resolution commit",
+    "Case lifecycle transitions append audit events only after successful updates",
+    "Unclassified legacy conditions default to DISABLED/NONE",
+    "SPF absence is MIGRATED through the baseline-gated canonical path while remaining mail findings are explicitly LEGACY_ONLY",
+    "The canonical finalizer delivers only on initial create and reopen; its duplicate delivery path is covered in fix-06-canonical-dedup.json"
+  ],
+  "validation": {
+    "targeted": "30 tests passed across operations contracts/repos, condition registry, and alert generation",
+    "lint": "8 of 8 workspace tasks passed",
+    "typecheck": "14 of 14 workspace tasks passed",
+    "deterministicSuite": "2582 passed, 41 skipped; 144 files passed, 3 skipped",
+    "build": "8 of 8 workspace tasks passed",
+    "schemaDrift": "NO DRIFT"
+  },
+  "blockedEvidence": [
+    "Real PostgreSQL migration execution and concurrent Promise.all attestation require an isolated DATABASE_URL",
+    "Deterministic FIX-06 proof is retained in fix-06-canonical-dedup.json; isolated PostgreSQL concurrency attestation remains pending"
+  ],
+  "safety": {
+    "providerWritesAdded": false,
+    "liveMutations": false,
+    "productionSignalCutover": false
+  }
+}

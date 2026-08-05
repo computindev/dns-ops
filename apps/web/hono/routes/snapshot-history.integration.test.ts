@@ -30,6 +30,7 @@ interface ClientSnapshotListItem {
   createdAt: string;
   rulesetVersionId: string | null;
   findingsEvaluated: boolean;
+  evaluationCoverage: { state: 'COMPLETE' | 'PARTIAL'; errors: unknown[] };
   queryScope: { names: string[]; types: string[]; vantages: string[] };
 }
 
@@ -199,22 +200,26 @@ const NOW = new Date();
 const YESTERDAY = new Date(NOW.getTime() - 86400000);
 
 function makeSnapshot(overrides: Record<string, unknown> = {}) {
-  return {
+  const snapshot = {
     id: 'snap-1',
     domainId: 'domain-1',
     domainName: 'example.com',
     resultState: 'complete',
-    rulesetVersionId: null,
+    rulesetVersionId: null as string | null,
     queriedNames: ['example.com'],
     queriedTypes: ['A', 'MX'],
     vantages: ['google-dns'],
-    metadata: {},
+    metadata: {} as Record<string, unknown>,
     createdAt: NOW,
     collectionDurationMs: 1200,
     triggeredBy: 'manual',
     zoneManagement: 'unmanaged',
     ...overrides,
   };
+  if (snapshot.rulesetVersionId && !('metadata' in overrides)) {
+    snapshot.metadata = { evaluation: { state: 'COMPLETE', errors: [] } };
+  }
+  return snapshot;
 }
 
 function makeRecordSet(overrides: Record<string, unknown> = {}) {
@@ -286,13 +291,14 @@ describe('Snapshot History — API ↔ Client Type Contract', () => {
       expect(snap.createdAt).toBeDefined();
       expect(snap).toHaveProperty('rulesetVersionId');
       expect(typeof snap.findingsEvaluated).toBe('boolean');
+      expect(['COMPLETE', 'PARTIAL']).toContain(snap.evaluationCoverage.state);
       expect(snap.queryScope).toBeDefined();
       expect(Array.isArray(snap.queryScope.names)).toBe(true);
       expect(Array.isArray(snap.queryScope.types)).toBe(true);
       expect(Array.isArray(snap.queryScope.vantages)).toBe(true);
     }
 
-    // Verify findingsEvaluated correctly derives from rulesetVersionId
+    // Verify findingsEvaluated derives from explicit coverage, not merely a ruleset ID.
     const withRuleset = json.snapshots.find((s) => s.id === 'snap-a');
     const withoutRuleset = json.snapshots.find((s) => s.id === 'snap-b');
     expect(withRuleset?.findingsEvaluated).toBe(true);

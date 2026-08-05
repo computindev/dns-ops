@@ -317,6 +317,30 @@ describe('PR-06.1: IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)', () => {
     expect(result.blockedCategory).toBe('loopback');
   });
 
+  it.each([
+    '0:0:0:0:0:ffff:127.0.0.1',
+    '0:0:0:0:0:ffff:7f00:1',
+    '0000:0000:0000:0000:0000:ffff:7f00:0001',
+  ])('blocks expanded IPv4-mapped loopback %s', (address) => {
+    const result = checkSSRF(address);
+    expect(result.allowed).toBe(false);
+    expect(result.blockedCategory).toBe('loopback');
+  });
+
+  it('allows expanded mapped public IPv4', () => {
+    expect(checkSSRF('0:0:0:0:0:ffff:8.8.8.8').allowed).toBe(true);
+  });
+
+  it.each([
+    '0:0:0:0:0:ffff:127.0.0.1%lo',
+    '0:0:0:0:0:ffff:7f00:1%lo',
+    'fe80::1%eth0',
+  ])('rejects zone-scoped IPv6 target %s', (address) => {
+    const result = checkSSRF(address);
+    expect(result.allowed).toBe(false);
+    expect(result.blockedCategory).toBe('invalid');
+  });
+
   // Well-known IPv6 addresses unrelated to IPv4-mapped
   it('should allow 64:ff9b:: (IPv4/IPv6 translation prefix, RFC 6052)', () => {
     const result = checkSSRF('64:ff9b::');
@@ -360,11 +384,24 @@ describe('PR-06.1: Link-Local Full Range Coverage (169.254.x)', () => {
     expect(result.blockedCategory).toBe('link-local');
   });
 
-  it('should block any address in fe80::/10 range', () => {
-    // fe80:: to febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-    const result = checkSSRF('fe80:0000:0000:0000:0000:0000:0000:0001');
+  it.each([
+    'fe80::1',
+    'fe90::1',
+    'febf::1',
+  ])('should block %s across the complete fe80::/10 range', (address) => {
+    const result = checkSSRF(address);
     expect(result.allowed).toBe(false);
     expect(result.blockedCategory).toBe('link-local');
+  });
+
+  it.each([
+    'ff00::1',
+    'ff02::1',
+    'ffff::1',
+  ])('should block %s across the complete ff00::/8 range', (address) => {
+    const result = checkSSRF(address);
+    expect(result.allowed).toBe(false);
+    expect(result.blockedCategory).toBe('multicast');
   });
 
   it('should allow fec0:: (old site-local, now reserved)', () => {
@@ -495,10 +532,10 @@ describe('PR-06.1: IPv4 Cidr Notation Edge Cases', () => {
     expect(result.allowed).toBe(true); // Treated as hostname
   });
 
-  it('should handle IPv4 with port number', () => {
-    // Note: This isn't IP notation, treated as hostname
+  it('blocks an IPv4 address with a port when passed as a bare target', () => {
     const result = checkSSRF('192.0.2.1:8080');
-    expect(result.allowed).toBe(true); // Treated as hostname (not ideal but current behavior)
+    expect(result.allowed).toBe(false);
+    expect(result.blockedCategory).toBe('invalid');
   });
 });
 

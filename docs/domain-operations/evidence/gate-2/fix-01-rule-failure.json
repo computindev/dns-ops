@@ -1,0 +1,51 @@
+{
+  "fixtureId": "FIX-01",
+  "recordedAt": "2026-07-28T22:53:59Z",
+  "implementationBaseSha": "336ddb4b6934cac0849478342e1710ccad1c15b6",
+  "counterexample": {
+    "command": "bunx vitest run packages/rules/src/engine/index.test.ts",
+    "preFixResult": "FAILED as expected: RulesEngine returned no complete/errors fields and logged the thrown exception",
+    "falseGreenRisk": "A throwing rule produced zero findings without an incomplete evaluation result"
+  },
+  "postFixAssertions": [
+    "A throwing rule returns RULE_EXECUTION_FAILED with status UNKNOWN",
+    "UNKNOWN includes CHECK_EVALUATION_FAILED and RUN_FRESH_SCAN",
+    "The snapshot evaluation coverage is persisted as PARTIAL",
+    "A collection result is partial when rule evaluation is incomplete",
+    "Historical snapshots without coverage are actionable UNKNOWN",
+    "API responses expose evaluation coverage",
+    "Portfolio filtering cannot drop a zero-finding domain unless coverage is explicitly COMPLETE",
+    "Mail UI suppresses a health score and green zero-findings state while coverage is PARTIAL"
+  ],
+  "tests": {
+    "targeted": {
+      "command": "bunx vitest run packages/contracts/src/evaluation.test.ts packages/rules/src/engine/index.test.ts packages/db/src/repos/snapshot.evaluation.test.ts apps/collector/src/dns/collector.ruleset-version.test.ts apps/collector/src/dns/collector.authoritative.test.ts apps/web/hono/routes/findings.runtime.test.ts apps/web/hono/routes/snapshots.runtime.test.ts apps/web/hono/routes/snapshot-history.integration.test.ts apps/web/hono/routes/portfolio.test.ts",
+      "result": "140 passed in 9 files"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "typecheck": {
+      "command": "bun run typecheck",
+      "result": "14 of 14 workspace tasks passed"
+    },
+    "deterministicSuite": {
+      "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
+      "result": "2548 passed, 41 skipped; 139 files passed, 3 skipped"
+    },
+    "build": {
+      "command": "bun run build",
+      "result": "8 of 8 workspace tasks passed"
+    },
+    "schemaDrift": {
+      "command": "bun run --filter @dns-ops/db check-drift",
+      "result": "NO DRIFT"
+    }
+  },
+  "notRun": [
+    "Migration verification: isolated DATABASE_URL unavailable",
+    "Smoke and Playwright E2E: required services unavailable",
+    "Live DNS/provider mutations: founder-verified assets and credentials unavailable"
+  ]
+}

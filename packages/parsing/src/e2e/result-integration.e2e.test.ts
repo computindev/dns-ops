@@ -316,14 +316,11 @@ describe('E2E: Mail Record Result Integration', () => {
     }
   });
 
-  it('should reject DMARC without required policy field', () => {
+  it('should apply RFC 9989 p=none fallback without p when rua is valid', () => {
     const result = parseDMARCResult('v=DMARC1; rua=mailto:test@example.com');
 
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.code).toBe('MISSING_REQUIRED_FIELD');
-      expect(result.error.details?.field).toBe('p');
-    }
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) expect(result.value.policy).toBe('none');
   });
 
   it('should handle DKIM with all fields', () => {
