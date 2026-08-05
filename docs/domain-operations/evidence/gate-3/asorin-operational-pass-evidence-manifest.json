@@ -8,6 +8,12 @@
     "requiredScopes": ["DOMAIN_READ", "SIGNAL_READ", "CASE_READ", "CASE_WRITE", "SCAN_REQUEST"],
     "requiredRuntimeInputs": ["authorized MCP endpoint", "mode-0600 runtime-only bearer secret", "registered tenant-owned domain IDs", "operator run authorization"]
   },
+  "webEvidencePreflight": {
+    "required": true,
+    "command": "node tools/controlled-live-harness/runner.mjs web-evidence-preflight <redacted-artifact-path>",
+    "requiredRuntimeInputs": ["authorized HTTPS web endpoint", "separate mode-0600 runtime-only dns_ops_session token"],
+    "validatedReadPaths": ["GET /api/portfolio/audit?limit=1", "GET /api/alerts?limit=1"]
+  },
   "scenarios": [
     {
       "mutationId": "LIVE-01",
