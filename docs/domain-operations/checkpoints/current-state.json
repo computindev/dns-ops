@@ -116,13 +116,16 @@
       "docs/domain-operations/evidence/gate-3/asorin-live-03-authoritative-restoration.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-03-restored-pending-evidence.json",
       "docs/domain-operations/evidence/gate-3/dns-ops-evidence-source-probe.json",
-      "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json"
+      "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json",
+      "docs/domain-operations/evidence/gate-3/asorin-mcp-operational-evidence-access-gap.json"
     ],
     "missingForPass": [
       "Timestamp-correlated MCP scan task/result IDs for every LIVE fault and restoration",
       "Expected signal IDs and statuses",
       "Canonical case IDs, dispositions, versions, and LIVE-01 reopen proof",
       "Audit IDs for scan, signal, case, and restoration lifecycle",
+      "An approved tenant-scoped audit evidence path, or an explicit decision that case_get lifecycle events satisfy the audit-ID requirement",
+      "An approved tenant-scoped alert evidence path for LIVE-01 reopen deduplication, or an explicit PASS-contract revision",
       "An authorized DNS Ops MCP endpoint and principal with required scopes"
     ]
   },
@@ -131,6 +134,7 @@
     "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
     "Authorized DNS Ops MCP endpoint and runtime-only principal with DOMAIN_READ, SIGNAL_READ, CASE_READ, CASE_WRITE, and SCAN_REQUEST scopes",
     "Timestamp-correlated DNS Ops scan, signal, case, audit, restoration, and LIVE-01 reopen evidence",
+    "Approved tenant-scoped audit and LIVE-01 alert-deduplication evidence access, or explicit PASS-contract decisions documented in asorin-mcp-operational-evidence-access-gap.json",
     "Founder calibration and approval of the six required operational playbooks"
   ],
   "materialDecisions": [
@@ -154,8 +158,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain authorized DNS Ops MCP access; collect and independently verify scan, signal, case, audit, restoration, and LIVE-01 reopen evidence for every controlled scenario",
+    "Obtain authorized DNS Ops MCP access plus an approved audit and LIVE-01 alert-deduplication evidence path (or explicit contract decisions); collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-05T18:00:00Z"
+  "updatedAt": "2026-08-05T19:39:29Z"
 }
