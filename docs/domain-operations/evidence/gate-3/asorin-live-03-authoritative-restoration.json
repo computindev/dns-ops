@@ -1,0 +1,29 @@
+{
+  "evidenceId": "GATE3-ASORIN-LIVE03-AUTHORITATIVE-RESTORATION",
+  "recordedAt": "2026-08-05T16:19:38Z",
+  "runId": "cd060bc2-3b2e-40c5-ae5d-a5ceef386374",
+  "result": "RESTORED_PENDING_EVIDENCE",
+  "method": "direct authoritative DNS queries to both delegated Cloudflare nameservers",
+  "queries": [
+    {
+      "server": "mcgrory.ns.cloudflare.com",
+      "name": "mail.asorin.ai",
+      "txt": ["v=spf1 -all"],
+      "ttl": 60,
+      "authoritative": true,
+      "mx": []
+    },
+    {
+      "server": "olivia.ns.cloudflare.com",
+      "name": "mail.asorin.ai",
+      "txt": ["v=spf1 -all"],
+      "ttl": 60,
+      "authoritative": true,
+      "mx": []
+    }
+  ],
+  "limitations": [
+    "This proves provider restoration at both authoritative nameservers.",
+    "No DNS Ops scan, signal, case, or audit evidence is included; this artifact must not be treated as PASS."
+  ]
+}
