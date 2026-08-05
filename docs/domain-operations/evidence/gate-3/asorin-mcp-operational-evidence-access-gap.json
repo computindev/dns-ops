@@ -1,18 +1,20 @@
 {
   "evidenceId": "GATE3-ASORIN-MCP-OPERATIONAL-EVIDENCE-ACCESS-GAP",
   "status": "BLOCKED_BY_EXTERNAL_EVIDENCE_ACCESS_DECISION",
-  "observedAt": "2026-08-05T19:39:29Z",
+  "observedAt": "2026-08-05T19:46:14Z",
   "purpose": "Static, secret-free reconciliation of the operational PASS manifest against the approved closed-world MCP contract. It identifies read-path evidence that cannot be independently retrieved through the ten approved MCP tools.",
   "reviewedRevision": "de2400567fc0b6799c0b8f4cf04f702c52d7657c",
   "reviewedSources": [
     "apps/web/hono/lib/mcp-tools.ts",
     "apps/web/hono/lib/mcp-read-service.ts",
     "packages/db/src/repos/portfolio.ts",
+    "apps/web/hono/routes/alerts.ts",
     "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json"
   ],
   "confirmedMcpReadPaths": {
     "snapshotEvidence": "evidence_get returns snapshot, record sets, findings, and probe observations.",
     "signalsAndCases": "signal_list returns tenant-scoped signal/case pairs; case_get returns a tenant-scoped case, signal, and ordered internal case lifecycle events.",
+    "alertsOutsideMcp": "The existing authenticated web API exposes tenant-scoped alert reads at GET /api/alerts and GET /api/alerts/:id. These routes require normal web-session authentication and are intentionally outside the closed MCP contract.",
     "closedToolInventory": [
       "domain_search",
       "domain_get_profile",
@@ -35,11 +37,11 @@
     },
     {
       "requirement": "LIVE-01 reapplication proof that the canonical condition reopened without a duplicate active case or alert",
-      "observation": "The approved MCP inventory contains no alert read/list tool. domain_get_posture, signal_list, and case_get expose signals and cases, but no alert records. The manifest's alert-deduplication proof therefore cannot be independently retrieved through the approved MCP tools.",
-      "requiredResolution": "Provide an approved tenant-scoped alert export/read path that can correlate alerts to the canonical condition and reopen cycle, or explicitly revise the PASS contract."
+      "observation": "The approved MCP inventory contains no alert read/list tool. domain_get_posture, signal_list, and case_get expose signals and cases, but no alert records. The existing tenant-scoped GET /api/alerts web API can provide the required alert records, but it requires an authorized web-session principal and is not available to the MCP bearer principal.",
+      "requiredResolution": "Authorize a tenant-scoped web-session read path for GET /api/alerts with the correlation procedure recorded in the redacted artifact, or explicitly approve a different alert evidence path."
     }
   ],
-  "passImpact": "Every LIVE scenario remains PENDING_EXTERNAL_DNS_OPS_EVIDENCE. LIVE-01 additionally cannot satisfy its reopen no-duplicate-alert proof until the alert evidence path or an explicit contract decision is supplied.",
+  "passImpact": "Every LIVE scenario remains PENDING_EXTERNAL_DNS_OPS_EVIDENCE. LIVE-01 additionally cannot satisfy its reopen no-duplicate-alert proof until an authorized tenant-scoped alert read path is supplied.",
   "notPerformed": [
     "No MCP endpoint was contacted.",
     "No MCP bearer secret, endpoint, domain ID, tenant ID, actor ID, or audit/alert value was accessed or recorded.",

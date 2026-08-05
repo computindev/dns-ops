@@ -125,7 +125,7 @@
       "Canonical case IDs, dispositions, versions, and LIVE-01 reopen proof",
       "Audit IDs for scan, signal, case, and restoration lifecycle",
       "An approved tenant-scoped audit evidence path, or an explicit decision that case_get lifecycle events satisfy the audit-ID requirement",
-      "An approved tenant-scoped alert evidence path for LIVE-01 reopen deduplication, or an explicit PASS-contract revision",
+      "An authorized tenant-scoped web-session read path for GET /api/alerts to verify LIVE-01 reopen alert deduplication",
       "An authorized DNS Ops MCP endpoint and principal with required scopes"
     ]
   },
@@ -134,7 +134,7 @@
     "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
     "Authorized DNS Ops MCP endpoint and runtime-only principal with DOMAIN_READ, SIGNAL_READ, CASE_READ, CASE_WRITE, and SCAN_REQUEST scopes",
     "Timestamp-correlated DNS Ops scan, signal, case, audit, restoration, and LIVE-01 reopen evidence",
-    "Approved tenant-scoped audit and LIVE-01 alert-deduplication evidence access, or explicit PASS-contract decisions documented in asorin-mcp-operational-evidence-access-gap.json",
+    "Approved tenant-scoped audit evidence access (or explicit audit-ID decision) and authorized web-session access to GET /api/alerts for LIVE-01 alert deduplication, as documented in asorin-mcp-operational-evidence-access-gap.json",
     "Founder calibration and approval of the six required operational playbooks"
   ],
   "materialDecisions": [
@@ -158,8 +158,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain authorized DNS Ops MCP access plus an approved audit and LIVE-01 alert-deduplication evidence path (or explicit contract decisions); collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
+    "Obtain authorized DNS Ops MCP access, an approved audit evidence path (or explicit audit-ID decision), and authorized web-session GET /api/alerts access; collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-05T19:39:29Z"
+  "updatedAt": "2026-08-05T19:46:14Z"
 }
