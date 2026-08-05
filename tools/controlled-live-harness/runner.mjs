@@ -13,8 +13,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { domainToASCII, fileURLToPath } from 'node:url';
 import {
   createCloudflareAdapter,
   fingerprint,
@@ -34,6 +34,202 @@ const DEFAULT_MANIFEST = resolve(
 const fail = (message) => {
   throw new Error(`controlled-live harness: ${message}`);
 };
+
+const MCP_PREFLIGHT_SECRET_NAMES = ['DNSOPS_MCP_ENDPOINT', 'DNSOPS_MCP_BEARER_TOKEN'];
+const REQUIRED_MCP_TOOLS = Object.freeze([
+  ['domain_search', 'DOMAIN_READ'],
+  ['domain_get_profile', 'DOMAIN_READ'],
+  ['domain_get_posture', 'DOMAIN_READ'],
+  ['snapshot_compare', 'DOMAIN_READ'],
+  ['evidence_get', 'DOMAIN_READ'],
+  ['signal_list', 'SIGNAL_READ'],
+  ['case_get', 'CASE_READ'],
+  ['case_open', 'CASE_WRITE'],
+  ['case_set_disposition', 'CASE_WRITE'],
+  ['scan_request', 'SCAN_REQUEST'],
+]);
+const MCP_PROTOCOL_VERSION = '2024-11-05';
+
+function safeMcpFailure(operation) {
+  fail(`MCP ${operation} failed`);
+}
+
+/** Validates the remote MCP target without resolving or contacting it. */
+export function validateMcpEndpoint(value) {
+  if (typeof value !== 'string' || !value) fail('MCP endpoint is invalid');
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    fail('MCP endpoint is invalid');
+  }
+  if (
+    endpoint.protocol !== 'https:' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.port ||
+    endpoint.pathname !== '/mcp' ||
+    endpoint.search ||
+    endpoint.hash
+  )
+    fail('MCP endpoint is invalid');
+
+  const hostname = endpoint.hostname.toLowerCase();
+  const asciiHostname = domainToASCII(hostname);
+  if (
+    !asciiHostname ||
+    hostname !== asciiHostname ||
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    /^[0-9.]+$/.test(hostname) ||
+    hostname.includes(':') ||
+    hostname.length > 253 ||
+    !hostname.includes('.') ||
+    hostname.split('.').some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+  )
+    fail('MCP endpoint is invalid');
+  return endpoint;
+}
+
+/** Reads the explicitly supplied, isolated MCP runtime secret. */
+export function loadMcpPreflightSecret(path) {
+  if (!path || typeof path !== 'string' || !isAbsolute(path))
+    fail('MCP preflight requires an explicit secret file path');
+  try {
+    const metadata = lstatSync(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink())
+      fail('MCP preflight secret file is invalid');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('controlled-live harness:')) throw error;
+    fail('MCP preflight secret file is unavailable');
+  }
+  const values = protectedValues(path, MCP_PREFLIGHT_SECRET_NAMES);
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(values.DNSOPS_MCP_BEARER_TOKEN))
+    fail('MCP preflight bearer token is invalid');
+  return Object.freeze({
+    endpoint: validateMcpEndpoint(values.DNSOPS_MCP_ENDPOINT),
+    token: values.DNSOPS_MCP_BEARER_TOKEN,
+  });
+}
+
+function validJsonRpcResult(value, id) {
+  return (
+    value &&
+    typeof value === 'object' &&
+    value.jsonrpc === '2.0' &&
+    value.id === id &&
+    value.error === undefined &&
+    value.result !== undefined
+  );
+}
+
+async function mcpRpc(fetchImpl, endpoint, token, id, method, params) {
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      redirect: 'error',
+    });
+  } catch {
+    safeMcpFailure(method);
+  }
+  if (!response || !response.ok || !Number.isInteger(response.status)) safeMcpFailure(method);
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    safeMcpFailure(method);
+  }
+  if (!validJsonRpcResult(body, id)) safeMcpFailure(method);
+  return Object.freeze({ result: body.result, status: response.status });
+}
+
+function verifyMcpDiscovery(initializeResult, toolsResult) {
+  if (
+    !initializeResult ||
+    typeof initializeResult !== 'object' ||
+    initializeResult.protocolVersion !== MCP_PROTOCOL_VERSION ||
+    !initializeResult.capabilities ||
+    typeof initializeResult.capabilities !== 'object' ||
+    !initializeResult.capabilities.tools ||
+    typeof initializeResult.capabilities.tools !== 'object'
+  )
+    safeMcpFailure('initialize');
+  if (!toolsResult || typeof toolsResult !== 'object' || !Array.isArray(toolsResult.tools))
+    safeMcpFailure('tools/list');
+
+  const listed = new Map();
+  for (const tool of toolsResult.tools) {
+    if (
+      !tool ||
+      typeof tool !== 'object' ||
+      typeof tool.name !== 'string' ||
+      typeof tool.requiredScope !== 'string' ||
+      listed.has(tool.name)
+    )
+      safeMcpFailure('tools/list');
+    listed.set(tool.name, tool.requiredScope);
+  }
+  if (listed.size !== REQUIRED_MCP_TOOLS.length) safeMcpFailure('tools/list');
+  for (const [name, scope] of REQUIRED_MCP_TOOLS) {
+    if (listed.get(name) !== scope) safeMcpFailure('tools/list');
+  }
+}
+
+/**
+ * Performs MCP discovery only. It does not invoke an MCP tool or expose a
+ * response body; the final artifact is atomically published only on success.
+ */
+export async function runMcpEvidencePreflight({ secretFile, artifactPath, fetchImpl = fetch }) {
+  const secret = loadMcpPreflightSecret(secretFile);
+  const reservation = reserveFixtureArtifact(artifactPath);
+  try {
+    const initialized = await mcpRpc(
+      fetchImpl,
+      secret.endpoint,
+      secret.token,
+      'dnsops-mcp-preflight-initialize',
+      'initialize',
+      {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'dns-ops-controlled-live-harness', version: '1.0.0' },
+      }
+    );
+    const tools = await mcpRpc(
+      fetchImpl,
+      secret.endpoint,
+      secret.token,
+      'dnsops-mcp-preflight-tools-list',
+      'tools/list',
+      {}
+    );
+    verifyMcpDiscovery(initialized.result, tools.result);
+    const artifact = Object.freeze({
+      kind: 'DNSOPS_MCP_EVIDENCE_PREFLIGHT',
+      status: 'MCP_EVIDENCE_PREFLIGHT_OK',
+      checkedAt: new Date().toISOString(),
+      mcpEndpointFingerprint: fingerprint(secret.endpoint.toString()),
+      protocolVersion: MCP_PROTOCOL_VERSION,
+      verifiedToolScopes: REQUIRED_MCP_TOOLS.map(([name, requiredScope]) => ({
+        name,
+        requiredScope,
+      })),
+      rpcResponses: [`mcp.initialize: ${initialized.status}`, `mcp.tools_list: ${tools.status}`],
+    });
+    reservation.publish(artifact);
+    return artifact;
+  } catch (error) {
+    reservation.discard();
+    throw error;
+  }
+}
 
 /** Reads the runtime secret only from this isolated harness process. */
 export function protectedToken(path, name) {
@@ -193,11 +389,28 @@ async function main() {
       'web-bootstrap',
       'fixture-apply',
       'fixture-restore',
+      'mcp-evidence-preflight',
     ].includes(command)
   )
     fail('unsupported command');
   if (command === 'restore' && process.argv[5] !== undefined)
     fail('restore does not accept a caller-supplied completion evidence file');
+  if (command === 'mcp-evidence-preflight') {
+    if (!process.argv[3] || process.argv[4] !== undefined)
+      fail('mcp-evidence-preflight requires one output artifact path before credential access');
+    const artifact = await runMcpEvidencePreflight({
+      secretFile: process.env.DNSOPS_MCP_PREFLIGHT_SECRET_FILE,
+      artifactPath: process.argv[3],
+    });
+    console.log(
+      JSON.stringify({
+        status: artifact.status,
+        artifactPath: process.argv[3],
+        mcpEndpointFingerprint: artifact.mcpEndpointFingerprint,
+      })
+    );
+    return;
+  }
   if (['bootstrap', 'web-bootstrap'].includes(command) && !process.argv[3])
     fail(`${command} requires an output artifact path before provider access`);
   if (['apply', 'restore'].includes(command) && (!process.argv[3] || !process.argv[4]))
@@ -337,4 +550,4 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   });
 }
 
-export { fingerprint };
+export { fingerprint, REQUIRED_MCP_TOOLS };

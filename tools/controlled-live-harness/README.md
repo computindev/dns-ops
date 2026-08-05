@@ -2,6 +2,27 @@
 
 This directory is the only repository component that may call Cloudflare for controlled live DNS work. Operators run it directly; DNS Ops application code and MCP never receive provider or fixture credentials.
 
+## MCP evidence preflight
+
+`mcp-evidence-preflight` is a harness-only discovery check for a separately deployed DNS Ops MCP endpoint. It performs no DNS/provider mutation and does not invoke any MCP tool. It first sends JSON-RPC `initialize`, then `tools/list`, and fails closed unless the authenticated principal exposes the complete Phase 1 tool contract and its required scopes: `DOMAIN_READ` (domain/evidence reads), `SIGNAL_READ`, `CASE_READ`, `CASE_WRITE`, and `SCAN_REQUEST`. The checked tools include `evidence_get` for evidence/audit review, `signal_list`, `case_get`, both case-write commands, and `scan_request`, along with the remaining closed-world Phase 1 tools.
+
+Create a dedicated local secret file; it must be an **absolute path**, a regular non-symlink file, and mode `0600`. The command deliberately has no default secret path, so set it explicitly for each authorized run:
+
+```sh
+umask 077
+cat > /secure/operator/dnsops-mcp-preflight.env <<'EOF'
+export DNSOPS_MCP_ENDPOINT='https://mcp.example.test/mcp'
+export DNSOPS_MCP_BEARER_TOKEN='runtime token omitted'
+EOF
+chmod 600 /secure/operator/dnsops-mcp-preflight.env
+export DNSOPS_MCP_PREFLIGHT_SECRET_FILE=/secure/operator/dnsops-mcp-preflight.env
+node tools/controlled-live-harness/runner.mjs mcp-evidence-preflight /secure/operator/mcp-preflight.json
+```
+
+Do not commit the secret or artifact, redirect command output, enable shell tracing, or place the token in a command-line argument. The endpoint must be an HTTPS, public DNS hostname with no credentials, port, query, fragment, IP literal, localhost name, or path other than `/mcp`. This syntactic validation happens before any network request; DNS resolution remains the deployment environment's responsibility. HTTP redirects are rejected rather than followed.
+
+The command checks the secret and reserves a new artifact destination before it creates a request. Existing destinations and missing parent directories fail before network access. On success it atomically creates the requested artifact mode `0600`; on any handshake, authorization, schema, tool, or scope failure it creates no final artifact. The artifact contains only an endpoint SHA-256 fingerprint, fixed tool/scope names, and HTTP status summaries—never the endpoint text, bearer token/header, or JSON-RPC response body.
+
 ## LIVE-01/02 Railway DNS bootstrap
 
 The committed manifest pins the only permitted web records:
