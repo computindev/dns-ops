@@ -115,7 +115,8 @@
       "docs/domain-operations/evidence/gate-3/asorin-live-01-02-authoritative-web.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-03-authoritative-restoration.json",
       "docs/domain-operations/evidence/gate-3/asorin-live-03-restored-pending-evidence.json",
-      "docs/domain-operations/evidence/gate-3/dns-ops-evidence-source-probe.json"
+      "docs/domain-operations/evidence/gate-3/dns-ops-evidence-source-probe.json",
+      "docs/domain-operations/evidence/gate-3/asorin-operational-pass-evidence-manifest.json"
     ],
     "missingForPass": [
       "Timestamp-correlated MCP scan task/result IDs for every LIVE fault and restoration",
