@@ -629,6 +629,19 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   ) {
     throw new Error('PASS requires appliedAt and restoredAt');
   }
+  const requiredCompletionEvidence = [
+    readDataField(fields, 'authoritativeEvidenceIds'),
+    readDataField(fields, 'scanTaskIds'),
+    readDataField(fields, 'signalIds'),
+    readDataField(fields, 'caseIds'),
+    readDataField(fields, 'auditEventIds'),
+  ];
+  if (
+    result === 'PASS' &&
+    requiredCompletionEvidence.some((value) => (value as readonly unknown[]).length === 0)
+  ) {
+    throw new Error('PASS requires authoritative, scan, signal, case, and audit evidence');
+  }
   if (result === 'RECOVERY_REQUIRED' && appliedAtMilliseconds === undefined) {
     throw new Error('RECOVERY_REQUIRED requires appliedAt');
   }

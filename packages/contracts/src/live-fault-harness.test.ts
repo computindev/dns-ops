@@ -359,6 +359,13 @@ describe('controlled live-fault harness policy', () => {
     expect(() =>
       validateFaultRunArtifact({
         ...artifact(),
+        authoritativeEvidenceIds: [],
+      })
+    ).toThrow('PASS requires authoritative, scan, signal, case, and audit evidence');
+
+    expect(() =>
+      validateFaultRunArtifact({
+        ...artifact(),
         baselineHash: ` ${fingerprint}`,
       })
     ).toThrow('surrounding whitespace');

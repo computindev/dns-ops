@@ -165,6 +165,59 @@ function assertBootstrapArtifact(value, manifest) {
   });
 }
 
+function matchesRestorationBaseline(record, baseline) {
+  return (
+    record.name === baseline.name &&
+    record.type === baseline.type &&
+    record.content === baseline.content &&
+    record.ttl === baseline.ttl
+  );
+}
+
+const completionEvidenceFields = Object.freeze([
+  'authoritativeEvidenceIds',
+  'scanTaskIds',
+  'signalIds',
+  'caseIds',
+  'auditEventIds',
+]);
+
+/**
+ * Completion evidence is deliberately separate from the recovery artifact so
+ * a prior or caller-supplied artifact cannot self-attest a PASS result.
+ */
+function completionEvidenceFor(value, runArtifact, restoredAt, providerResponses) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  if (
+    Object.getPrototypeOf(value) !== Object.prototype ||
+    Object.keys(value).length !== completionEvidenceFields.length ||
+    !completionEvidenceFields.every((field) => Object.hasOwn(value, field))
+  )
+    return undefined;
+  if (
+    completionEvidenceFields.some((field) => !Array.isArray(value[field]) || !value[field].length)
+  )
+    return undefined;
+
+  const evidence = Object.fromEntries(
+    completionEvidenceFields.map((field) => [field, [...value[field]]])
+  );
+  const candidate = {
+    ...runArtifact,
+    ...evidence,
+    providerResponses,
+    restoredAt,
+    result: 'PASS',
+  };
+  delete candidate.recovery;
+  try {
+    validateFaultRunArtifact(candidate);
+  } catch {
+    return undefined;
+  }
+  return Object.freeze(evidence);
+}
+
 function redactedStatus(operation, response) {
   return `cloudflare.${operation}: ${response.status}`;
 }
@@ -282,6 +335,9 @@ export function createCloudflareAdapter({
 
     async apply(bootstrapArtifact) {
       const bootstrap = assertBootstrapArtifact(bootstrapArtifact, initial.manifest);
+      const current = await readBaseline('dns_apply_baseline_read');
+      if (fingerprint(canonicalBaseline(current.record)) !== bootstrap.baselineHash)
+        fail('current provider baseline does not match the bootstrap artifact');
       const deleted = await request('dns_delete', `/dns_records/${bootstrap.record.id}`, {
         method: 'DELETE',
       });
@@ -294,7 +350,7 @@ export function createCloudflareAdapter({
         baselineHash: bootstrap.baselineHash,
         providerCredentialFingerprint: initial.manifest.providerCredentialFingerprint,
         appliedAt,
-        providerResponses: [deleted.summary],
+        providerResponses: [current.summary, deleted.summary],
         authoritativeEvidenceIds: [],
         recursiveEvidenceIds: [],
         scanTaskIds: [],
@@ -319,7 +375,7 @@ export function createCloudflareAdapter({
       return Object.freeze(artifact);
     },
 
-    async restore(runArtifact) {
+    async restore(runArtifact, completionEvidence) {
       validateFaultRunArtifact(runArtifact);
       const approved = authorize('dns_restore');
       if (
@@ -340,24 +396,57 @@ export function createCloudflareAdapter({
         record.desiredValue !== 'v=spf1 -all'
       )
         fail('recovery artifact contains an unapproved record');
+      const baseline = Object.freeze({
+        name: record.name,
+        type: record.type,
+        content: record.desiredValue,
+        ttl: 60,
+      });
       const restored = await request('dns_restore', '/dns_records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: record.type,
-          name: record.name,
-          content: record.desiredValue,
-          ttl: 60,
+          type: baseline.type,
+          name: baseline.name,
+          content: baseline.content,
+          ttl: baseline.ttl,
         }),
       });
+      const returnedRecord = validateRecord(restored.body.result);
+      if (!matchesRestorationBaseline(returnedRecord, baseline))
+        fail('provider restore response does not match the captured baseline');
+      const readback = await readBaseline('dns_restore_readback');
+      if (!matchesRestorationBaseline(readback.record, baseline))
+        fail('provider restoration readback does not match the captured baseline');
+
       const restoredAt = now().toISOString();
-      const artifact = {
-        ...runArtifact,
-        providerResponses: [...runArtifact.providerResponses, restored.summary],
+      const providerResponses = [
+        ...runArtifact.providerResponses,
+        restored.summary,
+        readback.summary,
+      ];
+      const evidence = completionEvidenceFor(
+        completionEvidence,
+        runArtifact,
         restoredAt,
-        result: 'PASS',
-      };
-      delete artifact.recovery;
+        providerResponses
+      );
+      const artifact = evidence
+        ? {
+            ...runArtifact,
+            ...evidence,
+            providerResponses,
+            restoredAt,
+            result: 'PASS',
+          }
+        : {
+            ...runArtifact,
+            providerResponses,
+            restoredAt,
+            result: 'RECOVERY_REQUIRED',
+            recovery: runArtifact.recovery,
+          };
+      if (evidence) delete artifact.recovery;
       validateFaultRunArtifact(artifact);
       return Object.freeze(artifact);
     },

@@ -114,7 +114,10 @@ async function main() {
     );
     return;
   }
-  const artifact = await adapter.restore(readArtifact(process.argv[3]));
+  const artifact = await adapter.restore(
+    readArtifact(process.argv[3]),
+    process.argv[5] ? readArtifact(process.argv[5]) : undefined
+  );
   writeArtifact(process.argv[4], artifact);
   console.log(
     JSON.stringify({

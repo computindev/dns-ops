@@ -27,6 +27,13 @@ const record = {
   content: 'v=spf1 -all',
   ttl: 60,
 };
+const completionEvidence = {
+  authoritativeEvidenceIds: ['authoritative-01'],
+  scanTaskIds: ['scan-01'],
+  signalIds: ['signal-01'],
+  caseIds: ['case-01'],
+  auditEventIds: ['audit-01'],
+};
 const ok = (result) => ({ ok: true, status: 200, json: async () => ({ success: true, result }) });
 const mockFetch = (...responses) => {
   const calls = [];
@@ -120,22 +127,32 @@ test('bootstrap creates only the explicitly approved missing SPF baseline', asyn
   assert.equal(artifact.record.id, record.id);
 });
 
-test('apply and restore use only the exact allowlisted tuple and valid structured artifacts', async () => {
+test('apply and restore validate the current and restored baselines before completing with structured evidence', async () => {
   const bootstrapFetch = mockFetch(ok([record]));
   const baseline = await adapter(bootstrapFetch.fetch).bootstrap();
-  const applyFetch = mockFetch(ok({ id: record.id }));
+  const applyFetch = mockFetch(ok([record]), ok({ id: record.id }));
   const recovery = await adapter(applyFetch.fetch).apply(baseline);
-  assert.equal(applyFetch.calls[0].init.method, 'DELETE');
-  assert.match(applyFetch.calls[0].url, new RegExp(`/dns_records/${record.id}$`));
+  assert.deepEqual(
+    applyFetch.calls.map(({ init }) => init.method),
+    ['GET', 'DELETE']
+  );
+  assert.match(applyFetch.calls[1].url, new RegExp(`/dns_records/${record.id}$`));
   assert.equal(recovery.result, 'RECOVERY_REQUIRED');
   assert.deepEqual(recovery.recovery.records, [
     { name: 'mail.asorin.ai', type: 'TXT', desiredValue: 'v=spf1 -all' },
   ]);
-  assert.deepEqual(recovery.providerResponses, ['cloudflare.dns_delete: 200']);
+  assert.deepEqual(recovery.providerResponses, [
+    'cloudflare.dns_apply_baseline_read: 200',
+    'cloudflare.dns_delete: 200',
+  ]);
 
-  const restoreFetch = mockFetch(ok({ id: 'b'.repeat(32) }));
-  const restored = await adapter(restoreFetch.fetch).restore(recovery);
-  assert.equal(restoreFetch.calls[0].init.method, 'POST');
+  const restoredRecord = { ...record, id: 'b'.repeat(32) };
+  const restoreFetch = mockFetch(ok(restoredRecord), ok([restoredRecord]));
+  const restored = await adapter(restoreFetch.fetch).restore(recovery, completionEvidence);
+  assert.deepEqual(
+    restoreFetch.calls.map(({ init }) => init.method),
+    ['POST', 'GET']
+  );
   assert.deepEqual(JSON.parse(restoreFetch.calls[0].init.body), {
     type: 'TXT',
     name: 'mail.asorin.ai',
@@ -144,10 +161,55 @@ test('apply and restore use only the exact allowlisted tuple and valid structure
   });
   assert.equal(restored.result, 'PASS');
   assert.equal(restored.recovery, undefined);
+  assert.deepEqual(restored.authoritativeEvidenceIds, ['authoritative-01']);
   assert.deepEqual(restored.providerResponses, [
+    'cloudflare.dns_apply_baseline_read: 200',
     'cloudflare.dns_delete: 200',
     'cloudflare.dns_restore: 200',
+    'cloudflare.dns_restore_readback: 200',
   ]);
+});
+
+test('apply refuses to delete when the immediate provider baseline differs from bootstrap', async () => {
+  const baseline = await adapter(mockFetch(ok([record])).fetch).bootstrap();
+  const mocked = mockFetch(ok([{ ...record, id: 'c'.repeat(32) }]));
+  await assert.rejects(
+    adapter(mocked.fetch).apply(baseline),
+    /current provider baseline does not match/
+  );
+  assert.equal(mocked.calls.length, 1);
+});
+
+test('restore retains RECOVERY_REQUIRED without completion evidence', async () => {
+  const baseline = await adapter(mockFetch(ok([record])).fetch).bootstrap();
+  const recovery = await adapter(mockFetch(ok([record]), ok({ id: record.id })).fetch).apply(
+    baseline
+  );
+  const restoredRecord = { ...record, id: 'b'.repeat(32) };
+  const restored = await adapter(mockFetch(ok(restoredRecord), ok([restoredRecord])).fetch).restore(
+    recovery
+  );
+  assert.equal(restored.result, 'RECOVERY_REQUIRED');
+  assert.ok(restored.recovery);
+  assert.deepEqual(restored.authoritativeEvidenceIds, []);
+});
+
+test('restore rejects a mismatched provider response or readback before completion', async () => {
+  const baseline = await adapter(mockFetch(ok([record])).fetch).bootstrap();
+  const recovery = await adapter(mockFetch(ok([record]), ok({ id: record.id })).fetch).apply(
+    baseline
+  );
+  await assert.rejects(
+    adapter(mockFetch(ok({ ...record, ttl: 120 })).fetch).restore(recovery, completionEvidence),
+    /approved LIVE-03 baseline/
+  );
+  await assert.rejects(
+    adapter(mockFetch(ok({ ...record, id: 'b'.repeat(32) }), ok([])).fetch).restore(
+      recovery,
+      completionEvidence
+    ),
+    /exactly one approved LIVE-03 record/
+  );
 });
 
 test('apply rejects tampered baselines before making any provider request', async () => {
