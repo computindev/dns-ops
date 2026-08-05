@@ -2,6 +2,31 @@
 
 This directory is the only repository component that may call Cloudflare for controlled live DNS work. Operators run it directly; DNS Ops application code and MCP never receive provider or fixture credentials.
 
+## MCP evidence preflight
+
+`mcp-evidence-preflight` is a harness-only discovery check for a separately deployed DNS Ops MCP endpoint. It performs no DNS/provider mutation and does not invoke any MCP tool. It first sends JSON-RPC `initialize`, then `tools/list`, and fails closed unless the authenticated principal exposes the complete Phase 1 tool contract and its required scopes: `DOMAIN_READ` (domain/evidence reads), `SIGNAL_READ`, `CASE_READ`, `CASE_WRITE`, and `SCAN_REQUEST`. The checked tools include `evidence_get` for evidence/audit review, `signal_list`, `case_get`, both case-write commands, and `scan_request`, along with the remaining closed-world Phase 1 tools.
+
+Create a dedicated local secret file; it must be an **absolute path**, a regular non-symlink file, and mode `0600`. The command deliberately has no default secret path, so set it explicitly for each authorized run:
+
+```sh
+umask 077
+cat > /secure/operator/dnsops-mcp-preflight.env <<'EOF'
+export DNSOPS_MCP_ENDPOINT='https://mcp.example.test/mcp'
+export DNSOPS_MCP_BEARER_TOKEN='runtime token omitted'
+EOF
+chmod 600 /secure/operator/dnsops-mcp-preflight.env
+export DNSOPS_MCP_PREFLIGHT_SECRET_FILE=/secure/operator/dnsops-mcp-preflight.env
+node tools/controlled-live-harness/runner.mjs mcp-evidence-preflight /secure/operator/mcp-preflight.json
+```
+
+Do not commit the secret or artifact, redirect command output, enable shell tracing, or place the token in a command-line argument. The endpoint must be an HTTPS, public DNS hostname with no credentials, port, query, fragment, IP literal, localhost name, or path other than `/mcp`. Before an authenticated request, the harness resolves every A/AAAA answer and rejects the endpoint unless every answer is public. It then connects through a lookup callback pinned to those vetted answers (while preserving the hostname for TLS certificate validation), so the connection cannot re-resolve a DNS-rebound address. HTTP redirects are not followed.
+
+The command checks the secret and reserves a new artifact destination before it creates a request. Existing destinations and missing parent directories fail before network access. On success it atomically creates the requested artifact mode `0600`; on any handshake, authorization, schema, tool, or scope failure it creates no final artifact. The artifact contains only an endpoint SHA-256 fingerprint, fixed tool/scope names, and HTTP status summaries—never the endpoint text, bearer token/header, or JSON-RPC response body.
+
+### Endpoint address policy
+
+Before a bearer-authenticated HTTPS request, every DNS answer must be an IPv4 address outside the conservative denylist derived from the [IANA IPv4 Special-Purpose Address Registry](https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml), plus multicast. The denied CIDRs are `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.31.196.0/24`, `192.52.193.0/24`, `192.88.99.0/24`, `192.168.0.0/16`, `192.175.48.0/24`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4`, and `240.0.0.0/4`. Enclosing prefixes are intentionally denied where IANA has smaller exceptions, favoring fail-closed behavior. All IPv6 answers are rejected until an equivalently complete, maintained IPv6 policy is adopted. Any rejected answer—including one mixed with otherwise permitted answers—aborts resolution, so no bearer HTTPS request is sent.
+
 ## LIVE-01/02 Railway DNS bootstrap
 
 The committed manifest pins the only permitted web records:

@@ -15,7 +15,7 @@
     "lint": "turbo run lint",
     "dev": "turbo run dev",
     "test": "vitest run && bun run test:controlled-live-harness && bun run test:migrations",
-    "test:controlled-live-harness": "bun run --filter @dns-ops/contracts build && node --test scripts/controlled-live-harness.test.mjs scripts/railway-verification-secret-provisioner.test.mjs",
+    "test:controlled-live-harness": "bun run --filter @dns-ops/contracts build && node --test scripts/controlled-live-harness.test.mjs scripts/mcp-evidence-preflight.test.mjs scripts/railway-verification-secret-provisioner.test.mjs",
     "test:migrations": "node --test scripts/run-migrations.test.mjs",
     "test:live-dns": "bun run --filter @dns-ops/collector test:live-dns",
     "smoke-test": "npx tsx scripts/deploy/smoke-test.ts",
