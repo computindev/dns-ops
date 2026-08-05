@@ -5,13 +5,13 @@
   "currentSha": "f207428a19eb364a9a281b0e080c4cc57a5017ba",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
-  "currentGate": "GATE_2_PASS / GATE_3_NON_LIVE",
+  "currentGate": "GATE_3_RESTORED_PENDING_DNS_OPS_EVIDENCE",
   "whatIsTrue": [
     "Gate 1 repository truth was accepted by Antonio",
     "Day 0 manual baseline, portfolio classification, playbook approvals, and controlled test assets remain incomplete",
     "The prior dnsops-test.computin.dev delegation proposal is superseded without provider mutation; Antonio authorized asorin.ai as the complete isolated controlled-test zone with no production, client, or real-mail dependency",
-    "Cloudflare read-only preflight verified an active asorin.ai zone with zero DNS records observed and a protected local credential that can read that zone without recording its value",
-    "A dedicated Railway project dnsops-live-fixtures and controlled-live-web service are deployed with an isolated runtime control secret; Railway custom-domain setup has returned exact Cloudflare records but no Cloudflare DNS mutation has been made",
+    "The isolated asorin.ai Cloudflare harness performed only allowlisted LIVE-01/02 Railway bootstrap and LIVE-03 mail-DNS mutations, with verified restoration and redacted durable evidence",
+    "A dedicated Railway project dnsops-live-fixtures and controlled-live-web service is deployed; LIVE-01/02 fixture faults were applied and restored only through the authenticated fail-closed harness",
     "Wrangler OAuth was stopped before authentication because it requested broad unrelated write scopes; child-zone provisioning requires a human Cloudflare-dashboard action and a subsequently scoped child-zone token",
     "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
     "PR #3 is open and ready for review; no merge or deployment is authorized",
@@ -106,15 +106,29 @@
     }
   ],
   "trackingIssue": "https://github.com/computindev/dns-ops/issues/4",
+  "controlledLiveCheckpoint": {
+    "status": "RESTORED_PENDING_DNS_OPS_EVIDENCE",
+    "durableEvidence": [
+      "docs/domain-operations/evidence/gate-3/asorin-live-01-02-web-bootstrap.json",
+      "docs/domain-operations/evidence/gate-3/asorin-live-01-fixture-restored.json",
+      "docs/domain-operations/evidence/gate-3/asorin-live-02-fixture-restored.json",
+      "docs/domain-operations/evidence/gate-3/asorin-live-01-02-authoritative-web.json",
+      "docs/domain-operations/evidence/gate-3/asorin-live-03-authoritative-restoration.json",
+      "docs/domain-operations/evidence/gate-3/asorin-live-03-restored-pending-evidence.json"
+    ],
+    "missingForPass": [
+      "Timestamp-correlated MCP scan task/result IDs for every LIVE fault and restoration",
+      "Expected signal IDs and statuses",
+      "Canonical case IDs, dispositions, versions, and LIVE-01 reopen proof",
+      "Audit IDs for scan, signal, case, and restoration lifecycle",
+      "An authorized DNS Ops MCP endpoint and principal with required scopes"
+    ]
+  },
   "pendingExternalInputs": [
     "Measured manual-check baseline",
     "Founder-verified portfolio selection, purpose, criticality, and observation-only classifications",
-    "A locally stored fixture-control secret, non-production asorin.ai deployment, exact DNS allowlist, initial values, and previous TTLs",
-    "Scoped provider-token secret name and fingerprint confirmation",
-    "Mutable-record allowlist",
-    "Previous TTL values",
-    "Baseline, rollback, and token revocation owner",
-    "Test-host deployment mutation mechanism for LIVE-01 and LIVE-02 where provider DNS changes are insufficient",
+    "Authorized DNS Ops MCP endpoint and runtime-only principal with DOMAIN_READ, SIGNAL_READ, CASE_READ, CASE_WRITE, and SCAN_REQUEST scopes",
+    "Timestamp-correlated DNS Ops scan, signal, case, audit, restoration, and LIVE-01 reopen evidence",
     "Founder calibration and approval of the six required operational playbooks"
   ],
   "materialDecisions": [
@@ -138,8 +152,8 @@
     "Client portal, billing, and commercial features"
   ],
   "nextActions": [
-    "Obtain issue #4 provider/test-host manifest, live-fixture authority, manual baseline, portfolio classification, and playbook approval; implement the concrete isolated fault harness, run LIVE-01 through LIVE-03, then repeat Gate 4 review",
-    "Retain all Gate 3/4 live-operation blocks until the tracked authority, assets, allowlist, secret, and rollback prerequisites are supplied"
+    "Obtain authorized DNS Ops MCP access; collect and independently verify scan, signal, case, audit, restoration, and LIVE-01 reopen evidence for every controlled scenario",
+    "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-04T20:10:30Z"
+  "updatedAt": "2026-08-05T18:00:00Z"
 }
