@@ -72,13 +72,30 @@ function parseDomainStatus(raw, domain) {
   }
   if (!status || typeof status !== 'object' || Array.isArray(status))
     fail(`Railway returned invalid status for ${domain.name}`);
-  if (requiredString(status, ['id', 'domainId'], `${domain.name} domain ID`) !== domain.id)
+  const detail =
+    status.domain && typeof status.domain === 'object' && !Array.isArray(status.domain)
+      ? status.domain
+      : status;
+  if (requiredString(detail, ['id', 'domainId'], `${domain.name} domain ID`) !== domain.id)
     fail(`Railway returned an unexpected domain ID for ${domain.name}`);
-  if (requiredString(status, ['domain', 'name'], `${domain.name} domain name`) !== domain.name)
+  if (requiredString(detail, ['domain', 'name'], `${domain.name} domain name`) !== domain.name)
     fail(`Railway returned an unexpected domain name for ${domain.name}`);
-  if (!Array.isArray(status.dnsRecords)) fail(`${domain.name} status has no DNS records`);
 
-  const verificationRecords = status.dnsRecords.filter((record) => {
+  const verification = detail.verification;
+  if (verification && typeof verification === 'object' && !Array.isArray(verification)) {
+    if (
+      requiredString(verification, ['dnsHost'], `${domain.name} verification host`) !==
+      domain.verificationHost
+    )
+      fail(`Railway returned an unexpected verification host for ${domain.name}`);
+    const token = requiredString(verification, ['token'], `${domain.name} verification token`);
+    if (!/^[^'\r\n]+$/.test(token))
+      fail(`${domain.name} verification token is not safe for the secret file`);
+    return token;
+  }
+
+  if (!Array.isArray(detail.dnsRecords)) fail(`${domain.name} status has no DNS records`);
+  const verificationRecords = detail.dnsRecords.filter((record) => {
     if (!record || typeof record !== 'object' || Array.isArray(record) || record.type !== 'TXT')
       return false;
     const host = [record.host, record.name].filter((value) => typeof value === 'string');
@@ -86,7 +103,6 @@ function parseDomainStatus(raw, domain) {
   });
   if (verificationRecords.length !== 1)
     fail(`${domain.name} status must contain exactly one TXT verification record`);
-
   const token = requiredString(
     verificationRecords[0],
     ['value', 'content'],

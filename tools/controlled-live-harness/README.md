@@ -46,4 +46,24 @@ node tools/controlled-live-harness/runner.mjs web-verify
 
 `web-preflight` and `web-verify` issue only GET requests and emit only operation/status summaries. `web-bootstrap` creates only missing exact records; an existing record must exactly match the approved name, type, content, and TTL. Its artifact contains target names, hashes, and redacted status summaries, never Railway TXT values.
 
-LIVE-01/02 fixture mode changes are intentionally not exposed by this DNS bootstrap harness. They remain blocked by the fixture's separate `DNSOPS_FIXTURE_CONTROL_TOKEN` control boundary; an unsupported `fixture-mode` invocation fails before any runtime secret is read.
+## LIVE-01/02 fixture fault apply and restore
+
+The harness alone may change the fixture mode for an authorized LIVE-01 or LIVE-02 run. The manifest pins the sole control endpoint, `https://asorin.ai/__dnsops/live-mode`, the `healthy` baseline, and the only two transitions:
+
+- `LIVE-01` → `redirect_fault` for `www.asorin.ai`
+- `LIVE-02` → `noindex_fault` for `asorin.ai`
+
+Before either fixture command, the runner accepts only a mode-`0600` local file at `DNSOPS_FIXTURE_CONTROL_SECRET_FILE` (default: `$HOME/.config/dns-ops/fixture-control.env`) with exactly:
+
+```sh
+export DNSOPS_FIXTURE_CONTROL_TOKEN='local value omitted'
+```
+
+The token is read only after command arguments, recovery input, and the manifest allowlist pass validation. Fixture commands do not construct a Cloudflare adapter, read the Cloudflare credential, or call a provider API. Do not commit the token file or redirect command output.
+
+```sh
+node tools/controlled-live-harness/runner.mjs fixture-apply LIVE-01 /secure/operator/live-01-recovery.json
+node tools/controlled-live-harness/runner.mjs fixture-restore /secure/operator/live-01-recovery.json /secure/operator/live-01-restored.json
+```
+
+`fixture-apply` requires a `healthy` authenticated GET readback before it POSTs the one manifest-approved fault mode, then requires a second authenticated GET readback of that fault mode. `fixture-restore` validates its redacted recovery artifact, requires the matching fault-mode readback, POSTs only `healthy`, and requires a final `healthy` readback. Both artifacts are written mode `0600` and contain only the pinned endpoint, mode/target identifiers, SHA-256 token fingerprint, timestamps, and HTTP operation/status summaries—never the token, bearer header, or response body. A failed readback aborts before the next transition.

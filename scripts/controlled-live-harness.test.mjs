@@ -1,21 +1,36 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createCloudflareAdapter } from '../tools/controlled-live-harness/cloudflare-adapter.mjs';
 import {
+  createFixtureControlAdapter,
+  fingerprint as fixtureFingerprint,
+} from '../tools/controlled-live-harness/fixture-control.mjs';
+import {
   loadManifest,
   policyFromManifest,
   protectedToken,
   protectedValues,
+  reserveFixtureArtifact,
+  writeArtifact,
+  writeFixtureArtifactAfterTransition,
 } from '../tools/controlled-live-harness/runner.mjs';
 
-const token = 'x';
-const tokenFingerprint = 'sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881';
+const token = 'fixture-control-credential-value';
+const tokenFingerprint = fixtureFingerprint(token);
 const secret = (value = token) => {
   const p = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'secret');
   writeFileSync(p, `export CLOUDFLARE_API_TOKEN='${value}'\n`);
@@ -72,6 +87,7 @@ const completionEvidence = {
   auditEventIds: ['audit-01'],
 };
 const ok = (result) => ({ ok: true, status: 200, json: async () => ({ success: true, result }) });
+const fixtureOk = (mode) => ({ ok: true, status: 200, json: async () => ({ mode }) });
 const mockFetch = (...responses) => {
   const calls = [];
   return {
@@ -84,6 +100,15 @@ const mockFetch = (...responses) => {
     },
   };
 };
+
+const fixtureAdapter = (fetch) =>
+  createFixtureControlAdapter({
+    manifest: manifest(),
+    token,
+    fetchImpl: fetch,
+    now: () => new Date('2026-08-05T15:00:00.000Z'),
+    createRunId: () => 'fixture-test-run',
+  });
 
 const adapter = (fetch, runtimeValues) =>
   createCloudflareAdapter({
@@ -130,6 +155,36 @@ test('runner keeps LIVE-01/02 fixture mode changes blocked before reading creden
   assert.doesNotMatch(result.stderr, /secret file/);
 });
 
+test('runner rejects an unapproved fixture mutation before reading credentials', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
+  );
+  const result = spawnSync(process.execPath, [runner, 'fixture-apply', 'LIVE-03', 'fault.json'], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires an approved LIVE-01 or LIVE-02/);
+  assert.doesNotMatch(result.stderr, /secret file/);
+});
+
+test('runner rejects malformed fixture recovery input before reading credentials', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
+  );
+  const recoveryPath = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'recovery.json');
+  writeFileSync(recoveryPath, '[]\n');
+  const result = spawnSync(
+    process.execPath,
+    [runner, 'fixture-restore', recoveryPath, 'restored.json'],
+    {
+      encoding: 'utf8',
+    }
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /fixture recovery artifact must be an object/);
+  assert.doesNotMatch(result.stderr, /secret file/);
+});
+
 test('runner rejects a caller-supplied completion evidence file before reading credentials', () => {
   const runner = fileURLToPath(
     new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
@@ -152,6 +207,118 @@ test('runner rejects a missing web-bootstrap artifact path before reading creden
   assert.equal(result.status, 1);
   assert.match(result.stderr, /web-bootstrap requires an output artifact path/);
   assert.doesNotMatch(result.stderr, /secret file/);
+});
+
+test('fixture apply and restore use the exact manifest endpoint, read back both transitions, and redact the token', async () => {
+  const applyFetch = mockFetch(
+    fixtureOk('healthy'),
+    fixtureOk('redirect_fault'),
+    fixtureOk('redirect_fault')
+  );
+  const recovery = await fixtureAdapter(applyFetch.fetch).apply('LIVE-01');
+  assert.equal(recovery.result, 'RECOVERY_REQUIRED');
+  assert.deepEqual(
+    applyFetch.calls.map(({ init }) => init.method),
+    ['GET', 'POST', 'GET']
+  );
+  assert.deepEqual(JSON.parse(applyFetch.calls[1].init.body), { mode: 'redirect_fault' });
+  assert.equal(applyFetch.calls[0].url, 'https://asorin.ai/__dnsops/live-mode');
+  assert.deepEqual(recovery.fixtureResponses, [
+    'fixture.mode_apply_before_readback: 200',
+    'fixture.mode_apply: 200',
+    'fixture.mode_apply_after_readback: 200',
+  ]);
+  assert.doesNotMatch(JSON.stringify(recovery), new RegExp(token));
+  assert.doesNotMatch(JSON.stringify(recovery), /Bearer/);
+
+  const restoreFetch = mockFetch(
+    fixtureOk('redirect_fault'),
+    fixtureOk('healthy'),
+    fixtureOk('healthy')
+  );
+  const restored = await fixtureAdapter(restoreFetch.fetch).restore(recovery);
+  assert.equal(restored.result, 'RESTORED');
+  assert.equal(restored.restoredAt, '2026-08-05T15:00:00.000Z');
+  assert.deepEqual(
+    restoreFetch.calls.map(({ init }) => init.method),
+    ['GET', 'POST', 'GET']
+  );
+  assert.deepEqual(JSON.parse(restoreFetch.calls[1].init.body), { mode: 'healthy' });
+  assert.match(restored.fixtureControlCredentialFingerprint, /^sha256:[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(restored), new RegExp(token));
+});
+
+test('fixture control fails closed before a mutation when readback or manifest authorization is invalid', async () => {
+  const unexpectedState = mockFetch(fixtureOk('noindex_fault'));
+  await assert.rejects(
+    fixtureAdapter(unexpectedState.fetch).apply('LIVE-01'),
+    /pre-transition readback/
+  );
+  assert.equal(unexpectedState.calls.length, 1);
+
+  const malformed = JSON.parse(JSON.stringify(manifest()));
+  malformed.fixtureControl.endpoint = 'https://unapproved.example/__dnsops/live-mode';
+  const noRequest = mockFetch(ok({ mode: 'healthy' }));
+  assert.throws(
+    () => createFixtureControlAdapter({ manifest: malformed, token, fetchImpl: noRequest.fetch }),
+    /fixture control manifest/
+  );
+  assert.equal(noRequest.calls.length, 0);
+});
+
+test('fixture artifacts are written mode 600', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'dnsops-')), 'fixture-artifact.json');
+  writeArtifact(path, { status: 'redacted' });
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+});
+
+test('fixture output preflight rejects invalid or existing destinations before any fixture fetch', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  let fixtureFetchCalls = 0;
+  const fixtureFetch = async () => {
+    fixtureFetchCalls += 1;
+    return { status: 'unreachable' };
+  };
+  await assert.rejects(
+    writeFixtureArtifactAfterTransition(
+      join(directory, 'missing', 'fixture-artifact.json'),
+      fixtureFetch
+    ),
+    /destination is invalid/
+  );
+
+  const path = join(directory, 'fixture-artifact.json');
+  writeFileSync(path, 'existing artifact\n', { mode: 0o600 });
+  await assert.rejects(writeFixtureArtifactAfterTransition(path, fixtureFetch), /already exists/);
+  assert.equal(fixtureFetchCalls, 0);
+  assert.equal(readFileSync(path, 'utf8'), 'existing artifact\n');
+
+  const failedDirectory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  await assert.rejects(
+    writeFixtureArtifactAfterTransition(join(failedDirectory, 'failed-artifact.json'), async () => {
+      throw new Error('fixture transition failed');
+    }),
+    /fixture transition failed/
+  );
+  assert.deepEqual(readdirSync(failedDirectory), []);
+});
+
+test('fixture artifact publication creates the final name atomically and never replaces a raced output', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-'));
+  const path = join(directory, 'fixture-artifact.json');
+  const artifact = { status: 'redacted' };
+  const written = await writeFixtureArtifactAfterTransition(path, async () => artifact);
+  assert.deepEqual(written, artifact);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), artifact);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+
+  const racedPath = join(directory, 'raced-fixture-artifact.json');
+  const reservation = reserveFixtureArtifact(racedPath);
+  assert.equal(statSync(reservation.temporaryPath).mode & 0o777, 0o600);
+  writeFileSync(racedPath, 'concurrent artifact\n', { mode: 0o600 });
+  assert.throws(() => reservation.publish(artifact), /EEXIST/);
+  assert.equal(readFileSync(racedPath, 'utf8'), 'concurrent artifact\n');
+  assert.equal(existsSync(reservation.temporaryPath), false);
 });
 
 test('LIVE-01/02 web preflight is read-only, validates every bootstrap record, and redacts TXT values', async () => {

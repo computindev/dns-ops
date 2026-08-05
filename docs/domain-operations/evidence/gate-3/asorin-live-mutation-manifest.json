@@ -18,12 +18,50 @@
     { "name": "mail.asorin.ai", "types": ["TXT"], "mutationIds": ["LIVE-03"] }
   ],
   "bootstrapAllowlist": [
-    { "name": "asorin.ai", "type": "CNAME", "content": "epgybwo0.up.railway.app", "ttl": 60, "mutationId": "LIVE-02" },
-    { "name": "www.asorin.ai", "type": "CNAME", "content": "4xbfxxr5.up.railway.app", "ttl": 60, "mutationId": "LIVE-01" },
-    { "name": "_railway-verify.asorin.ai", "type": "TXT", "runtimeValue": "RAILWAY_ASORIN_AI_VERIFICATION_TXT", "ttl": 60, "mutationId": "LIVE-02" },
-    { "name": "_railway-verify.www.asorin.ai", "type": "TXT", "runtimeValue": "RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT", "ttl": 60, "mutationId": "LIVE-01" },
-    { "name": "mail.asorin.ai", "type": "TXT", "content": "v=spf1 -all", "ttl": 60, "mutationId": "LIVE-03" }
+    {
+      "name": "asorin.ai",
+      "type": "CNAME",
+      "content": "epgybwo0.up.railway.app",
+      "ttl": 60,
+      "mutationId": "LIVE-02"
+    },
+    {
+      "name": "www.asorin.ai",
+      "type": "CNAME",
+      "content": "4xbfxxr5.up.railway.app",
+      "ttl": 60,
+      "mutationId": "LIVE-01"
+    },
+    {
+      "name": "_railway-verify.asorin.ai",
+      "type": "TXT",
+      "runtimeValue": "RAILWAY_ASORIN_AI_VERIFICATION_TXT",
+      "ttl": 60,
+      "mutationId": "LIVE-02"
+    },
+    {
+      "name": "_railway-verify.www.asorin.ai",
+      "type": "TXT",
+      "runtimeValue": "RAILWAY_WWW_ASORIN_AI_VERIFICATION_TXT",
+      "ttl": 60,
+      "mutationId": "LIVE-01"
+    },
+    {
+      "name": "mail.asorin.ai",
+      "type": "TXT",
+      "content": "v=spf1 -all",
+      "ttl": 60,
+      "mutationId": "LIVE-03"
+    }
   ],
+  "fixtureControl": {
+    "endpoint": "https://asorin.ai/__dnsops/live-mode",
+    "healthyMode": "healthy",
+    "modes": [
+      { "mutationId": "LIVE-01", "mode": "redirect_fault", "targetName": "www.asorin.ai" },
+      { "mutationId": "LIVE-02", "mode": "noindex_fault", "targetName": "asorin.ai" }
+    ]
+  },
   "rollbackAndRevocationOwner": "Antonio",
   "globalConstraints": [
     "No production traffic, client dependency, or real mail dependency exists in asorin.ai.",
