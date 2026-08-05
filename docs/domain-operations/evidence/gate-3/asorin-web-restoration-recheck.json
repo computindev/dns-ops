@@ -1,0 +1,24 @@
+{
+  "evidenceId": "GATE3-ASORIN-WEB-RESTORATION-RECHECK",
+  "recordedAt": "2026-08-05T20:36:39Z",
+  "result": "RESTORED_PENDING_DNS_OPS_EVIDENCE",
+  "method": "direct HTTPS response-header checks without following redirects or invoking the fixture-control endpoint",
+  "observations": [
+    {
+      "target": "https://www.asorin.ai/",
+      "status": 308,
+      "location": "https://asorin.ai/"
+    },
+    {
+      "target": "https://asorin.ai/",
+      "status": 200,
+      "xRobotsTag": null
+    }
+  ],
+  "conclusion": "The LIVE-01 redirect and LIVE-02 indexability baselines are currently restored.",
+  "limitations": [
+    "This is a restoration-only HTTP observation and is not a DNS Ops scan.",
+    "It contains no DNS Ops scan, signal, case, audit, or LIVE-01 reopen evidence and must not be treated as PASS.",
+    "No credentials, fixture-control calls, MCP calls, case mutations, provider mutations, Railway actions, or deployments were performed."
+  ]
+}
