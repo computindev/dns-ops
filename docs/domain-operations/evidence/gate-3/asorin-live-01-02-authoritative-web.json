@@ -1,0 +1,28 @@
+{
+  "evidenceId": "GATE3-ASORIN-LIVE01-02-AUTHORITATIVE-WEB",
+  "recordedAt": "2026-08-05T18:01:26Z",
+  "result": "HARNESS_RESTORED_PENDING_DNS_OPS_EVIDENCE",
+  "method": "direct authoritative DNS queries to both delegated Cloudflare nameservers",
+  "queries": [
+    {
+      "server": "mcgrory.ns.cloudflare.com",
+      "apexA": ["69.46.46.21"],
+      "apexAaaa": [],
+      "wwwCname": "4xbfxxr5.up.railway.app.",
+      "ttl": 60,
+      "authoritative": true
+    },
+    {
+      "server": "olivia.ns.cloudflare.com",
+      "apexA": ["69.46.46.21"],
+      "apexAaaa": [],
+      "wwwCname": "4xbfxxr5.up.railway.app.",
+      "ttl": 60,
+      "authoritative": true
+    }
+  ],
+  "limitations": [
+    "This verifies the restored web DNS publication only.",
+    "It contains no DNS Ops scan, signal, case, audit, or reopen evidence and must not be treated as PASS."
+  ]
+}
