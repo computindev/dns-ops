@@ -1,0 +1,34 @@
+{
+  "evidenceId": "GATE3-ASORIN-AUTHORITATIVE-RESTORATION-RECHECK",
+  "recordedAt": "2026-08-05T20:31:51Z",
+  "result": "RESTORED_PENDING_DNS_OPS_EVIDENCE",
+  "method": "direct non-recursive authoritative DNS queries to both delegated Cloudflare nameservers after the controlled-live restoration runs",
+  "queries": [
+    {
+      "server": "mcgrory.ns.cloudflare.com",
+      "authoritative": true,
+      "ttl": 60,
+      "apexA": ["69.46.46.21"],
+      "apexAaaa": [],
+      "wwwCname": "4xbfxxr5.up.railway.app.",
+      "mailSpfTxt": ["v=spf1 -all"],
+      "mailMx": []
+    },
+    {
+      "server": "olivia.ns.cloudflare.com",
+      "authoritative": true,
+      "ttl": 60,
+      "apexA": ["69.46.46.21"],
+      "apexAaaa": [],
+      "wwwCname": "4xbfxxr5.up.railway.app.",
+      "mailSpfTxt": ["v=spf1 -all"],
+      "mailMx": []
+    }
+  ],
+  "conclusion": "Both delegated authoritative nameservers agree on the restored LIVE-01/02 web publication and LIVE-03 mail-DNS baseline.",
+  "limitations": [
+    "This is a restoration-only DNS observation and is not a DNS Ops scan.",
+    "It contains no DNS Ops scan, signal, case, audit, or LIVE-01 reopen evidence and must not be treated as PASS.",
+    "No credentials, MCP calls, case mutations, provider mutations, Railway actions, or deployments were performed."
+  ]
+}
