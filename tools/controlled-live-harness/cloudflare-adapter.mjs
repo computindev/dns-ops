@@ -174,50 +174,6 @@ function matchesRestorationBaseline(record, baseline) {
   );
 }
 
-const completionEvidenceFields = Object.freeze([
-  'authoritativeEvidenceIds',
-  'scanTaskIds',
-  'signalIds',
-  'caseIds',
-  'auditEventIds',
-]);
-
-/**
- * Completion evidence is deliberately separate from the recovery artifact so
- * a prior or caller-supplied artifact cannot self-attest a PASS result.
- */
-function completionEvidenceFor(value, runArtifact, restoredAt, providerResponses) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  if (
-    Object.getPrototypeOf(value) !== Object.prototype ||
-    Object.keys(value).length !== completionEvidenceFields.length ||
-    !completionEvidenceFields.every((field) => Object.hasOwn(value, field))
-  )
-    return undefined;
-  if (
-    completionEvidenceFields.some((field) => !Array.isArray(value[field]) || !value[field].length)
-  )
-    return undefined;
-
-  const evidence = Object.fromEntries(
-    completionEvidenceFields.map((field) => [field, [...value[field]]])
-  );
-  const candidate = {
-    ...runArtifact,
-    ...evidence,
-    providerResponses,
-    restoredAt,
-    result: 'PASS',
-  };
-  delete candidate.recovery;
-  try {
-    validateFaultRunArtifact(candidate);
-  } catch {
-    return undefined;
-  }
-  return Object.freeze(evidence);
-}
-
 function redactedStatus(operation, response) {
   return `cloudflare.${operation}: ${response.status}`;
 }
@@ -375,7 +331,9 @@ export function createCloudflareAdapter({
       return Object.freeze(artifact);
     },
 
-    async restore(runArtifact, completionEvidence) {
+    async restore(runArtifact, ...unexpectedArguments) {
+      if (unexpectedArguments.length !== 0)
+        fail('restore does not accept caller-supplied completion evidence');
       validateFaultRunArtifact(runArtifact);
       const approved = authorize('dns_restore');
       if (
@@ -425,28 +383,13 @@ export function createCloudflareAdapter({
         restored.summary,
         readback.summary,
       ];
-      const evidence = completionEvidenceFor(
-        completionEvidence,
-        runArtifact,
+      const artifact = {
+        ...runArtifact,
+        providerResponses,
         restoredAt,
-        providerResponses
-      );
-      const artifact = evidence
-        ? {
-            ...runArtifact,
-            ...evidence,
-            providerResponses,
-            restoredAt,
-            result: 'PASS',
-          }
-        : {
-            ...runArtifact,
-            providerResponses,
-            restoredAt,
-            result: 'RECOVERY_REQUIRED',
-            recovery: runArtifact.recovery,
-          };
-      if (evidence) delete artifact.recovery;
+        result: 'RESTORED_PENDING_EVIDENCE',
+      };
+      delete artifact.recovery;
       validateFaultRunArtifact(artifact);
       return Object.freeze(artifact);
     },

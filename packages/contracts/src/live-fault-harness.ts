@@ -43,7 +43,12 @@ export interface AuthorizedControlledFaultMutation {
   providerCredentialFingerprint: string;
 }
 
-export const FAULT_RUN_RESULTS = ['PASS', 'FAIL', 'RECOVERY_REQUIRED'] as const;
+export const FAULT_RUN_RESULTS = [
+  'PASS',
+  'FAIL',
+  'RECOVERY_REQUIRED',
+  'RESTORED_PENDING_EVIDENCE',
+] as const;
 
 export type FaultRunResult = (typeof FAULT_RUN_RESULTS)[number];
 
@@ -644,6 +649,20 @@ export function validateFaultRunArtifact(artifact: FaultRunArtifact): void {
   }
   if (result === 'RECOVERY_REQUIRED' && appliedAtMilliseconds === undefined) {
     throw new Error('RECOVERY_REQUIRED requires appliedAt');
+  }
+  if (
+    result === 'RESTORED_PENDING_EVIDENCE' &&
+    (appliedAtMilliseconds === undefined || restoredAtMilliseconds === undefined)
+  ) {
+    throw new Error('RESTORED_PENDING_EVIDENCE requires appliedAt and restoredAt');
+  }
+  if (
+    result === 'RESTORED_PENDING_EVIDENCE' &&
+    requiredCompletionEvidence.some((value) => (value as readonly unknown[]).length !== 0)
+  ) {
+    throw new Error(
+      'RESTORED_PENDING_EVIDENCE requires authoritative, scan, signal, case, and audit evidence to be unavailable'
+    );
   }
   if (recovery !== undefined) {
     validateRecoveryArtifact(recovery, artifactZoneId, normalizedTargetNames);

@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { createCloudflareAdapter } from '../tools/controlled-live-harness/cloudflare-adapter.mjs';
 import {
   loadManifest,
   policyFromManifest,
   protectedToken,
-  requireLive03Preconditions,
 } from '../tools/controlled-live-harness/runner.mjs';
 
 const token = 'x';
@@ -63,17 +64,18 @@ test('derives LIVE-03 authorization from the manifest and pins token fingerprint
   const m = manifest();
   assert.throws(() => policyFromManifest(m, 'wrong'), /fingerprint/);
 });
-test('LIVE-03 rejects missing evidence even after policy authorization', () => {
-  const m = manifest();
-  assert.throws(
-    () =>
-      requireLive03Preconditions({
-        manifest: m,
-        token,
-        evidence: { spfRecords: 1, ttl: 60, mxRecords: 0 },
-      }),
-    /missing required/
+test('runner rejects a caller-supplied completion evidence file before reading credentials', () => {
+  const runner = fileURLToPath(
+    new URL('../tools/controlled-live-harness/runner.mjs', import.meta.url)
   );
+  const result = spawnSync(
+    process.execPath,
+    [runner, 'restore', 'recovery.json', 'restored.json', 'completion-evidence.json'],
+    { encoding: 'utf8' }
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not accept a caller-supplied completion evidence file/);
+  assert.doesNotMatch(result.stderr, /secret file/);
 });
 
 test('preflight is read-only, verifies zone and exact approved record, and emits redacted summaries', async () => {
@@ -127,7 +129,7 @@ test('bootstrap creates only the explicitly approved missing SPF baseline', asyn
   assert.equal(artifact.record.id, record.id);
 });
 
-test('apply and restore validate the current and restored baselines before completing with structured evidence', async () => {
+test('apply and restore validate the current and restored baselines before emitting RESTORED_PENDING_EVIDENCE', async () => {
   const bootstrapFetch = mockFetch(ok([record]));
   const baseline = await adapter(bootstrapFetch.fetch).bootstrap();
   const applyFetch = mockFetch(ok([record]), ok({ id: record.id }));
@@ -148,7 +150,7 @@ test('apply and restore validate the current and restored baselines before compl
 
   const restoredRecord = { ...record, id: 'b'.repeat(32) };
   const restoreFetch = mockFetch(ok(restoredRecord), ok([restoredRecord]));
-  const restored = await adapter(restoreFetch.fetch).restore(recovery, completionEvidence);
+  const restored = await adapter(restoreFetch.fetch).restore(recovery);
   assert.deepEqual(
     restoreFetch.calls.map(({ init }) => init.method),
     ['POST', 'GET']
@@ -159,9 +161,14 @@ test('apply and restore validate the current and restored baselines before compl
     content: 'v=spf1 -all',
     ttl: 60,
   });
-  assert.equal(restored.result, 'PASS');
+  assert.equal(restored.result, 'RESTORED_PENDING_EVIDENCE');
   assert.equal(restored.recovery, undefined);
-  assert.deepEqual(restored.authoritativeEvidenceIds, ['authoritative-01']);
+  assert.equal(restored.restoredAt, '2026-08-05T15:00:00.000Z');
+  assert.deepEqual(restored.authoritativeEvidenceIds, []);
+  assert.deepEqual(restored.scanTaskIds, []);
+  assert.deepEqual(restored.signalIds, []);
+  assert.deepEqual(restored.caseIds, []);
+  assert.deepEqual(restored.auditEventIds, []);
   assert.deepEqual(restored.providerResponses, [
     'cloudflare.dns_apply_baseline_read: 200',
     'cloudflare.dns_delete: 200',
@@ -180,18 +187,17 @@ test('apply refuses to delete when the immediate provider baseline differs from 
   assert.equal(mocked.calls.length, 1);
 });
 
-test('restore retains RECOVERY_REQUIRED without completion evidence', async () => {
+test('restore rejects caller-supplied completion evidence before making a provider request', async () => {
   const baseline = await adapter(mockFetch(ok([record])).fetch).bootstrap();
   const recovery = await adapter(mockFetch(ok([record]), ok({ id: record.id })).fetch).apply(
     baseline
   );
-  const restoredRecord = { ...record, id: 'b'.repeat(32) };
-  const restored = await adapter(mockFetch(ok(restoredRecord), ok([restoredRecord])).fetch).restore(
-    recovery
+  const restoreFetch = mockFetch(ok(record));
+  await assert.rejects(
+    adapter(restoreFetch.fetch).restore(recovery, completionEvidence),
+    /does not accept caller-supplied completion evidence/
   );
-  assert.equal(restored.result, 'RECOVERY_REQUIRED');
-  assert.ok(restored.recovery);
-  assert.deepEqual(restored.authoritativeEvidenceIds, []);
+  assert.equal(restoreFetch.calls.length, 0);
 });
 
 test('restore rejects a mismatched provider response or readback before completion', async () => {
@@ -200,14 +206,11 @@ test('restore rejects a mismatched provider response or readback before completi
     baseline
   );
   await assert.rejects(
-    adapter(mockFetch(ok({ ...record, ttl: 120 })).fetch).restore(recovery, completionEvidence),
+    adapter(mockFetch(ok({ ...record, ttl: 120 })).fetch).restore(recovery),
     /approved LIVE-03 baseline/
   );
   await assert.rejects(
-    adapter(mockFetch(ok({ ...record, id: 'b'.repeat(32) }), ok([])).fetch).restore(
-      recovery,
-      completionEvidence
-    ),
+    adapter(mockFetch(ok({ ...record, id: 'b'.repeat(32) }), ok([])).fetch).restore(recovery),
     /exactly one approved LIVE-03 record/
   );
 });

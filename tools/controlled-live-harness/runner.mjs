@@ -34,20 +34,6 @@ export function policyFromManifest(manifest, token) {
   return policyFromCloudflareManifest(manifest, token).policy;
 }
 
-export function requireLive03Preconditions({ manifest, token, evidence }) {
-  policyFromManifest(manifest, token);
-  if (!evidence || evidence.spfRecords !== 1 || evidence.ttl !== 60 || evidence.mxRecords !== 0)
-    fail('LIVE-03 authoritative baseline rejected');
-  for (const id of [
-    'authoritativeEvidenceIds',
-    'scanTaskIds',
-    'signalIds',
-    'caseIds',
-    'auditEventIds',
-  ])
-    if (!Array.isArray(evidence[id]) || evidence[id].length === 0) fail(`missing required ${id}`);
-}
-
 function readArtifact(path) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
@@ -65,6 +51,8 @@ async function main() {
   const command = process.argv[2] ?? 'status';
   if (!['status', 'preflight', 'bootstrap', 'apply', 'restore'].includes(command))
     fail('unsupported command');
+  if (command === 'restore' && process.argv[5] !== undefined)
+    fail('restore does not accept a caller-supplied completion evidence file');
   // Credential resolution is intentionally here rather than in DNS Ops/MCP or the adapter module.
   const token = protectedToken(
     process.env.DNSOPS_CLOUDFLARE_SECRET_FILE ??
@@ -114,10 +102,7 @@ async function main() {
     );
     return;
   }
-  const artifact = await adapter.restore(
-    readArtifact(process.argv[3]),
-    process.argv[5] ? readArtifact(process.argv[5]) : undefined
-  );
+  const artifact = await adapter.restore(readArtifact(process.argv[3]));
   writeArtifact(process.argv[4], artifact);
   console.log(
     JSON.stringify({
