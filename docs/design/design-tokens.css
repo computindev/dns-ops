@@ -1,0 +1,167 @@
+/**
+ * DNS Ops Workbench — Design Tokens (foundation)
+ * --------------------------------------------------------------------------
+ * Single source of truth for the design system. Encodes the de-facto palette
+ * already in use across the app and CONSOLIDATES the amber/yellow warning
+ * split into one `--warning-*` scale (the main inconsistency flagged in the
+ * design review).
+ *
+ * Adoption (Tailwind v3):
+ *   1. @import this file once at the top of apps/web/app/styles/app.css
+ *      (`@import './tokens.css';` BEFORE the three @tailwind directives).
+ *   2. Merge `tailwind.extend.js` into apps/web/tailwind.config.js `theme.extend`.
+ *   3. Existing utility classes keep working; new semantic utilities
+ *      (bg-brand, text-success, border-warning, etc.) become available.
+ *
+ * This file is additive and non-breaking. Designers own the values;
+ * engineers own the wiring.
+ * --------------------------------------------------------------------------
+ */
+
+:root {
+  /* ===== Color · Brand (primary action) — blue ===== */
+  --color-brand-50:  #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6; /* primary */
+  --color-brand-600: #2563eb; /* default button bg */
+  --color-brand-700: #1d4ed8; /* button hover */
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+
+  /* ===== Color · Neutral (text, borders, surfaces) — gray ===== */
+  --color-neutral-50:  #f9fafb;
+  --color-neutral-100: #f3f4f6;
+  --color-neutral-200: #e5e7eb; /* default border */
+  --color-neutral-300: #d1d5db;
+  --color-neutral-400: #9ca3af; /* disabled */
+  --color-neutral-500: #6b7280; /* meta / dim text (most-used) */
+  --color-neutral-600: #4b5563;
+  --color-neutral-700: #374151; /* body text */
+  --color-neutral-800: #1f2937;
+  --color-neutral-900: #111827; /* headings */
+
+  /* ===== Color · Semantic — success / danger / warning / info ===== */
+  --color-success-50:  #ecfdf5;
+  --color-success-100: #d1fae5;
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+  --color-success-700: #047857;
+  --color-success-800: #065f46;
+
+  --color-danger-50:  #fef2f2;
+  --color-danger-100: #fee2e2;
+  --color-danger-200: #fecaca;
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+  --color-danger-700: #b91c1c;
+  --color-danger-800: #991b1b; /* error text */
+
+  /* WARNING — consolidated (was split amber-900 + yellow-800). Use this only. */
+  --color-warning-50:  #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fde68a;
+  --color-warning-500: #f59e0b;
+  --color-warning-700: #b45309;
+  --color-warning-900: #78350f; /* caution text */
+
+  --color-info-50:  var(--color-brand-50);
+  --color-info-100: var(--color-brand-100);
+  --color-info-500: var(--color-brand-500);
+  --color-info-700: var(--color-brand-700);
+  --color-info-800: var(--color-brand-800);
+
+  /* Secondary accent — portfolio / managed-zone (kept distinct from success) */
+  --color-accent-500: #0d9488; /* teal */
+  --color-accent-600: #0f766e;
+  --color-accent-700: #115e59;
+
+  /* ===== Surface (light theme; dark-mode hooks below) ===== */
+  --surface-base:   #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: var(--color-neutral-50);
+  --surface-overlay: #ffffff;
+  --border-subtle: rgba(17, 24, 39, 0.08);   /* visible when looked for */
+  --border-default: var(--color-neutral-200);
+  --text-strong: var(--color-neutral-900);
+  --text-body:   var(--color-neutral-700);
+  --text-dim:    var(--color-neutral-500);
+
+  /* ===== Radius ===== */
+  --radius-sm: 0.375rem;   /* 6px — inputs, md */
+  --radius:    0.5rem;     /* 8px — default (lg, dominant) */
+  --radius-md: 0.75rem;    /* 12px — xl panels */
+  --radius-lg: 1rem;       /* 16px — 2xl hero blocks */
+  --radius-pill: 9999px;   /* badges, pills */
+
+  /* ===== Shadow ===== */
+  --shadow-sm: 0 1px 2px 0 rgba(17, 24, 39, 0.05);                    /* dominant */
+  --shadow-md: 0 4px 6px -1px rgba(17, 24, 39, 0.10), 0 2px 4px -2px rgba(17, 24, 39, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(17, 24, 39, 0.10), 0 4px 6px -4px rgba(17, 24, 39, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(17, 24, 39, 0.12), 0 8px 10px -6px rgba(17, 24, 39, 0.06);
+
+  /* ===== Spacing (Tailwind default scale, exposed for non-Tailwind contexts) ===== */
+  --space-1: 0.25rem; --space-2: 0.5rem;  --space-3: 0.75rem; --space-4: 1rem;
+  --space-5: 1.25rem; --space-6: 1.5rem;  --space-8: 2rem;    --space-10: 2.5rem;
+  --space-12: 3rem;   --space-16: 4rem;
+  --container-max: 80rem;   /* max-w-7xl equivalent (portfolio) */
+  --container-narrow: 56rem; /* max-w-4xl equivalent (home) */
+
+  /* ===== Typography ===== */
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+
+  --text-xs:   0.75rem;   /* 12px — meta */
+  --text-sm:   0.875rem;  /* 14px — body secondary */
+  --text-base: 1rem;      /* 16px — body */
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-2xl:  1.5rem;    /* h3 */
+  --text-3xl:  1.875rem;  /* h1 (current) */
+  --text-4xl:  2.25rem;   /* hero */
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --tracking-wide: 0.025em;  /* uppercase labels */
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ===== Motion ===== */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur:      200ms;
+  --dur-slow: 320ms;
+
+  /* ===== A11y baseline ===== */
+  --focus-ring: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--color-brand-500);
+  --tap-target-min: 2.5rem; /* min-h-10 */
+  --z-sticky: 100;
+  --z-overlay: 1000;
+}
+
+/* ===== Dark-mode hooks (designers to finalize values) ===== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-base:   #0b1220;
+    --surface-raised: #111a2e;
+    --surface-sunken: #0e1626;
+    --border-subtle:  rgba(255, 255, 255, 0.08);
+    --border-default: rgba(255, 255, 255, 0.14);
+    --text-strong: #f8fafc;
+    --text-body:   #cbd5e1;
+    --text-dim:    #94a3b8;
+    /* Keep brand/success/danger/warning scales; tune if contrast requires. */
+  }
+}
+
+/* ===== Reduced motion (already respected in app.css for animate-pulse) ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

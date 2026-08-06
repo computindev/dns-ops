@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DNS Ops — Routes &amp; Design Tokens Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf8f4; --paper:#ffffff; --ink:#13213a; --ink-2:#2b3a55; --muted:#64748b;
+    --line:rgba(19,33,58,.10); --line-2:rgba(19,33,58,.16);
+    --gold:#b8893a; --gold-soft:#f3e7cf;
+    --blue:#1e3a8a; --blue-soft:#e6ecf8;
+    --ok:#0f766e; --ok-soft:#d6efe9;
+    --bad:#be123c; --bad-soft:#fbe2ea;
+    --warn:#b45309; --warn-soft:#fbeecb;
+    --font-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+    --font-display:'Instrument Serif',ui-serif,Georgia,serif;
+    --shadow:0 1px 2px rgba(19,33,58,.06),0 8px 24px -16px rgba(19,33,58,.18);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0d1322;--paper:#141d31;--ink:#eef2fb;--ink-2:#c7d2e6;--muted:#94a3b8;
+      --line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.16);
+      --blue-soft:#1c2c4d;--gold-soft:#2a2415;--ok-soft:#103733;--bad-soft:#3a1622;--warn-soft:#342a10;}
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);
+    font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(900px 500px at 88% -8%,var(--blue-soft) 0%,transparent 60%),
+                      radial-gradient(700px 400px at -5% 4%,var(--gold-soft) 0%,transparent 55%);
+    background-attachment:fixed;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  /* hero */
+  header.hero{padding:72px 0 40px}
+  .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin:0 0 14px}
+  h1{font-family:var(--font-display);font-weight:400;font-size:clamp(40px,6vw,68px);line-height:1.02;margin:0 0 14px;letter-spacing:-.01em}
+  h1 em{color:var(--blue);font-style:italic}
+  .lede{font-size:19px;color:var(--ink-2);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:22px;font-family:var(--font-mono);font-size:12.5px;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  /* section */
+  section{padding:46px 0;border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
+  .sec-num{font-family:var(--font-mono);font-size:12px;color:var(--gold);letter-spacing:.1em}
+  h2{font-family:var(--font-display);font-weight:400;font-size:clamp(28px,3.4vw,40px);line-height:1.05;margin:0}
+  /* findings */
+  .findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .finding{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px;box-shadow:var(--shadow)}
+  .finding .k{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .finding .v{font-family:var(--font-display);font-size:30px;line-height:1;margin:8px 0 6px}
+  .finding p{margin:0;font-size:13.5px;color:var(--ink-2)}
+  /* callout */
+  .callout{border-left:3px solid var(--gold);background:var(--gold-soft);border-radius:0 12px 12px 0;padding:16px 20px;font-size:14.5px;color:var(--ink-2);margin:6px 0 26px}
+  .callout b{color:var(--ink)}
+  /* tokens */
+  .swatches{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+  .swatch-group h4{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  .ramp{display:flex;border-radius:10px;overflow:hidden;border:1px solid var(--line);min-height:42px}
+  .ramp span{flex:1;display:flex;align-items:flex-end;justify-content:center;padding:5px 2px;font-family:var(--font-mono);font-size:10px;color:rgba(255,255,255,.92)}
+  .ramp.l span{color:rgba(19,33,58,.78)}
+  .legend{font-size:12.5px;color:var(--muted);margin:8px 0 0}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-top:26px}
+  .spec{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+  .spec h4{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin:0 0 12px}
+  .spec .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-top:1px dashed var(--line);font-size:13.5px}
+  .spec .row:first-of-type{border-top:0}
+  .spec .row b{font-family:var(--font-mono);font-weight:500;color:var(--ink-2)}
+  /* table */
+  .tbl-card{background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);margin-top:8px}
+  .tbl-wrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:720px}
+  thead th{position:sticky;top:0;background:var(--paper);z-index:1;text-align:left;font-family:var(--font-mono);
+    font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:13px 16px;border-bottom:1px solid var(--line-2)}
+  tbody td{padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:linear-gradient(var(--blue-soft),var(--blue-soft))}
+  td .jtbd{color:var(--ink);font-weight:500}
+  td small{display:block;color:var(--muted);font-size:12px;margin-top:3px;font-family:var(--font-mono)}
+  td code{font-family:var(--font-mono);font-size:12.5px;background:var(--blue-soft);color:var(--blue);padding:1px 6px;border-radius:6px}
+  /* status pill */
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:600;
+    letter-spacing:.04em;padding:4px 9px;border-radius:999px;white-space:nowrap}
+  .pill svg{width:11px;height:11px}
+  .pill.ok{background:var(--ok-soft);color:var(--ok)}
+  .pill.partial{background:var(--warn-soft);color:var(--warn)}
+  .pill.gap{background:var(--bad-soft);color:var(--bad)}
+  .priority{display:flex;gap:10px;align-items:flex-start;margin:10px 0;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+  .priority .n{font-family:var(--font-display);font-size:26px;line-height:1;color:var(--gold);min-width:30px}
+  .priority p{margin:0;font-size:14.5px;color:var(--ink-2)}
+  .priority b{color:var(--ink)}
+  footer{padding:50px 0 80px;border-top:1px solid var(--line);font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+  .tag{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Design review · routes &amp; token system</p>
+    <h1>What's built, what's missing, and the <em>tokens</em> behind it.</h1>
+    <p class="lede">A route-by-route audit of the DNS Ops Workbench UI mapped to jobs-to-be-done, alongside the current (de-facto) design-token system and a starter token foundation for the design team.</p>
+    <div class="meta">
+      <span><b>Project</b> dns-ops-workbench</span>
+      <span><b>Base</b> origin/master · <b>c94890e</b></span>
+      <span><b>Generated</b> 2026-08-06</span>
+      <span><b>5</b> page routes · <b>27</b> components · <b>22</b> API route files</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">01 — SNAPSHOT</span></div>
+    <h2>The headline numbers</h2>
+    <div class="findings">
+      <div class="finding"><div class="k">Token system</div><div class="v">None</div><p>Raw Tailwind defaults; <code>tailwind.config.js</code> extend is empty. ~30 lines of custom CSS.</p></div>
+      <div class="finding"><div class="k">Page routes with UI</div><div class="v">5 / 5</div><p>Home, Login, Portfolio, Domain&nbsp;360 — all built.</p></div>
+      <div class="finding"><div class="k">API surfaces, no UI</div><div class="v">9</div><p>Backend exists, no operator surface — needs a design decision.</p></div>
+      <div class="finding"><div class="k">Top gap</div><div class="v">Cases</div><p>Full signal→case→disposition lifecycle with no operator workspace.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">02 — CURRENT TOKEN SYSTEM</span></div>
+    <h2>De-facto, not designed</h2>
+    <div class="callout"><b>No formal token layer exists.</b> The app runs on Tailwind's default palette with <span class="tag">blue</span> as the de-facto primary, <span class="tag">gray</span> neutrals, and a <b>split warning hue</b> (amber for authoritative-UNKNOWN, yellow for no-data) that should be consolidated.</div>
+
+    <div class="swatches">
+      <div class="swatch-group">
+        <h4>Primary · blue (action, focus, links)</h4>
+        <div class="ramp">
+          <span style="background:#eff6ff"></span><span style="background:#dbeafe"></span><span style="background:#bfdbfe"></span>
+          <span style="background:#60a5fa"></span><span style="background:#3b82f6"></span><span style="background:#2563eb"></span><span style="background:#1d4ed8"></span><span style="background:#1e3a8a"></span>
+        </div>
+        <p class="legend">50 → 900. <code>blue-600</code> = default button, <code>blue-700</code> = hover, <code>blue-500</code> = focus ring / icons.</p>
+      </div>
+      <div class="swatch-group">
+        <h4>Neutral · gray (text, borders, surfaces)</h4>
+        <div class="ramp">
+          <span style="background:#f9fafb"></span><span style="background:#f3f4f6"></span><span style="background:#e5e7eb"></span>
+          <span style="background:#d1d5db"></span><span style="background:#9ca3af"></span><span style="background:#6b7280"></span><span style="background:#374151"></span><span style="background:#111827"></span>
+        </div>
+        <p class="legend">Most-used: <code>gray-500</code> (meta), <code>gray-900</code> (headings), <code>gray-200</code> (borders). <code>gray-400</code> = disabled.</p>
+      </div>
+      <div class="swatch-group">
+        <h4>Semantic · success / danger</h4>
+        <div class="ramp">
+          <span style="background:#d1fae5"></span><span style="background:#059669"></span><span style="background:#065f46"></span>
+          <span style="background:#fee2e2"></span><span style="background:#dc2626"></span><span style="background:#991b1b"></span>
+        </div>
+        <p class="legend"><b style="color:#0f766e">Success</b> emerald/green also doubles as a secondary brand accent on the home page. <b style="color:#be123c">Danger</b> red for errors &amp; validation.</p>
+      </div>
+      <div class="swatch-group">
+        <h4>Warning · ⚠ split (consolidate to amber)</h4>
+        <div class="ramp">
+          <span style="background:#fef3c7"></span><span style="background:#fde68a"></span><span style="background:#f59e0b"></span><span style="background:#b45309"></span><span style="background:#78350f"></span>
+          <span style="background:#fefce8"></span><span style="background:#fef08a"></span><span style="background:#ca8a04"></span>
+        </div>
+        <p class="legend"><b style="color:#b45309">Amber</b> (authoritative UNKNOWN) and <b style="color:#a16207">yellow</b> (no-data) are two overlapping warning scales. <code>design-tokens.css</code> merges them into one.</p>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="spec">
+        <h4>Typography</h4>
+        <div class="row"><span>Display / H1</span><b>3xl–4xl · bold/extrabold</b></div>
+        <div class="row"><span>Body</span><b>base · gray-700</b></div>
+        <div class="row"><span>Meta / labels</span><b>sm–xs · uppercase tracking</b></div>
+        <div class="row"><span>Data</span><b>tabular-nums</b></div>
+      </div>
+      <div class="spec">
+        <h4>Shape &amp; depth</h4>
+        <div class="row"><span>Radius (dominant)</span><b>rounded-lg · 8px</b></div>
+        <div class="row"><span>Pills / badges</span><b>rounded-full</b></div>
+        <div class="row"><span>Shadow</span><b>shadow-sm (25 uses)</b></div>
+        <div class="row"><span>Container</span><b>max-w-7xl / 4xl</b></div>
+      </div>
+      <div class="spec">
+        <h4>Interaction &amp; a11y</h4>
+        <div class="row"><span>Focus</span><b>.focus-ring · ring-blue-500</b></div>
+        <div class="row"><span>Tap target</span><b>min-h-10 · 40px</b></div>
+        <div class="row"><span>Disabled</span><b>bg-gray-400</b></div>
+        <div class="row"><span>Motion</span><b>reduced-motion respected</b></div>
+      </div>
+      <div class="spec">
+        <h4>Custom CSS (all of it)</h4>
+        <div class="row"><span>.tab-active / .tab-inactive</span><b>blue vs gray</b></div>
+        <div class="row"><span>.focus-ring</span><b>focus-visible ring</b></div>
+        <div class="row"><span>StatusBadges</span><b>ResultState, ZoneMgmt</b></div>
+        <div class="row"><span>ui/ primitives</span><b>ConfirmDialog, StateDisplay</b></div>
+      </div>
+    </div>
+    <div class="callout" style="border-color:var(--blue);background:var(--blue-soft)"><b>For designers:</b> adopt <code>design-tokens.css</code> as the single source of truth — it encodes these values as CSS custom properties, adds dark-mode hooks, and exposes semantic utilities via <code>tailwind.extend.js</code> (additive, non-breaking).</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">03 — ROUTES × JOBS-TO-BE-DONE</span></div>
+    <h2>Page routes — all built</h2>
+    <p class="lede" style="margin-bottom:18px">Every user-facing route has a working UI. Jobs are written from the operator's goal.</p>
+    <div class="tbl-card"><div class="tbl-wrap"><table>
+      <thead><tr><th style="width:22%">Route</th><th style="width:46%">Job-to-be-done</th><th style="width:12%">Status</th><th>Components</th></tr></thead>
+      <tbody>
+        <tr><td><code>/</code><small>Home</small></td><td><span class="jtbd">Analyze any domain instantly</span><small>and discover the portfolio workspace</small></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>DomainInput, FeatureCards</td></tr>
+        <tr><td><code>/login</code></td><td><span class="jtbd">Sign in securely</span></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>email/password form</td></tr>
+        <tr><td><code>/portfolio</code></td><td><span class="jtbd">Work my portfolio</span><small>search, triage alerts, manage monitored domains, share reports, govern tenant</small></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>PortfolioSearch, SavedFilters, MonitoredDomains, Alerts, SharedReports, FleetReports, TemplateOverrides, AuditLog</td></tr>
+        <tr><td><code>/domain/$</code><small>Overview</small></td><td><span class="jtbd">See a domain's DNS health at a glance</span><small>simulate fixes, keep notes &amp; tags</small></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>StatCards, DomainEvidence, Simulation, Notes, Tags</td></tr>
+        <tr><td><code>/domain/$</code><small>DNS tab</small></td><td><span class="jtbd">Inspect raw / parsed / dig DNS evidence</span></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>DNSViews</td></tr>
+        <tr><td><code>/domain/$</code><small>Mail tab</small></td><td><span class="jtbd">Validate SPF / DMARC / DKIM / MTA-STS / TLS-RPT</span><small>and remediate</small></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>MailFindings, DiscoveredSelectors, MailDiagnostics, RemediationForm</td></tr>
+        <tr><td><code>/domain/$</code><small>History tab</small></td><td><span class="jtbd">Compare snapshots over time</span></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>SnapshotHistory</td></tr>
+        <tr><td><code>/domain/$</code><small>Delegation tab</small></td><td><span class="jtbd">Verify NS delegation + DNSSEC evidence</span></td><td><span class="pill ok"><svg viewBox="0 0 16 16"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Built</span></td><td>Delegation</td></tr>
+      </tbody>
+    </table></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">04 — API SURFACES WITHOUT UI</span></div>
+    <h2>Backend exists — needs a design decision</h2>
+    <p class="lede" style="margin-bottom:18px">These APIs are implemented and tested but have no operator surface. Each is a candidate for the next design cycle.</p>
+    <div class="tbl-card"><div class="tbl-wrap"><table>
+      <thead><tr><th style="width:18%">API</th><th style="width:40%">Job-to-be-done today</th><th style="width:14%">Status</th><th>Designer action</th></tr></thead>
+      <tbody>
+        <tr><td><code>cases</code></td><td><span class="jtbd">Triage signals &amp; cases</span><small>open, disposition, reopen, dedup</small></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td><b>High</b> — design a Cases/Signals workspace</td></tr>
+        <tr><td><code>domain-profile</code> baselines</td><td><span class="jtbd">Accept TLS / SPF baselines</span><small>view setup-evidence lane</small></td><td><span class="pill partial"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.4" fill="currentColor"/></svg>Partial</span></td><td><b>Med</b> — baseline accept/review flow</td></tr>
+        <tr><td><code>ruleset-versions</code></td><td><span class="jtbd">See active ruleset &amp; activate a version</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td><b>Med</b> — admin ruleset manager</td></tr>
+        <tr><td><code>migrate</code> + health</td><td><span class="jtbd">Operate DB schema &amp; health</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td><b>Med</b> — admin/ops console</td></tr>
+        <tr><td><code>signup</code></td><td><span class="jtbd">Self-service sign-up</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td>Decision — enable public signup page?</td></tr>
+        <tr><td><code>provider-templates</code></td><td><span class="jtbd">Inspect / edit provider templates</span></td><td><span class="pill partial"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.4" fill="currentColor"/></svg>Partial</span></td><td>Decision — template editor?</td></tr>
+        <tr><td><code>shadow-comparison</code></td><td><span class="jtbd">Compare provider shadow vs observed DNS</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td>Decision — ship a comparison view?</td></tr>
+        <tr><td><code>legacy-tools</code></td><td><span class="jtbd">Generate DMARC/DKIM deeplinks + stats</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td>Decision — external or add UI?</td></tr>
+        <tr><td><code>mcp</code></td><td><span class="jtbd">Programmatic operator access (10 tools)</span></td><td><span class="pill gap"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>No UI</span></td><td>Docs / explorer only (by design)</td></tr>
+      </tbody>
+    </table></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">05 — PRIORITIES</span></div>
+    <h2>What to design next</h2>
+    <div class="priority"><span class="n">1</span><p><b>Cases / Signals workspace.</b> The full signal→case→disposition→reopen→audit lifecycle is built in the API &amp; DB with no operator UI. Biggest functional gap.</p></div>
+    <div class="priority"><span class="n">2</span><p><b>Consolidate the token system.</b> Adopt <code>design-tokens.css</code>, unify the amber/yellow warning split, define success-vs-brand green, add dark-mode.</p></div>
+    <div class="priority"><span class="n">3</span><p><b>Admin / ops console.</b> Ruleset activation + migrate/schema health (<code>/api/health/detailed</code>) have no surface.</p></div>
+    <div class="priority"><span class="n">4</span><p><b>Baseline-acceptance flow.</b> TLS / SPF operational baselines can be accepted via API, not from the UI.</p></div>
+    <div class="priority"><span class="n">5</span><p><b>Open decisions:</b> signup page, shadow-comparison view, legacy-tools panel, provider-template editor — keep API-only or add UI.</p></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Source: <b>docs/design/</b> — design-tokens.css · tailwind.extend.js · routes-and-tokens-review.html · README.md &nbsp;|&nbsp;
+    Generated 2026-08-06 from origin/master <b>c94890e</b>. Self-contained page; open in any browser.
+  </div>
+</footer>
+
+</body>
+</html>
