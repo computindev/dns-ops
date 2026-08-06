@@ -14,7 +14,7 @@
     "A dedicated Railway project dnsops-live-fixtures and controlled-live-web service is deployed; LIVE-01/02 fixture faults were applied and restored only through the authenticated fail-closed harness",
     "Wrangler OAuth was stopped before authentication because it requested broad unrelated write scopes; child-zone provisioning requires a human Cloudflare-dashboard action and a subsequently scoped child-zone token",
     "The autonomous completion amendment authorizes deterministic Gate 2 and non-live Gate 3 work",
-    "PR #3 is open and ready for review; no merge or deployment is authorized",
+    "PR #3 (Phase 0-1) was merged (94e743a, 2026-07-30) and ported to master via PR #7 (53e7fc6, 2026-08-05); production deployment and provider mutation remain unauthorized",
     "FIX-01 proves a throwing rule becomes persisted partial UNKNOWN coverage rather than a clean result",
     "Historical snapshots without coverage are actionable UNKNOWN",
     "API and UI surfaces no longer treat zero findings as healthy unless coverage is explicitly complete",
@@ -165,5 +165,5 @@
     "Obtain authorized DNS Ops MCP access plus authorized web-session GET /api/portfolio/audit and GET /api/alerts access; run both required redacted preflights, then collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-05T21:08:36Z"
+  "updatedAt": "2026-08-06T01:37:04Z"
 }
