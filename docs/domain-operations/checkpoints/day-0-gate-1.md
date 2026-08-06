@@ -5,6 +5,8 @@
 
 Gate 1 was accepted by the founder on 2026-07-28. PR #3 remains open and draft; merge and deployment remain unauthorized. The sequencing override in [`../amendments/2026-07-28-autonomous-completion-override.md`](../amendments/2026-07-28-autonomous-completion-override.md) authorizes independent Gate 2 and non-live Gate 3 work while preserving the external-input block on live mutations and final acceptance.
 
+> **Reconciliation (2026-08-06):** PR #3 was subsequently merged (`94e743a`, 2026-07-30) and the validated Phase 0–1 implementation was ported to `master` via PR #7 (`53e7fc6`, 2026-08-05). The tables and baseline below remain the historical Gate-1 record. Production deployment and provider mutation remain unauthorized; final Gate 3/4 acceptance remains blocked on the Day 0 / Issue #4 founder inputs.
+
 ## Git authority
 
 | Item | Verified value |
