@@ -6,6 +6,7 @@
  */
 
 import type React from 'react';
+import { Button } from './Button.js';
 
 // =============================================================================
 // LOADING STATE
@@ -55,7 +56,7 @@ export function LoadingState({
     >
       <svg
         aria-hidden="true"
-        className={`${spinnerSizes[size]} text-blue-500 motion-safe:animate-spin`}
+        className={`${spinnerSizes[size]} text-brand motion-safe:animate-spin`}
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -74,7 +75,7 @@ export function LoadingState({
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
         />
       </svg>
-      <p className={`mt-3 text-gray-500 motion-safe:animate-pulse ${textSizes[size]}`}>{message}</p>
+      <p className={`mt-3 text-muted motion-safe:animate-pulse ${textSizes[size]}`}>{message}</p>
     </output>
   );
 }
@@ -124,7 +125,7 @@ export function ErrorState({
       className={`flex flex-col items-center justify-center text-center ${sizeClasses[size]} ${className}`}
       role="alert"
     >
-      <div className={`${iconSizes[size]} text-red-400 mb-3`}>
+      <div className={`${iconSizes[size]} text-danger mb-3`}>
         <svg
           aria-hidden="true"
           fill="none"
@@ -139,16 +140,12 @@ export function ErrorState({
           />
         </svg>
       </div>
-      <h4 className="text-lg font-medium text-gray-900">{title}</h4>
-      <p className="mt-1 text-sm text-gray-500 max-w-md">{message}</p>
+      <h4 className="text-lg font-medium text-ink">{title}</h4>
+      <p className="mt-1 max-w-md text-sm text-muted">{message}</p>
       {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-4 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        >
+        <Button className="mt-4" onClick={onRetry} variant="primary">
           Try again
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -261,7 +258,7 @@ export function EmptyState({
     <div
       className={`flex flex-col items-center justify-center text-center ${sizeClasses[size]} ${className}`}
     >
-      <div className={`${iconSizes[size]} text-gray-300 mb-4`}>
+      <div className={`${iconSizes[size]} text-faint mb-4`}>
         {customIcon || (
           <svg
             aria-hidden="true"
@@ -274,16 +271,12 @@ export function EmptyState({
           </svg>
         )}
       </div>
-      <h4 className="text-lg font-medium text-gray-900">{title}</h4>
-      {description && <p className="mt-1 text-sm text-gray-500 max-w-md">{description}</p>}
+      <h4 className="text-lg font-medium text-ink">{title}</h4>
+      {description && <p className="mt-1 max-w-md text-sm text-muted">{description}</p>}
       {action && (
-        <button
-          type="button"
-          onClick={action.onClick}
-          className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
-        >
+        <Button className="mt-4" onClick={action.onClick} variant="quiet">
           {action.label}
-        </button>
+        </Button>
       )}
     </div>
   );

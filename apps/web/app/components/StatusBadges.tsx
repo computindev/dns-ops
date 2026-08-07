@@ -1,90 +1,58 @@
 import type { Confidence, ResultState, Severity, ZoneManagement } from '@dns-ops/contracts';
 
+type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'unknown';
+
 interface BadgeProps {
   children: React.ReactNode;
-  color: 'gray' | 'green' | 'yellow' | 'red' | 'blue' | 'purple' | 'orange';
+  tone: BadgeTone;
 }
 
-function Badge({ children, color }: BadgeProps) {
-  const colorClasses = {
-    gray: 'bg-gray-100 text-gray-800',
-    green: 'bg-green-100 text-green-800',
-    yellow: 'bg-yellow-100 text-yellow-800',
-    red: 'bg-red-100 text-red-800',
-    blue: 'bg-blue-100 text-blue-800',
-    purple: 'bg-purple-100 text-purple-800',
-    orange: 'bg-orange-100 text-orange-800',
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClasses[color]}`}
-    >
-      {children}
-    </span>
-  );
+function Badge({ children, tone }: BadgeProps) {
+  return <span className={`ds-badge ds-badge--${tone}`}>{children}</span>;
 }
 
-interface ZoneManagementBadgeProps {
-  type: ZoneManagement;
-}
-
-export function ZoneManagementBadge({ type }: ZoneManagementBadgeProps) {
+export function ZoneManagementBadge({ type }: { type: ZoneManagement }) {
   const config = {
-    managed: { color: 'green' as const, label: 'Managed Zone' },
-    unmanaged: { color: 'yellow' as const, label: 'Unmanaged (Targeted)' },
-    unknown: { color: 'gray' as const, label: 'Unknown' },
+    managed: { tone: 'success' as const, label: 'Managed Zone' },
+    unmanaged: { tone: 'warning' as const, label: 'Unmanaged (Targeted)' },
+    unknown: { tone: 'unknown' as const, label: 'Unknown' },
   };
+  const { tone, label } = config[type];
 
-  const { color, label } = config[type];
-
-  return <Badge color={color}>{label}</Badge>;
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
-interface ResultStateBadgeProps {
-  state: ResultState;
-}
-
-export function ResultStateBadge({ state }: ResultStateBadgeProps) {
+export function ResultStateBadge({ state }: { state: ResultState }) {
   const config = {
-    complete: { color: 'green' as const, label: 'Complete' },
-    partial: { color: 'yellow' as const, label: 'Partial' },
-    failed: { color: 'red' as const, label: 'Failed' },
+    complete: { tone: 'success' as const, label: 'Complete' },
+    partial: { tone: 'unknown' as const, label: 'Partial' },
+    failed: { tone: 'danger' as const, label: 'Failed' },
   };
+  const { tone, label } = config[state];
 
-  const { color, label } = config[state];
-
-  return <Badge color={color}>{label}</Badge>;
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
-interface SeverityBadgeProps {
-  severity: Severity;
+export function SeverityBadge({ severity }: { severity: Severity }) {
+  const tones = {
+    critical: 'danger',
+    high: 'danger',
+    medium: 'warning',
+    low: 'info',
+    info: 'neutral',
+  } as const;
+
+  return <Badge tone={tones[severity]}>{severity}</Badge>;
 }
 
-export function SeverityBadge({ severity }: SeverityBadgeProps) {
-  const config = {
-    critical: { color: 'red' as const },
-    high: { color: 'orange' as const },
-    medium: { color: 'yellow' as const },
-    low: { color: 'blue' as const },
-    info: { color: 'gray' as const },
-  };
+export function ConfidenceBadge({ level }: { level: Confidence }) {
+  const tones = {
+    certain: 'success',
+    high: 'info',
+    medium: 'warning',
+    low: 'unknown',
+    heuristic: 'unknown',
+  } as const;
 
-  return <Badge color={config[severity].color}>{severity}</Badge>;
-}
-
-interface ConfidenceBadgeProps {
-  level: Confidence;
-}
-
-export function ConfidenceBadge({ level }: ConfidenceBadgeProps) {
-  const config = {
-    certain: { color: 'green' as const },
-    high: { color: 'blue' as const },
-    medium: { color: 'yellow' as const },
-    low: { color: 'gray' as const },
-    heuristic: { color: 'purple' as const },
-  };
-
-  return <Badge color={config[level].color}>{level}</Badge>;
+  return <Badge tone={tones[level]}>{level}</Badge>;
 }

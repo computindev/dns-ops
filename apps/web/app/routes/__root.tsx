@@ -57,7 +57,9 @@ function AuthNav() {
       return;
     }
     void clearAuthenticatedQueryCache(queryClient);
-    fetch('/api/auth/me', { credentials: 'include' })
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    fetch('/api/auth/me', { credentials: 'include', signal: controller.signal })
       .then((res) => res.json())
       .then((raw) => {
         const data = raw as Record<string, unknown>;
@@ -79,15 +81,28 @@ function AuthNav() {
           setUserEmail(null);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => window.clearTimeout(timeout));
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, [location.pathname]);
 
   const handleLogout = async () => {
     isLoggingOut.current = true;
-    await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeout);
+    }
     await clearAuthenticatedQueryCache(queryClient);
     notifyAuthenticationChange();
     flushSync(() => {
@@ -100,10 +115,7 @@ function AuthNav() {
   // During SSR and hydration, render a stable placeholder
   if (!mounted) {
     return (
-      <Link
-        to="/login"
-        className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-      >
+      <Link to="/login" className="ds-nav-link">
         Login
       </Link>
     );
@@ -112,11 +124,11 @@ function AuthNav() {
   if (isAuthenticated) {
     return (
       <>
-        <span className="text-sm text-gray-500">{userEmail}</span>
+        <span className="text-sm text-muted">{userEmail}</span>
         <button
           type="button"
           onClick={handleLogout}
-          className="focus-ring rounded text-gray-600 hover:text-gray-900 text-sm"
+          className="ds-nav-link cursor-pointer border-0 bg-transparent"
         >
           Logout
         </button>
@@ -125,10 +137,7 @@ function AuthNav() {
   }
 
   return (
-    <Link
-      to="/login"
-      className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-    >
+    <Link to="/login" className="ds-nav-link">
       Login
     </Link>
   );
@@ -145,24 +154,18 @@ function RootComponent() {
           <HeadContent />
         </head>
         <body>
-          <div className="min-h-screen bg-gray-50">
-            <header className="bg-white border-b border-gray-200">
+          <div className="ds-app-shell">
+            <header className="ds-app-header">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16 items-center">
-                  <Link to="/" className="focus-ring text-xl font-bold text-gray-900 rounded">
+                  <Link to="/" className="ds-wordmark">
                     DNS Ops Workbench
                   </Link>
                   <nav className="flex gap-6 items-center">
-                    <Link
-                      to="/"
-                      className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-                    >
+                    <Link to="/" className="ds-nav-link">
                       Home
                     </Link>
-                    <Link
-                      to="/portfolio"
-                      className="focus-ring rounded text-gray-600 hover:text-gray-900 [&.active]:text-blue-600 [&.active]:font-medium"
-                    >
+                    <Link to="/portfolio" className="ds-nav-link">
                       Portfolio
                     </Link>
                     <AuthNav />
