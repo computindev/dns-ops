@@ -146,22 +146,21 @@ describe('Job Queue Infrastructure', () => {
       expect(uniqueNames.size).toBe(names.length);
     });
 
-    it('should construct a real BullMQ Queue for every QUEUE_NAMES value', async () => {
+    it('should reject colon-containing queue names at BullMQ construction without Redis I/O', async () => {
+      // importActual uses the real BullMQ QueueBase name check (throws before Connection).
+      // This is the RED contract for RT-2: ':' is illegal in queue names.
       const { Queue: RealQueue } = await vi.importActual<typeof import('bullmq')>('bullmq');
-      const constructed: Array<InstanceType<typeof RealQueue>> = [];
 
-      try {
-        for (const name of Object.values(QUEUE_NAMES)) {
-          // Name validation runs in the constructor before any Redis I/O.
-          // Colon names throw: "Queue name cannot contain :"
-          const queue = new RealQueue(name, {
-            connection: { host: '127.0.0.1', port: 6379, maxRetriesPerRequest: null },
-          });
-          constructed.push(queue);
-          expect(queue.name).toBe(name);
-        }
-      } finally {
-        await Promise.all(constructed.map((q) => q.close()));
+      expect(() => {
+        // Connection opts are never used: name validation throws first.
+        new RealQueue('dns-ops:collection', {
+          connection: { host: '127.0.0.1', port: 1, maxRetriesPerRequest: null },
+        });
+      }).toThrow(/Queue name cannot contain :/);
+
+      // Sanity: every production queue name would pass the same check.
+      for (const name of Object.values(QUEUE_NAMES)) {
+        expect(name.includes(':')).toBe(false);
       }
     });
   });
@@ -565,20 +564,27 @@ describe('Job Queue Infrastructure', () => {
 });
 
 // =============================================================================
-// REAL REDIS INTEGRATION (skipped unless REDIS_URL is set)
+// REAL REDIS INTEGRATION (opt-in; never runs from REDIS_URL alone)
 // =============================================================================
 
 /**
  * RT-2: Prove real BullMQ Queue + Worker can process a job end-to-end.
  * Uses importActual so BullMQ/ioredis are not the suite mocks.
  *
- *   REDIS_URL=redis://127.0.0.1:6379 bunx vitest run apps/collector/src/jobs/queue.test.ts
+ * Gated on BOTH flags (same convention as scheduler.test.ts):
+ *   RUN_REDIS_INTEGRATION_TESTS=1
+ *   REDIS_URL=<reachable redis>
+ *
+ * Example:
+ *   RUN_REDIS_INTEGRATION_TESTS=1 REDIS_URL=redis://127.0.0.1:56379 \
+ *     bunx vitest run apps/collector/src/jobs/queue.test.ts
  */
-describe('Real Redis Queue + Worker', () => {
+describe('Real Redis Queue + Worker (Integration)', () => {
   const redisUrl = process.env.REDIS_URL;
-  const describeIfRedis = redisUrl ? describe : describe.skip;
+  const runRedisIntegration = process.env.RUN_REDIS_INTEGRATION_TESTS === '1' && Boolean(redisUrl);
+  const describeIfRedis = runRedisIntegration ? describe : describe.skip;
 
-  describeIfRedis('when REDIS_URL is supplied', () => {
+  describeIfRedis('when RUN_REDIS_INTEGRATION_TESTS=1 and REDIS_URL are set', () => {
     it('processes a job on an isolated hyphenated queue', async () => {
       const { Queue: RealQueue, Worker: RealWorker } =
         await vi.importActual<typeof import('bullmq')>('bullmq');
