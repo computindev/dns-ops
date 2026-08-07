@@ -3,8 +3,6 @@ import { createPostgresAdapter } from '@dns-ops/db';
 import { createLogger } from '@dns-ops/logging';
 import { createMiddleware } from 'hono/factory';
 import { getEnvConfig } from '../config/env.js';
-import { runMigrations } from '../lib/migrate.js';
-import { repairSchema } from '../lib/schema-repair.js';
 import type { Env } from '../types.js';
 
 const logger = createLogger({ service: 'dns-ops-web', version: '1.0.0', minLevel: 'info' });
@@ -12,7 +10,6 @@ const logger = createLogger({ service: 'dns-ops-web', version: '1.0.0', minLevel
 let pgAdapter: IDatabaseAdapter | null = null;
 let currentConnectionString: string | null = null;
 let hasLoggedDbWarning = false;
-let hasRunMigrations = false;
 
 function isCloudflareWorkers(env: Env['Bindings']): boolean {
   return typeof env?.ASSETS !== 'undefined' || !!env?.HYPERDRIVE;
@@ -26,6 +23,13 @@ function getSharedPgAdapter(connectionString: string): IDatabaseAdapter {
   return pgAdapter;
 }
 
+/**
+ * Attach a shared Postgres adapter when DATABASE_URL is configured.
+ *
+ * RT-4: this middleware is deliberately not a schema writer. Release migrations
+ * (scripts/run-migrations.mjs via Railway releaseCommand) own DDL. A first web
+ * request must not run migrations or repairSchema.
+ */
 export const dbMiddleware = createMiddleware<Env>(async (c, next) => {
   const { databaseUrl, isDevelopment } = getEnvConfig(c.env);
 
@@ -69,25 +73,7 @@ export const dbMiddleware = createMiddleware<Env>(async (c, next) => {
   }
 
   if (databaseUrl) {
-    const db = getSharedPgAdapter(databaseUrl);
-    c.set('db', db);
-
-    // Run migrations and schema repair in background - don't block startup
-    if (!hasRunMigrations) {
-      hasRunMigrations = true;
-      (async () => {
-        try {
-          await runMigrations(db);
-        } catch (err: unknown) {
-          logger.error('Background migration failed:', err);
-        }
-        try {
-          await repairSchema(db);
-        } catch (err: unknown) {
-          logger.error('Background schema repair failed:', err);
-        }
-      })();
-    }
+    c.set('db', getSharedPgAdapter(databaseUrl));
   }
 
   return await next();

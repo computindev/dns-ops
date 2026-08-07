@@ -1,8 +1,13 @@
 /**
- * Database Migration Runner
+ * Database Migration Runner (manual / admin tooling)
  *
- * Applies SQL migrations on startup. Startup migrations are defense-in-depth;
- * Railway releaseCommand runs the same migrations before traffic reaches the app.
+ * RT-4: request-path middleware no longer invokes this. The release runner
+ * (scripts/run-migrations.mjs via Railway releaseCommand) is the sole schema
+ * writer for deploys. This module remains for explicit operator-triggered use
+ * and tracks status via getMigrationStatus() when called.
+ *
+ * Note: this runner records applied files in __drizzle_migrations; the release
+ * runner uses _migrations_applied. They are independent ledgers.
  */
 
 import { access, readdir, readFile } from 'node:fs/promises';
