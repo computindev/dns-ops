@@ -39,23 +39,33 @@ function destroyClientSocket(client: pg.Client): void {
   }
 }
 
-async function forceEndClient(client: pg.Client): Promise<void> {
-  destroyClientSocket(client);
+/** Graceful client teardown; never let end() stall the readiness caller. */
+async function endClientQuietly(client: pg.Client): Promise<void> {
   await Promise.race([
     client.end().catch(() => undefined),
-    // Never let teardown stall the readiness caller.
     new Promise<void>((resolve) => {
       setTimeout(resolve, 50);
     }),
   ]);
 }
 
+/** Hard-close path for timed-out probes (socket destroy + bounded end). */
+async function forceEndClient(client: pg.Client): Promise<void> {
+  destroyClientSocket(client);
+  await endClientQuietly(client);
+}
+
 /**
  * Bounded readiness probe via a short-lived `pg.Client`.
  *
- * Uses connection/query timeouts and always tears down the client (including
- * destroying the socket on timeout) so neither the probe promise nor an
- * in-flight connect is left hanging indefinitely.
+ * Uses the same TLS policy as {@link createPostgresAdapter} (`strictDefault:
+ * true`) so a self-signed/invalid cert cannot pass readiness while the app
+ * pool fails. SSL mode still comes from {@link parseSSLConfig} (sslmode /
+ * DB_TLS_REJECT_UNAUTHORIZED / env defaults) — policy is not duplicated here.
+ *
+ * Uses connection/query timeouts and always tears down the client. Socket
+ * destruction is reserved for the hard-timeout path so a successful ping is
+ * not followed by an abrupt destroy.
  */
 export async function pingDatabaseForReadiness(
   connectionString: string,
@@ -66,14 +76,16 @@ export async function pingDatabaseForReadiness(
     throw new Error('timeoutMs must be a positive finite number');
   }
 
+  // Match createPostgresAdapter TLS strictness (not the lenient web createClient default).
   const client = new pg.Client({
     connectionString,
     connectionTimeoutMillis: timeoutMs,
     query_timeout: timeoutMs,
-    ssl: parseSSLConfig(connectionString),
+    ssl: parseSSLConfig(connectionString, { strictDefault: true }),
   });
 
   let settled = false;
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -81,6 +93,7 @@ export async function pingDatabaseForReadiness(
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        timedOut = true;
         destroyClientSocket(client);
         reject(new Error(`Database readiness probe timed out after ${timeoutMs}ms`));
       }, timeoutMs);
@@ -101,6 +114,10 @@ export async function pingDatabaseForReadiness(
     });
   } finally {
     if (timer) clearTimeout(timer);
-    await forceEndClient(client);
+    if (timedOut) {
+      await forceEndClient(client);
+    } else {
+      await endClientQuietly(client);
+    }
   }
 }

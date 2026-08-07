@@ -144,6 +144,51 @@ describe('GET /api/health honest readiness (RT-3, no Docker)', () => {
     expect(body.warning).toBeTruthy();
     assertNoInternalLeak(body);
   });
+
+  it('resolves connection URL via getEnvConfig HYPERDRIVE_URL bindings (not process.env alone)', async () => {
+    // Neither process env var is set — only request bindings supply the URL.
+    delete process.env.DATABASE_URL;
+    delete process.env.HYPERDRIVE_URL;
+
+    const unreachable = createPostgresAdapter(REFUSED_DB_URL);
+    const app = createHealthApp(unreachable);
+
+    // Without bindings, missing URL short-circuits to degraded (same status),
+    // but with HYPERDRIVE_URL bindings getEnvConfig must surface the URL and
+    // the handler must attempt a real probe against the refused port.
+    const res = await app.request('/api/health', undefined, {
+      HYPERDRIVE_URL: REFUSED_DB_URL,
+    });
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as HealthBody;
+    expect(body.status).toBe('degraded');
+    expect(body.service).toBe('dns-ops-web');
+    expect(body.warning).toMatch(/Database connection not available/i);
+    assertNoInternalLeak(body);
+
+    // Control: same app with no bindings and no process env must also be 503
+    // (missing URL) — establishes that bindings path is exercised above via
+    // refused-port probe rather than only adapter presence.
+    const missingUrlRes = await app.request('/api/health');
+    expect(missingUrlRes.status).toBe(503);
+  });
+
+  it('resolves process.env.HYPERDRIVE_URL when DATABASE_URL is unset', async () => {
+    delete process.env.DATABASE_URL;
+    process.env.HYPERDRIVE_URL = REFUSED_DB_URL;
+
+    const unreachable = createPostgresAdapter(REFUSED_DB_URL);
+    const app = createHealthApp(unreachable);
+
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(503);
+
+    const body = (await res.json()) as HealthBody;
+    expect(body.status).toBe('degraded');
+    expect(body.warning).toBeTruthy();
+    assertNoInternalLeak(body);
+  });
 });
 
 /**

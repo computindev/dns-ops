@@ -8,6 +8,7 @@ import {
 } from '@dns-ops/db';
 import { type Domain, domains } from '@dns-ops/db/schema';
 import { Hono } from 'hono';
+import { getEnvConfig } from '../config/env.js';
 import { collectorCircuit, proxyToCollector } from '../lib/collector-proxy.js';
 import {
   requireAdminAccess,
@@ -87,8 +88,10 @@ apiRoutes.get('/health', async (c) => {
   };
 
   // Adapter presence alone is a false-green; require a configured URL and a
-  // bounded SELECT 1. Public body never includes driver/host/user details.
-  const databaseUrl = process.env.DATABASE_URL;
+  // bounded SELECT 1. Resolve URL the same way db middleware does (bindings +
+  // HYPERDRIVE_URL fallback), not process.env.DATABASE_URL alone.
+  // Public body never includes driver/host/user details.
+  const { databaseUrl } = getEnvConfig(c.env);
   if (!db || !databaseUrl) {
     return c.json(degradedBody, 503);
   }

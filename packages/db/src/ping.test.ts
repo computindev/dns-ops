@@ -6,7 +6,9 @@
  */
 
 import { type AddressInfo, createServer, type Server } from 'node:net';
+import pg from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parseSSLConfig } from './client.js';
 import type { IDatabaseAdapter } from './database/simple-adapter.js';
 import { DEFAULT_DB_READINESS_TIMEOUT_MS, pingDatabase, pingDatabaseForReadiness } from './ping.js';
 
@@ -95,5 +97,96 @@ describe('pingDatabaseForReadiness (bounded)', () => {
     // Must settle near the bound — not hang for tens of seconds.
     expect(elapsed).toBeGreaterThanOrEqual(timeoutMs - 50);
     expect(elapsed).toBeLessThan(timeoutMs + 1_500);
+  });
+});
+
+describe('pingDatabaseForReadiness TLS strictness (matches createPostgresAdapter)', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  function mockClientCapturingConfig(): {
+    captured: pg.ClientConfig[];
+  } {
+    const captured: pg.ClientConfig[] = [];
+    vi.spyOn(pg, 'Client').mockImplementation(function MockClient(
+      this: {
+        connect: ReturnType<typeof vi.fn>;
+        query: ReturnType<typeof vi.fn>;
+        end: ReturnType<typeof vi.fn>;
+      },
+      config: string | pg.ClientConfig | undefined
+    ) {
+      captured.push(typeof config === 'string' || config === undefined ? {} : config);
+      this.connect = vi.fn().mockRejectedValue(new Error('connect short-circuit'));
+      this.query = vi.fn();
+      this.end = vi.fn().mockResolvedValue(undefined);
+      return this;
+    } as unknown as typeof pg.Client);
+    return { captured };
+  }
+
+  it('uses parseSSLConfig strictDefault=true in production (not the lenient default)', async () => {
+    process.env = { ...originalEnv, NODE_ENV: 'production' };
+    delete process.env.DB_TLS_REJECT_UNAUTHORIZED;
+
+    const url = 'postgresql://db.example:5432/app';
+    const lenient = parseSSLConfig(url);
+    const strict = parseSSLConfig(url, { strictDefault: true });
+    // Preconditions: production defaults must diverge without an override.
+    expect(lenient).toEqual({ rejectUnauthorized: false });
+    expect(strict).toEqual({ rejectUnauthorized: true });
+
+    const { captured } = mockClientCapturingConfig();
+    await expect(pingDatabaseForReadiness(url, { timeoutMs: 100 })).rejects.toThrow(
+      /connect short-circuit/
+    );
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toEqual(
+      expect.objectContaining({
+        connectionString: url,
+        ssl: strict,
+      })
+    );
+    expect(captured[0]?.ssl).not.toEqual(lenient);
+  });
+
+  it('still honors sslmode from the connection string (no duplicated policy)', async () => {
+    process.env = { ...originalEnv, NODE_ENV: 'production' };
+    delete process.env.DB_TLS_REJECT_UNAUTHORIZED;
+
+    const url = 'postgresql://db.example:5432/app?sslmode=require';
+    const expected = parseSSLConfig(url, { strictDefault: true });
+    expect(expected).toEqual({ rejectUnauthorized: false });
+
+    const { captured } = mockClientCapturingConfig();
+    await expect(pingDatabaseForReadiness(url, { timeoutMs: 100 })).rejects.toThrow(
+      /connect short-circuit/
+    );
+
+    expect(captured[0]?.ssl).toEqual(expected);
+  });
+
+  it('still honors DB_TLS_REJECT_UNAUTHORIZED=false over strictDefault', async () => {
+    process.env = {
+      ...originalEnv,
+      NODE_ENV: 'production',
+      DB_TLS_REJECT_UNAUTHORIZED: 'false',
+    };
+
+    const url = 'postgresql://db.example:5432/app';
+    const expected = parseSSLConfig(url, { strictDefault: true });
+    expect(expected).toEqual({ rejectUnauthorized: false });
+
+    const { captured } = mockClientCapturingConfig();
+    await expect(pingDatabaseForReadiness(url, { timeoutMs: 100 })).rejects.toThrow(
+      /connect short-circuit/
+    );
+
+    expect(captured[0]?.ssl).toEqual(expected);
   });
 });
