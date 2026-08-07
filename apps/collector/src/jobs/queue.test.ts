@@ -123,20 +123,46 @@ describe('Job Queue Infrastructure', () => {
   });
 
   // ===========================================================================
-  // QUEUE NAMES
+  // QUEUE NAMES / BULLMQ 5.71 NAME POLICY
   // ===========================================================================
 
   describe('Queue Names', () => {
-    it('should have correct queue name constants', () => {
-      expect(QUEUE_NAMES.COLLECTION).toBe('dns-ops:collection');
-      expect(QUEUE_NAMES.MONITORING).toBe('dns-ops:monitoring');
-      expect(QUEUE_NAMES.REPORTS).toBe('dns-ops:reports');
+    it('should use hyphenated queue names that BullMQ 5.71 accepts', () => {
+      // BullMQ 5.71 rejects ':' in queue names (QueueBase constructor).
+      expect(QUEUE_NAMES.COLLECTION).toBe('dns-ops-collection');
+      expect(QUEUE_NAMES.MONITORING).toBe('dns-ops-monitoring');
+      expect(QUEUE_NAMES.REPORTS).toBe('dns-ops-reports');
+    });
+
+    it('should not contain colons in any queue name', () => {
+      for (const name of Object.values(QUEUE_NAMES)) {
+        expect(name.includes(':')).toBe(false);
+      }
     });
 
     it('should have unique queue names', () => {
       const names = Object.values(QUEUE_NAMES);
       const uniqueNames = new Set(names);
       expect(uniqueNames.size).toBe(names.length);
+    });
+
+    it('should construct a real BullMQ Queue for every QUEUE_NAMES value', async () => {
+      const { Queue: RealQueue } = await vi.importActual<typeof import('bullmq')>('bullmq');
+      const constructed: Array<InstanceType<typeof RealQueue>> = [];
+
+      try {
+        for (const name of Object.values(QUEUE_NAMES)) {
+          // Name validation runs in the constructor before any Redis I/O.
+          // Colon names throw: "Queue name cannot contain :"
+          const queue = new RealQueue(name, {
+            connection: { host: '127.0.0.1', port: 6379, maxRetriesPerRequest: null },
+          });
+          constructed.push(queue);
+          expect(queue.name).toBe(name);
+        }
+      } finally {
+        await Promise.all(constructed.map((q) => q.close()));
+      }
     });
   });
 
@@ -539,33 +565,78 @@ describe('Job Queue Infrastructure', () => {
 });
 
 // =============================================================================
-// INTEGRATION TESTS (Redis required) - PR-07.3
+// REAL REDIS INTEGRATION (skipped unless REDIS_URL is set)
 // =============================================================================
 
 /**
- * PR-07.3: Job Retry and Failure Tracking Tests
+ * RT-2: Prove real BullMQ Queue + Worker can process a job end-to-end.
+ * Uses importActual so BullMQ/ioredis are not the suite mocks.
  *
- * These tests verify that failed jobs are retried correctly and that
- * error tracking captures the right context.
- *
- * They require a real Redis connection and will be skipped if REDIS_URL is not set.
- *
- * To run these tests:
- *   REDIS_URL=redis://localhost:6379 bun test queue.test.ts
+ *   REDIS_URL=redis://127.0.0.1:6379 bunx vitest run apps/collector/src/jobs/queue.test.ts
  */
-/**
- * Redis Integration Tests — Deferred
- *
- * These tests require a live Redis connection and are NOT run in the
- * standard test suite. They are deferred, not stubs — the queue
- * infrastructure is optional (see docs/REDIS_FALLBACK.md).
- *
- * To run: RUN_REDIS_INTEGRATION_TESTS=1 REDIS_URL=redis://localhost:6379 bun test queue.test.ts
- *
- * Covered when Redis is available:
- * - Job retry (3x with exponential backoff)
- * - Queue health counts (waiting/active/completed/failed)
- * - Error tracking integration (trackJobError context)
- * - Worker graceful shutdown (stopWorkers/closeQueues)
- * - Signal handling (SIGTERM/SIGINT)
- */
+describe('Real Redis Queue + Worker', () => {
+  const redisUrl = process.env.REDIS_URL;
+  const describeIfRedis = redisUrl ? describe : describe.skip;
+
+  describeIfRedis('when REDIS_URL is supplied', () => {
+    it('processes a job on an isolated hyphenated queue', async () => {
+      const { Queue: RealQueue, Worker: RealWorker } =
+        await vi.importActual<typeof import('bullmq')>('bullmq');
+      const { Redis: RealRedis } = await vi.importActual<typeof import('ioredis')>('ioredis');
+
+      const queueName = `dns-ops-rt2-proof-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      expect(queueName.includes(':')).toBe(false);
+
+      const queueConnection = new RealRedis(redisUrl as string, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      });
+      const workerConnection = new RealRedis(redisUrl as string, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      });
+
+      const queue = new RealQueue<{ ping: string }>(queueName, {
+        connection: queueConnection,
+      });
+
+      let worker: InstanceType<typeof RealWorker> | undefined;
+
+      try {
+        const processed = new Promise<{ ping: string }>((resolve, reject) => {
+          worker = new RealWorker<{ ping: string }>(
+            queueName,
+            async (job) => {
+              resolve(job.data);
+              return { ok: true };
+            },
+            { connection: workerConnection, concurrency: 1 }
+          );
+          worker.on('failed', (job, err) => {
+            reject(err ?? new Error(`job failed: ${job?.id}`));
+          });
+        });
+
+        // Preserve job-name style used by scheduleCollectionJob (colons OK in job names).
+        await queue.add('collect:rt2-proof.example', { ping: 'rt2-ok' });
+
+        const data = await Promise.race([
+          processed,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timed out waiting for worker')), 10_000)
+          ),
+        ]);
+
+        expect(data).toEqual({ ping: 'rt2-ok' });
+      } finally {
+        if (worker) {
+          await worker.close();
+        }
+        await queue.obliterate({ force: true }).catch(() => undefined);
+        await queue.close();
+        queueConnection.disconnect();
+        workerConnection.disconnect();
+      }
+    }, 15_000);
+  });
+});

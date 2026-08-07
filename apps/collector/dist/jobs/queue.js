@@ -15,10 +15,11 @@ const logger = getCollectorLogger();
 // =============================================================================
 // Queue Names
 // =============================================================================
+// BullMQ 5.71 rejects ':' in queue names (QueueBase). Use hyphens; job names may still use ':'.
 export const QUEUE_NAMES = {
-    COLLECTION: 'dns-ops:collection',
-    MONITORING: 'dns-ops:monitoring',
-    REPORTS: 'dns-ops:reports',
+    COLLECTION: 'dns-ops-collection',
+    MONITORING: 'dns-ops-monitoring',
+    REPORTS: 'dns-ops-reports',
 };
 // =============================================================================
 // Queue Factory
