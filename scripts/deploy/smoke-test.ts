@@ -39,7 +39,11 @@ async function fetchWithTimeout(
 async function runTest(
   name: string,
   service: 'web' | 'collector',
-  testFn: () => Promise<{ passed: boolean; response?: { status: number; body?: unknown }; error?: string }>
+  testFn: () => Promise<{
+    passed: boolean;
+    response?: { status: number; body?: unknown };
+    error?: string;
+  }>
 ): Promise<TestResult> {
   const start = Date.now();
   try {
@@ -77,16 +81,28 @@ async function testWebHomepage(): Promise<TestResult> {
   });
 }
 
-async function testCollectorHealth(path: '/health' | '/healthz' | '/readyz', expectedStatus: number) {
+async function testCollectorHealth(
+  path: '/health' | '/healthz' | '/readyz',
+  expectedStatus: number
+) {
   return runTest(`Collector ${path}`, 'collector', async () => {
     const response = await fetchWithTimeout(`${COLLECTOR_URL}${path}`);
-    const body = await response.json();
-    const passed = response.status === expectedStatus || (path === '/readyz' && response.status === 503);
+    const body = await response.json().catch(() => undefined);
+    // /readyz is readiness: dependency failure (503) is a smoke failure, not a pass.
+    const passed = response.status === expectedStatus;
+    let error: string | undefined;
+    if (!passed) {
+      if (path === '/readyz' && response.status === 503) {
+        error = 'Collector not ready (dependency check failed)';
+      } else {
+        error = `Expected HTTP ${expectedStatus}, got ${response.status}`;
+      }
+    }
 
     return {
       passed,
       response: { status: response.status, body },
-      error: path === '/readyz' && response.status === 503 ? 'Service not ready (check dependencies)' : undefined,
+      error,
     };
   });
 }
@@ -134,7 +150,9 @@ function printResults(results: TestResult[]): void {
       if (verbose && test.response) {
         console.log(`     Status: ${test.response.status}`);
         if (test.response.body) {
-          console.log(`     Body: ${JSON.stringify(test.response.body, null, 2).split('\n').join('\n     ')}`);
+          console.log(
+            `     Body: ${JSON.stringify(test.response.body, null, 2).split('\n').join('\n     ')}`
+          );
         }
       }
     }

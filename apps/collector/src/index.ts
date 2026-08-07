@@ -40,17 +40,28 @@ const collectorLogger = createLogger({
 /** Bound queue/redis readiness so a hung Redis client cannot stall the probe forever. */
 const QUEUE_HEALTH_TIMEOUT_MS = 2_000;
 
+/** Public-safe dependency messages — never echo driver/host/user details. */
+const PUBLIC_QUEUE_NOT_READY_MESSAGE = 'Queue connection unavailable';
+const PUBLIC_WORKERS_NOT_READY_MESSAGE = 'Workers not running';
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let settled = false;
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       reject(new Error(`${label} timed out after ${ms}ms`));
     }, ms);
     promise.then(
       (value) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         resolve(value);
       },
       (error: unknown) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         reject(error);
       }
@@ -99,7 +110,7 @@ app.get('/readyz', async (c) => {
   const checks: Record<string, { status: 'ok' | 'error'; message?: string }> = {};
   let allHealthy = true;
 
-  // Real dependency proof — SELECT 1, not adapter construction.
+  // Real dependency proof — bounded SELECT 1, not adapter construction.
   const dbCheck = await checkDatabaseReady();
   if (dbCheck.ok) {
     checks.database = { status: 'ok' };
@@ -119,21 +130,26 @@ app.get('/readyz', async (c) => {
 
       checks.queues = queueHealth.available
         ? { status: 'ok' }
-        : { status: 'error', message: 'Queue connection unavailable' };
+        : { status: 'error', message: PUBLIC_QUEUE_NOT_READY_MESSAGE };
       if (!queueHealth.available) {
         allHealthy = false;
       }
     } catch (error) {
+      collectorLogger.error(
+        'Queue readiness check failed',
+        error instanceof Error ? error : new Error(String(error)),
+        { path: '/readyz' }
+      );
       checks.queues = {
         status: 'error',
-        message: error instanceof Error ? error.message : 'Queue check failed',
+        message: PUBLIC_QUEUE_NOT_READY_MESSAGE,
       };
       allHealthy = false;
     }
 
     checks.workers = workersRunning()
       ? { status: 'ok' }
-      : { status: 'error', message: 'Workers not running' };
+      : { status: 'error', message: PUBLIC_WORKERS_NOT_READY_MESSAGE };
     if (!workersRunning()) {
       allHealthy = false;
     }
@@ -192,30 +208,32 @@ export default app;
  * Boot the HTTP server and optional workers.
  * Skipped under Vitest so readiness tests can import the app without binding a port.
  */
-function bootstrap(): void {
+async function bootstrap(): Promise<void> {
   assertEnvValid();
 
   const { port } = getEnvConfig();
+
+  // Start workers before accepting traffic so configured /readyz healthchecks
+  // do not observe a transient workers-not-running window after listen.
+  if (process.env.WORKER_ENABLED === 'true') {
+    collectorLogger.info('Starting job queue workers...');
+    await startWorkers();
+
+    collectorLogger.info('Initializing monitoring schedules...');
+    await initializeSchedules();
+  }
 
   const server = serve(
     {
       fetch: app.fetch,
       port,
     },
-    async (info) => {
+    (info) => {
       collectorLogger.info('DNS Ops Collector started', {
         port: info.port,
         livenessUrl: `http://localhost:${info.port}/healthz`,
         readinessUrl: `http://localhost:${info.port}/readyz`,
       });
-
-      if (process.env.WORKER_ENABLED === 'true') {
-        collectorLogger.info('Starting job queue workers...');
-        await startWorkers();
-
-        collectorLogger.info('Initializing monitoring schedules...');
-        await initializeSchedules();
-      }
     }
   );
 
@@ -248,5 +266,11 @@ const shouldBootstrap =
   process.env.VITEST !== 'true' && process.env.COLLECTOR_SKIP_LISTEN !== 'true';
 
 if (shouldBootstrap) {
-  bootstrap();
+  void bootstrap().catch((error: unknown) => {
+    collectorLogger.error(
+      'Collector bootstrap failed',
+      error instanceof Error ? error : new Error(String(error))
+    );
+    process.exit(1);
+  });
 }

@@ -2,7 +2,7 @@ import {
   DomainRepository,
   type IDatabaseAdapter,
   ObservationRepository,
-  pingDatabase,
+  pingDatabaseForReadiness,
   RecordSetRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
@@ -86,13 +86,15 @@ apiRoutes.get('/health', async (c) => {
     warning: 'Database connection not available - API functionality limited',
   };
 
-  if (!db) {
+  // Adapter presence alone is a false-green; require a configured URL and a
+  // bounded SELECT 1. Public body never includes driver/host/user details.
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!db || !databaseUrl) {
     return c.json(degradedBody, 503);
   }
 
   try {
-    // Prove reachability — adapter presence alone is a false-green.
-    await pingDatabase(db);
+    await pingDatabaseForReadiness(databaseUrl);
     return c.json(
       {
         status: 'healthy' as const,
@@ -101,7 +103,12 @@ apiRoutes.get('/health', async (c) => {
       },
       200
     );
-  } catch {
+  } catch (error) {
+    getWebLogger().error(
+      'Web readiness DB check failed',
+      error instanceof Error ? error : new Error(String(error)),
+      { path: '/api/health', method: 'GET' }
+    );
     return c.json(degradedBody, 503);
   }
 });
