@@ -1,10 +1,11 @@
 /**
  * RT-4: db middleware must not run migrations or schema repair on request.
  *
- * Unit path mocks the previous schema writers and asserts they are never called.
+ * Unit path asserts the middleware only attaches a db adapter.
  * Integration path (DATABASE_URL set) proves a first request after release
- * migrations does not create the request-time migration ledger or change columns.
+ * migrations does not create a second migration ledger or change columns.
  */
+import { access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
@@ -12,18 +13,6 @@ import { Hono } from 'hono';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types.js';
-
-const runMigrationsMock = vi.fn(async () => undefined);
-const repairSchemaMock = vi.fn(async () => undefined);
-
-vi.mock('../lib/migrate.js', () => ({
-  runMigrations: runMigrationsMock,
-  getMigrationStatus: () => ({ ok: null }),
-}));
-
-vi.mock('../lib/schema-repair.js', () => ({
-  repairSchema: repairSchemaMock,
-}));
 
 type ReleaseMigrationRunner = (options: {
   databaseUrl: string;
@@ -71,15 +60,6 @@ async function withClient(url: string, fn: (client: pg.Client) => Promise<void>)
 
 async function loadMiddleware() {
   vi.resetModules();
-  runMigrationsMock.mockClear();
-  repairSchemaMock.mockClear();
-  vi.doMock('../lib/migrate.js', () => ({
-    runMigrations: runMigrationsMock,
-    getMigrationStatus: () => ({ ok: null }),
-  }));
-  vi.doMock('../lib/schema-repair.js', () => ({
-    repairSchema: repairSchemaMock,
-  }));
   return import('./db.js');
 }
 
@@ -96,7 +76,7 @@ describe('RT-4: db middleware is not a schema writer', () => {
     }
   });
 
-  it('does not call runMigrations or repairSchema on the first API request', async () => {
+  it('attaches db on the first API request without importing schema writers', async () => {
     process.env.NODE_ENV = 'development';
     process.env.DATABASE_URL = 'postgresql://localhost/rt4_middleware_unit?sslmode=disable';
 
@@ -113,13 +93,13 @@ describe('RT-4: db middleware is not a schema writer', () => {
     const body = (await response.json()) as { hasDatabase: boolean };
     expect(body.hasDatabase).toBe(true);
 
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-
-    expect(runMigrationsMock).not.toHaveBeenCalled();
-    expect(repairSchemaMock).not.toHaveBeenCalled();
+    // Dead request-time migrate module must stay gone (no second ledger).
+    await expect(access(resolve(TEST_FILE_DIR, '../lib/migrate.ts'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
-  it('still attaches db without invoking schema writers on repeated requests', async () => {
+  it('still attaches db without schema side effects on repeated requests', async () => {
     process.env.NODE_ENV = 'production';
     process.env.DATABASE_URL = 'postgresql://localhost/rt4_middleware_unit?sslmode=disable';
 
@@ -133,10 +113,6 @@ describe('RT-4: db middleware is not a schema writer', () => {
       expect(response.status).toBe(200);
       expect(((await response.json()) as { hasDatabase: boolean }).hasDatabase).toBe(true);
     }
-
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-    expect(runMigrationsMock).not.toHaveBeenCalled();
-    expect(repairSchemaMock).not.toHaveBeenCalled();
   });
 });
 
@@ -204,11 +180,6 @@ describe.skipIf(!DATABASE_URL)('RT-4: first request after release migrations iss
     const response = await app.request('/api/domains');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
-
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
-
-    expect(runMigrationsMock).not.toHaveBeenCalled();
-    expect(repairSchemaMock).not.toHaveBeenCalled();
 
     await withClient(TEST_DB_URL, async (client) => {
       const drizzleLedger = await client.query(

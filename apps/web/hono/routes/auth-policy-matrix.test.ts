@@ -503,9 +503,19 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     notes: 'Database migration status',
   },
   { path: '/api/migrate/schema', method: 'GET', policy: 'admin', notes: 'Database schema check' },
-  { path: '/api/migrate/reset', method: 'POST', policy: 'admin', notes: 'Reset migration tracker' },
+  {
+    path: '/api/migrate/reset',
+    method: 'POST',
+    policy: 'admin',
+    notes: 'Unavailable — release pipeline only (410)',
+  },
   { path: '/api/migrate/repair', method: 'POST', policy: 'admin', notes: 'Repair schema' },
-  { path: '/api/migrate/rebuild', method: 'POST', policy: 'admin', notes: 'Rebuild database' },
+  {
+    path: '/api/migrate/rebuild',
+    method: 'POST',
+    policy: 'admin',
+    notes: 'Unavailable — release pipeline only (410)',
+  },
   { path: '/api/migrate/run-init', method: 'POST', policy: 'admin', notes: 'Run init migration' },
 
   // Provider templates admin (uses requireAdminAccess)

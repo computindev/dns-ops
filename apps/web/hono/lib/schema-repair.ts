@@ -17,7 +17,9 @@ const logger = createLogger({ service: 'schema-repair' });
 /**
  * Columns historically backfilled by request-time repairSchema.
  * RT-4: release migrations must supply every entry; repair remains a manual
- * operator tool only (admin route), not a request-path schema writer.
+ * operator tool only (admin /repair route), not a request-path schema writer.
+ * Destructive HTTP recovery (/reset, /rebuild) is unavailable — use the
+ * release runner (scripts/run-migrations.mjs) for schema ownership.
  */
 export interface SchemaRepairColumn {
   table: string;
