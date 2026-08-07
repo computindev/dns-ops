@@ -1,4 +1,4 @@
-import { OperationalConditionService } from '@dns-ops/db';
+import { DomainRepository, OperationalConditionService } from '@dns-ops/db';
 import { Hono } from 'hono';
 import { requireAuth, requireWritePermission } from '../middleware/authorization.js';
 import type { Env } from '../types.js';
@@ -10,8 +10,18 @@ caseRoutes.get('/', async (c) => {
   const tenantId = c.get('tenantId');
   if (!tenantId) return c.json({ error: 'Tenant context required' }, 401);
   const domainId = c.req.query('domainId');
-  const cases = await new OperationalConditionService(c.get('db')).listCases(tenantId, domainId);
-  return c.json({ cases });
+  const db = c.get('db');
+  const cases = await new OperationalConditionService(db).listCases(tenantId, domainId);
+  const tenantDomains = await new DomainRepository(db).findAll({ tenantId });
+  const domainsById = new Map(tenantDomains.map((domain) => [domain.id, domain]));
+  return c.json({
+    cases: cases.flatMap((item) => {
+      const domain = domainsById.get(item.signal.domainId);
+      return domain
+        ? [{ case: item.case, signal: item.signal, domain: { id: domain.id, name: domain.name } }]
+        : [];
+    }),
+  });
 });
 
 caseRoutes.get('/:caseId', async (c) => {
@@ -22,7 +32,14 @@ caseRoutes.get('/:caseId', async (c) => {
     c.req.param('caseId')
   );
   if (!result) return c.json({ error: 'Case not found' }, 404);
-  return c.json(result);
+  const domain = await new DomainRepository(c.get('db')).findById(result.signal.domainId);
+  if (!domain || domain.tenantId !== tenantId) return c.json({ error: 'Case not found' }, 404);
+  return c.json({
+    case: result.case,
+    signal: result.signal,
+    events: result.events,
+    domain: { id: domain.id, name: domain.name },
+  });
 });
 
 caseRoutes.patch('/:caseId/disposition', requireWritePermission, async (c) => {

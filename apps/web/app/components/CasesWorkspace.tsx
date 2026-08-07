@@ -29,12 +29,17 @@ const SIGNAL_KINDS: InternalSignalKind[] = [
   'MAIL_DNS_CONFIGURATION_REGRESSION',
 ];
 
+const SIGNAL_KIND_LABELS: Record<InternalSignalKind, string> = {
+  DOMAIN_EXPIRING_SOON: 'Domain Expiring Soon',
+  TLS_CERTIFICATE_REGRESSION: 'TLS Certificate Regression',
+  HTTP_ENDPOINT_UNAVAILABLE: 'HTTP Endpoint Unavailable',
+  REDIRECT_TOPOLOGY_REGRESSION: 'Redirect Topology Regression',
+  HOMEPAGE_INDEXABILITY_REGRESSION: 'Homepage Indexability Regression',
+  MAIL_DNS_CONFIGURATION_REGRESSION: 'Mail DNS Configuration Regression',
+};
+
 function labelSignalKind(kind: InternalSignalKind): string {
-  return kind
-    .toLowerCase()
-    .split('_')
-    .map((word) => `${word[0]?.toUpperCase()}${word.slice(1)}`)
-    .join(' ');
+  return SIGNAL_KIND_LABELS[kind];
 }
 
 function formatTimestamp(value: string | null): string {
@@ -79,7 +84,7 @@ function CaseQueueRow({
       <span className="cases-queue-row__content">
         <strong>{labelSignalKind(item.signal.kind)}</strong>
         <small>{caseSummary(item)}</small>
-        <small className="cases-queue-row__domain">Domain ID · {item.signal.domainId}</small>
+        <small className="cases-queue-row__domain">{item.domain.name}</small>
       </span>
       <span className={`ds-badge ds-badge--${statusTone(item.case.status)}`}>
         {item.case.status.toLowerCase()}
@@ -148,8 +153,8 @@ function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
 
       <dl className="cases-evidence-list">
         <div>
-          <dt>Domain identifier</dt>
-          <dd>{detail.signal.domainId}</dd>
+          <dt>Domain</dt>
+          <dd>{detail.domain.name}</dd>
         </div>
         <div>
           <dt>Condition key</dt>

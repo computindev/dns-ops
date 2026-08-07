@@ -45,9 +45,15 @@ export interface CaseEventRecord {
   createdAt: string;
 }
 
+export interface CaseDomainRecord {
+  id: string;
+  name: string;
+}
+
 export interface CaseListItem {
   case: CaseRecord;
   signal: SignalRecord;
+  domain: CaseDomainRecord;
 }
 
 export interface CaseDetail extends CaseListItem {
