@@ -1,306 +1,133 @@
 /**
  * E2E Integration Tests: DNSSEC DNS Resolver - DNS-002
  *
- * Tests that verify DNSKEY/DS query functionality:
- * 1. DNSKEY queries work correctly
- * 2. DS queries work correctly
- * 3. Error handling for various failure modes
- * 4. TCP fallback for truncated responses
- * 5. Timeout handling
- * 6. Invalid domain handling
+ * Default path is offline-only (input validation). Public recursive DNS checks
+ * are opt-in via RUN_LIVE_DNS_TESTS so the collector default suite stays
+ * deterministic and does not pass vacuously when the network is absent.
  *
- * These tests catch issues like:
- * - Missing TCP fallback for large responses
- * - Buffer overflow handling
- * - Response parsing edge cases
+ * Run live checks with:
+ * - `RUN_LIVE_DNS_TESTS=1 bun run --filter @dns-ops/collector test`
+ * - or the package `test:live-dns` script (integration suite)
  */
 
 import { describe, expect, it } from 'vitest';
 import { queryDNSKEY, queryDS } from '../dns/dnssec-resolver.js';
 
+function isTruthy(value: string | undefined): boolean {
+  return value === '1' || value?.toLowerCase() === 'true';
+}
+
+const LIVE_DNS_ENABLED = isTruthy(process.env.RUN_LIVE_DNS_TESTS);
+const liveDescribe = LIVE_DNS_ENABLED ? describe : describe.skip;
+const LIVE_DOMAIN = process.env.LIVE_DNS_DOMAIN?.trim() || 'cloudflare.com';
+const LIVE_TEST_TIMEOUT_MS = 30_000;
+
 describe('DNSSEC DNS Resolver E2E', () => {
-  describe('DNSKEY Query Handling', () => {
-    it('should handle DNSKEY query to real DNSSEC-enabled domain', async () => {
-      // cloudflare.com has DNSSEC enabled
-      const result = await queryDNSKEY('cloudflare.com');
-
-      // Should complete without throwing
-      expect(typeof result.success).toBe('boolean');
-      expect(Array.isArray(result.answers)).toBe(true);
-
-      if (result.success && result.answers.length > 0) {
-        // Verify answer structure
-        const answer = result.answers[0];
-        expect(answer.name).toBe('cloudflare.com');
-        expect(answer.type).toBe('DNSKEY');
-        expect(typeof answer.ttl).toBe('number');
-        expect(typeof answer.data).toBe('string');
-      }
-    });
-
-    it('should handle DNSKEY query to non-existent domain', async () => {
-      const result = await queryDNSKEY('nonexistent.invalid.test');
-
-      expect(typeof result.success).toBe('boolean');
-      expect(Array.isArray(result.answers)).toBe(true);
-      // May return empty answers or error based on DNS response
-    });
-
-    it('should handle empty domain string', async () => {
+  describe('offline input validation (no network)', () => {
+    it('rejects empty domain for DNSKEY', async () => {
       const result = await queryDNSKEY('');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Domain is required');
-      expect(result.answers).toHaveLength(0);
+      expect(result.answers).toEqual([]);
     });
 
-    it('should handle very long domain name', async () => {
-      // Most DNS servers limit domain names to 253 characters
-      const longDomain = `${'a'.repeat(250)}.com`;
-      const result = await queryDNSKEY(longDomain);
-
-      // Should either succeed or fail gracefully
-      expect(typeof result.success).toBe('boolean');
-    });
-
-    it('should handle internationalized domain names', async () => {
-      // IDN domain - should handle or return error gracefully
-      const result = await queryDNSKEY('münchen.de');
-
-      // Should not throw - may fail with validation error or query error
-      expect(typeof result.success).toBe('boolean');
-    });
-  });
-
-  describe('DS Query Handling', () => {
-    it('should handle DS query to real DNSSEC-enabled domain', async () => {
-      const result = await queryDS('cloudflare.com');
-
-      expect(typeof result.success).toBe('boolean');
-      expect(Array.isArray(result.answers)).toBe(true);
-    });
-
-    it('should handle DS query to non-DNSSEC domain', async () => {
-      // Most domains don't have DNSSEC
-      const result = await queryDS('example.com');
-
-      expect(typeof result.success).toBe('boolean');
-      // May return empty answers if domain doesn't have DS records
-    });
-
-    it('should handle DS query to non-existent domain', async () => {
-      const result = await queryDS('nonexistent.invalid.test');
-
-      expect(typeof result.success).toBe('boolean');
-    });
-
-    it('should handle empty domain string', async () => {
+    it('rejects empty domain for DS', async () => {
       const result = await queryDS('');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Domain is required');
-      expect(result.answers).toHaveLength(0);
+      expect(result.answers).toEqual([]);
     });
   });
 
-  // =============================================================================
-  // TCP FALLBACK TESTS - Critical for large DNS responses
-  // DNS responses larger than 512 bytes are truncated over UDP
-  // TCP fallback ensures these responses are still received
-  // =============================================================================
+  liveDescribe('live public DNS (RUN_LIVE_DNS_TESTS)', () => {
+    it(
+      'DNSKEY query returns presentation data with base64 key material',
+      async () => {
+        const result = await queryDNSKEY(LIVE_DOMAIN);
 
-  describe('TCP Fallback for Large Responses', () => {
-    it('should handle large DNSKEY responses via TCP fallback', async () => {
-      // Domains with many DNSKEY records will trigger truncation
-      // The resolver should automatically retry over TCP
-      const result = await queryDNSKEY('cloudflare.com');
-
-      // Should succeed even if response was truncated over UDP
-      expect(typeof result.success).toBe('boolean');
-
-      if (result.success) {
-        // If we got answers, TCP fallback worked
-        // (or response fit in UDP packet)
-        expect(Array.isArray(result.answers)).toBe(true);
-      }
-    });
-
-    it('should handle DS responses with TCP fallback', async () => {
-      // DS records are typically smaller but test the fallback mechanism
-      const result = await queryDS('cloudflare.com');
-
-      expect(typeof result.success).toBe('boolean');
-    });
-
-    it('should not throw when TCP fallback is needed', async () => {
-      // The resolver should handle TCP fallback internally
-      // This test verifies no exceptions are thrown
-      const result = await queryDNSKEY('google.com');
-
-      // Should return a result object, not throw
-      expect(result).toBeDefined();
-      expect('success' in result).toBe(true);
-      expect('answers' in result).toBe(true);
-    });
-
-    it('should handle multiple DNSKEY queries with TCP fallback', async () => {
-      // Multiple queries test concurrent TCP fallback handling
-      const results = await Promise.all([
-        queryDNSKEY('cloudflare.com'),
-        queryDNSKEY('google.com'),
-        queryDNSKEY('github.com'),
-      ]);
-
-      results.forEach((result) => {
-        expect(result).toBeDefined();
-        expect(typeof result.success).toBe('boolean');
-      });
-    });
-  });
-
-  describe('Error Response Handling', () => {
-    it('should handle SERVFAIL response', async () => {
-      // Some domains cause SERVFAIL due to validation issues
-      // The result should indicate failure
-      const result = await queryDNSKEY('test.servfail.example');
-
-      // If it fails, should have proper error message
-      if (!result.success) {
-        expect(result.error).toBeTruthy();
-      }
-    });
-
-    it('should handle REFUSED response', async () => {
-      const result = await queryDS('refused.test.example');
-
-      // Should handle gracefully
-      expect(typeof result.success).toBe('boolean');
-    });
-
-    it('should handle NXDOMAIN response', async () => {
-      const result = await queryDNSKEY('this-domain-definitely-does-not-exist-12345xyz.invalid');
-
-      // Should return empty or failure gracefully
-      expect(typeof result.success).toBe('boolean');
-    });
-  });
-
-  describe('Timeout Handling', () => {
-    it('should handle DNS server timeout', async () => {
-      // Use a non-routable IP that won't respond
-      // Note: This test might be slow due to UDP timeout
-      const result = await queryDNSKEY('timeout-test.example');
-
-      // Should either succeed (if server is reachable) or timeout
-      expect(typeof result.success).toBe('boolean');
-    });
-  });
-
-  describe('Type Coercion in Response Parsing', () => {
-    it('should handle numeric DNS record type in response', async () => {
-      // The formatRecordData function should handle different type formats
-      const result = await queryDNSKEY('cloudflare.com');
-
-      // Should parse answers regardless of internal type representation
-      if (result.success && result.answers.length > 0) {
-        const answer = result.answers[0];
-        // Data should be a string (base64 encoded for DNSKEY)
-        expect(typeof answer.data).toBe('string');
-      }
-    });
-
-    it('should handle buffer-type data in DNSKEY response', async () => {
-      const result = await queryDNSKEY('cloudflare.com');
-
-      if (result.success && result.answers.length > 0) {
-        // DNSKEY data should be base64 encoded
-        const data = result.answers[0].data;
-        // Base64 strings only contain A-Z, a-z, 0-9, +, /, =
-        expect(/^[A-Za-z0-9+/=]+$/.test(data)).toBe(true);
-      }
-    });
-
-    it('should handle DS record with hex data', async () => {
-      const result = await queryDS('cloudflare.com');
-
-      if (result.success && result.answers.length > 0) {
-        // DS records typically contain hex data
-        const data = result.answers[0].data;
-        expect(typeof data).toBe('string');
-      }
-    });
-
-    it('should handle empty answers array gracefully', async () => {
-      // Domain without DNSKEY records
-      const result = await queryDNSKEY('nonexistent.domain.invalid');
-
-      expect(Array.isArray(result.answers)).toBe(true);
-      expect(result.answers).toHaveLength(0);
-    });
-  });
-
-  describe('Query ID Randomization', () => {
-    it('should generate unique query IDs for concurrent queries', async () => {
-      // Make multiple queries concurrently
-      const results = await Promise.all([
-        queryDNSKEY('cloudflare.com'),
-        queryDNSKEY('google.com'),
-        queryDNSKEY('github.com'),
-      ]);
-
-      // All should complete without errors
-      expect(results).toHaveLength(3);
-      results.forEach((result) => {
-        expect(typeof result.success).toBe('boolean');
-      });
-    });
-  });
-
-  describe('Response Code Mapping', () => {
-    it('should correctly map NOERROR responses', async () => {
-      // This is implicitly tested by successful queries
-      // If we get answers, the response was NOERROR
-      const result = await queryDNSKEY('cloudflare.com');
-
-      if (result.success) {
+        expect(result.success).toBe(true);
+        expect(result.error).toBeUndefined();
         expect(result.answers.length).toBeGreaterThan(0);
-      }
-    });
 
-    it('should handle non-NOERROR responses gracefully', async () => {
-      // Query for a DS record on a domain without DS records
-      // Should not throw, but should indicate the query didn't succeed
-      const result = await queryDS('example.com');
+        const answer = result.answers[0];
+        expect(answer.type).toBe('DNSKEY');
+        expect(typeof answer.ttl).toBe('number');
+        expect(answer.ttl).toBeGreaterThan(0);
+        expect(typeof answer.data).toBe('string');
+        // flags protocol algorithm base64(key)
+        expect(answer.data).toMatch(/^\d+ \d+ \d+ [A-Za-z0-9+/=]+$/);
+        // Must not leak the raw dns-packet object dump
+        expect(answer.data).not.toContain('"type":"Buffer"');
 
-      // Should not throw an exception
-      expect(typeof result.success).toBe('boolean');
-    });
-  });
+        const keyB64 = answer.data.split(' ')[3] ?? '';
+        expect(keyB64.length).toBeGreaterThan(0);
+        expect(() => Buffer.from(keyB64, 'base64')).not.toThrow();
+      },
+      LIVE_TEST_TIMEOUT_MS
+    );
 
-  // =============================================================================
-  // EDGE CASES
-  // =============================================================================
+    it(
+      'DS query returns presentation data with hex digest material',
+      async () => {
+        const result = await queryDS(LIVE_DOMAIN);
 
-  describe('Edge Cases', () => {
-    it('should handle domain with trailing dot', async () => {
-      const result = await queryDNSKEY('cloudflare.com.');
-      expect(typeof result.success).toBe('boolean');
-    });
+        expect(result.success).toBe(true);
+        expect(result.error).toBeUndefined();
+        expect(result.answers.length).toBeGreaterThan(0);
 
-    it('should handle uppercase domain', async () => {
-      const result = await queryDNSKEY('CLOUDFLARE.COM');
-      expect(typeof result.success).toBe('boolean');
-    });
+        const answer = result.answers[0];
+        expect(answer.type).toBe('DS');
+        expect(typeof answer.ttl).toBe('number');
+        expect(typeof answer.data).toBe('string');
+        // keyTag algorithm digestType hex(digest)
+        expect(answer.data).toMatch(/^\d+ \d+ \d+ [0-9a-fA-F]+$/);
+        expect(answer.data).not.toContain('"type":"Buffer"');
 
-    it('should handle mixed case domain', async () => {
-      const result = await queryDNSKEY('CloudFlare.Com');
-      expect(typeof result.success).toBe('boolean');
-    });
+        const digestHex = answer.data.split(' ')[3] ?? '';
+        expect(digestHex.length).toBeGreaterThan(0);
+        expect(digestHex.length % 2).toBe(0);
+      },
+      LIVE_TEST_TIMEOUT_MS
+    );
 
-    it('should handle single-label domain', async () => {
-      // Single label domains don't have TLD
-      const result = await queryDNSKEY('localhost');
-      expect(typeof result.success).toBe('boolean');
-    });
+    it(
+      'handles NXDOMAIN / non-existent names without throwing',
+      async () => {
+        const result = await queryDNSKEY('this-domain-definitely-does-not-exist-12345xyz.invalid');
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            success: expect.any(Boolean),
+            answers: expect.any(Array),
+          })
+        );
+        // Non-existent names must not surface fabricated DNSKEY answers.
+        expect(result.answers).toHaveLength(0);
+      },
+      LIVE_TEST_TIMEOUT_MS
+    );
+
+    it(
+      'concurrent DNSKEY queries complete independently',
+      async () => {
+        const results = await Promise.all([
+          queryDNSKEY(LIVE_DOMAIN),
+          queryDNSKEY('google.com'),
+          queryDNSKEY('github.com'),
+        ]);
+
+        expect(results).toHaveLength(3);
+        for (const result of results) {
+          expect(typeof result.success).toBe('boolean');
+          expect(Array.isArray(result.answers)).toBe(true);
+        }
+        // At least the known DNSSEC-enabled target must succeed with data.
+        expect(results[0].success).toBe(true);
+        expect(results[0].answers.length).toBeGreaterThan(0);
+      },
+      LIVE_TEST_TIMEOUT_MS
+    );
   });
 });

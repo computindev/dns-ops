@@ -256,17 +256,60 @@ function formatCaa(data: unknown): string {
   return bufferToString(data);
 }
 
-/** DNSKEY: public key bytes, base64-encoded. */
+/**
+ * DNSKEY presentation: "flags protocol algorithm base64(key)".
+ * dns-packet decodes RDATA as { flags, algorithm, key: Buffer } (protocol is
+ * always 3 for DNSSEC and is not surfaced on the decoded object).
+ */
 function formatDnskey(data: unknown): string {
   if (typeof data === 'string') return data;
   if (Buffer.isBuffer(data)) return data.toString('base64');
+  if (data && typeof data === 'object') {
+    const dnskey = data as {
+      flags?: number;
+      protocol?: number;
+      algorithm?: number;
+      key?: Buffer | string;
+    };
+    const flags = dnskey.flags ?? 0;
+    const protocol = dnskey.protocol ?? 3;
+    const algorithm = dnskey.algorithm ?? 0;
+    let key = '';
+    if (Buffer.isBuffer(dnskey.key)) {
+      key = dnskey.key.toString('base64');
+    } else if (typeof dnskey.key === 'string') {
+      key = dnskey.key;
+    }
+    return `${flags} ${protocol} ${algorithm} ${key}`;
+  }
   return JSON.stringify(data);
 }
 
-/** DS: digest bytes, hex-encoded. */
+/**
+ * DS presentation: "keyTag algorithm digestType hex(digest)".
+ * dns-packet decodes RDATA as { keyTag, algorithm, digestType, digest: Buffer }.
+ */
 function formatDs(data: unknown): string {
   if (typeof data === 'string') return data;
   if (Buffer.isBuffer(data)) return data.toString('hex');
+  if (data && typeof data === 'object') {
+    const ds = data as {
+      keyTag?: number;
+      algorithm?: number;
+      digestType?: number;
+      digest?: Buffer | string;
+    };
+    const keyTag = ds.keyTag ?? 0;
+    const algorithm = ds.algorithm ?? 0;
+    const digestType = ds.digestType ?? 0;
+    let digest = '';
+    if (Buffer.isBuffer(ds.digest)) {
+      digest = ds.digest.toString('hex');
+    } else if (typeof ds.digest === 'string') {
+      digest = ds.digest;
+    }
+    return `${keyTag} ${algorithm} ${digestType} ${digest}`;
+  }
   return JSON.stringify(data);
 }
 

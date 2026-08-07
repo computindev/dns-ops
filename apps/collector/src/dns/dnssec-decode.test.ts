@@ -218,6 +218,68 @@ describe('decodeDnsResponse', () => {
       expect(r.answers[0].data).toContain('letsencrypt.org');
       expect(r.answers[0].data).toBe('0 issue "letsencrypt.org"');
     });
+
+    it('DNSKEY: real ttl + presentation with key bytes base64-encoded', () => {
+      // dns-packet decodes DNSKEY RDATA as { flags, algorithm, key: Buffer }.
+      // Presentation form is "flags protocol algorithm base64(key)" (protocol always 3).
+      const keyB64 = 'AQO3dtF8aQ6iFxV8U/AM4Q==';
+      const key = Buffer.from(keyB64, 'base64');
+      const buf = encodeResponse([
+        {
+          name: 'example.com',
+          type: 'DNSKEY',
+          class: 'IN',
+          ttl: 3600,
+          data: { flags: 257, algorithm: 8, key },
+        },
+      ]);
+
+      const r = decodeDnsResponse(buf, 'DNSKEY');
+
+      expect(r.answers[0]).toMatchObject({
+        name: 'example.com',
+        type: 'DNSKEY',
+        ttl: 3600,
+      });
+      // Must not JSON.stringify the decoded object (key would stay a Buffer dump).
+      expect(r.answers[0].data).not.toContain('"type":"Buffer"');
+      expect(r.answers[0].data).toBe(`257 3 8 ${keyB64}`);
+      // Trailing token is pure base64 of the public key bytes.
+      const tokens = r.answers[0].data.split(' ');
+      expect(tokens).toHaveLength(4);
+      expect(tokens[3]).toBe(keyB64);
+      expect(Buffer.from(tokens[3], 'base64').equals(key)).toBe(true);
+    });
+
+    it('DS: real ttl + presentation with digest bytes hex-encoded', () => {
+      // dns-packet decodes DS RDATA as { keyTag, algorithm, digestType, digest: Buffer }.
+      // Presentation form is "keyTag algorithm digestType hex(digest)".
+      const digestHex = '2bb183af5f22588179a53b0a98631fad1a292118';
+      const digest = Buffer.from(digestHex, 'hex');
+      const buf = encodeResponse([
+        {
+          name: 'example.com',
+          type: 'DS',
+          class: 'IN',
+          ttl: 86400,
+          data: { keyTag: 370, algorithm: 13, digestType: 2, digest },
+        },
+      ]);
+
+      const r = decodeDnsResponse(buf, 'DS');
+
+      expect(r.answers[0]).toMatchObject({
+        name: 'example.com',
+        type: 'DS',
+        ttl: 86400,
+      });
+      expect(r.answers[0].data).not.toContain('"type":"Buffer"');
+      expect(r.answers[0].data).toBe(`370 13 2 ${digestHex}`);
+      const tokens = r.answers[0].data.split(' ');
+      expect(tokens).toHaveLength(4);
+      expect(tokens[3]).toBe(digestHex);
+      expect(Buffer.from(tokens[3], 'hex').equals(digest)).toBe(true);
+    });
   });
 
   describe('response codes', () => {
