@@ -7,7 +7,7 @@
  *
  * Run live checks with:
  * - `RUN_LIVE_DNS_TESTS=1 bun run --filter @dns-ops/collector test`
- * - or the package `test:live-dns` script (integration suite)
+ * - or the package `test:live-dns` script (integration + this e2e file)
  */
 
 import { describe, expect, it } from 'vitest';
