@@ -14,6 +14,7 @@ import { Route as rootRoute } from './routes/__root'
 import { Route as PortfolioImport } from './routes/portfolio'
 import { Route as LoginImport } from './routes/login'
 import { Route as DesignReviewImport } from './routes/design-review'
+import { Route as CasesImport } from './routes/cases'
 import { Route as IndexImport } from './routes/index'
 import { Route as DomainDomainImport } from './routes/domain/$domain'
 
@@ -34,6 +35,12 @@ const LoginRoute = LoginImport.update({
 const DesignReviewRoute = DesignReviewImport.update({
   id: '/design-review',
   path: '/design-review',
+  getParentRoute: () => rootRoute,
+} as any)
+
+const CasesRoute = CasesImport.update({
+  id: '/cases',
+  path: '/cases',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -58,6 +65,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexImport
+      parentRoute: typeof rootRoute
+    }
+    '/cases': {
+      id: '/cases'
+      path: '/cases'
+      fullPath: '/cases'
+      preLoaderRoute: typeof CasesImport
       parentRoute: typeof rootRoute
     }
     '/design-review': {
@@ -95,6 +109,7 @@ declare module '@tanstack/react-router' {
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/cases': typeof CasesRoute
   '/design-review': typeof DesignReviewRoute
   '/login': typeof LoginRoute
   '/portfolio': typeof PortfolioRoute
@@ -103,6 +118,7 @@ export interface FileRoutesByFullPath {
 
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/cases': typeof CasesRoute
   '/design-review': typeof DesignReviewRoute
   '/login': typeof LoginRoute
   '/portfolio': typeof PortfolioRoute
@@ -112,6 +128,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexRoute
+  '/cases': typeof CasesRoute
   '/design-review': typeof DesignReviewRoute
   '/login': typeof LoginRoute
   '/portfolio': typeof PortfolioRoute
@@ -122,15 +139,23 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/cases'
     | '/design-review'
     | '/login'
     | '/portfolio'
     | '/domain/$domain'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/design-review' | '/login' | '/portfolio' | '/domain/$domain'
+  to:
+    | '/'
+    | '/cases'
+    | '/design-review'
+    | '/login'
+    | '/portfolio'
+    | '/domain/$domain'
   id:
     | '__root__'
     | '/'
+    | '/cases'
     | '/design-review'
     | '/login'
     | '/portfolio'
@@ -140,6 +165,7 @@ export interface FileRouteTypes {
 
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CasesRoute: typeof CasesRoute
   DesignReviewRoute: typeof DesignReviewRoute
   LoginRoute: typeof LoginRoute
   PortfolioRoute: typeof PortfolioRoute
@@ -148,6 +174,7 @@ export interface RootRouteChildren {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CasesRoute: CasesRoute,
   DesignReviewRoute: DesignReviewRoute,
   LoginRoute: LoginRoute,
   PortfolioRoute: PortfolioRoute,
@@ -165,6 +192,7 @@ export const routeTree = rootRoute
       "filePath": "__root.tsx",
       "children": [
         "/",
+        "/cases",
         "/design-review",
         "/login",
         "/portfolio",
@@ -173,6 +201,9 @@ export const routeTree = rootRoute
     },
     "/": {
       "filePath": "index.tsx"
+    },
+    "/cases": {
+      "filePath": "cases.tsx"
     },
     "/design-review": {
       "filePath": "design-review.tsx"

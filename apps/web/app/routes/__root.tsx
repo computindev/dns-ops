@@ -168,6 +168,9 @@ function RootComponent() {
                     <Link to="/portfolio" className="ds-nav-link">
                       Portfolio
                     </Link>
+                    <Link to="/cases" className="ds-nav-link">
+                      Cases
+                    </Link>
                     <AuthNav />
                   </nav>
                 </div>
