@@ -1,6 +1,13 @@
 [
   {
     "date": "2026-08-07",
+    "macrostructure": "Narrative Workflow",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "brief": "Signal Room responsive cases triage continuation"
+  },
+  {
+    "date": "2026-08-07",
     "macrostructure": "Workbench / Long Document / Manifesto",
     "theme": "Cobalt / Coral / Terminal",
     "enrichment": "none",

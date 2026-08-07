@@ -1,6 +1,6 @@
 import type { InternalCaseStatus, InternalSignalKind } from '@dns-ops/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import {
   type CaseDetail,
   type CaseListItem,
@@ -66,14 +66,18 @@ function CaseQueueRow({
   item,
   selected,
   onSelect,
+  detailId,
 }: {
   item: CaseListItem;
   selected: boolean;
   onSelect: () => void;
+  detailId: string;
 }) {
   return (
     <button
       type="button"
+      aria-controls={detailId}
+      aria-pressed={selected}
       className={`cases-queue-row ${selected ? 'is-selected' : ''}`}
       onClick={onSelect}
     >
@@ -93,24 +97,31 @@ function CaseQueueRow({
   );
 }
 
-function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
+function CaseDetailPanel({ detail, panelId }: { detail: CaseDetail; panelId: string }) {
   const queryClient = useQueryClient();
   const titleId = useId();
   const historyTitleId = useId();
   const dispositionId = useId();
   const [draft, setDraft] = useState(detail.case.disposition ?? '');
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [hasSaved, setHasSaved] = useState(false);
+
+  useEffect(() => {
+    setDraft(detail.case.disposition ?? '');
+  }, [detail.case.disposition]);
 
   const saveMutation = useMutation({
     mutationFn: saveCaseDisposition,
     onSuccess: (updated) => {
       setDraft(updated.disposition ?? '');
+      setHasSaved(true);
       setSaveError(null);
       void queryClient.invalidateQueries({ queryKey: ['cases'] });
       void queryClient.invalidateQueries({ queryKey: ['case', detail.case.id] });
     },
     onError: (error) => {
       const apiError = error as Error & { code?: string };
+      setHasSaved(false);
       setSaveError(
         apiError.code === 'CASE_VERSION_STALE'
           ? 'Another operator changed this case. The current record has been refreshed.'
@@ -129,6 +140,7 @@ function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
       setSaveError('Enter a disposition before saving.');
       return;
     }
+    setHasSaved(false);
     setSaveError(null);
     saveMutation.mutate({
       caseId: detail.case.id,
@@ -138,7 +150,7 @@ function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
   };
 
   return (
-    <article className="cases-detail" aria-labelledby={titleId}>
+    <article className="cases-detail" aria-labelledby={titleId} id={panelId}>
       <div className="cases-detail__topline">
         <span className="ds-kicker">Case detail</span>
         <span className={`ds-badge ds-badge--${statusTone(detail.case.status)}`}>
@@ -172,19 +184,21 @@ function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
 
       <section className="cases-disposition" aria-labelledby={`${dispositionId}-label`}>
         <div>
-          <p className="ds-kicker">Operator disposition</p>
+          <label id={`${dispositionId}-label`} htmlFor={dispositionId} className="ds-kicker">
+            Operator disposition
+          </label>
           <p>
             Record the current operational decision. Case resolution still requires fresh evidence.
           </p>
         </div>
-        <label id={`${dispositionId}-label`} htmlFor={dispositionId} className="sr-only">
-          Case disposition
-        </label>
         <textarea
           id={dispositionId}
           className="ds-input cases-disposition__input"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setHasSaved(false);
+            setDraft(event.target.value);
+          }}
           aria-invalid={saveError ? 'true' : undefined}
           aria-describedby={saveError ? `${dispositionId}-error` : undefined}
           disabled={saveMutation.isPending}
@@ -192,13 +206,20 @@ function CaseDetailPanel({ detail }: { detail: CaseDetail }) {
           placeholder="Record the decision and next responsible action"
           rows={4}
         />
-        {saveError ? (
-          <p className="cases-inline-error" id={`${dispositionId}-error`} role="alert">
-            {saveError}
-          </p>
-        ) : null}
-        <Button loading={saveMutation.isPending} onClick={saveDisposition} variant="primary">
-          Save disposition
+        <p
+          className="cases-inline-error"
+          id={`${dispositionId}-error`}
+          role={saveError ? 'alert' : undefined}
+        >
+          {saveError}
+        </p>
+        <Button
+          loading={saveMutation.isPending}
+          onClick={saveDisposition}
+          state={saveError ? 'error' : hasSaved ? 'success' : undefined}
+          variant="primary"
+        >
+          {hasSaved ? 'Disposition saved' : 'Save disposition'}
         </Button>
       </section>
 
@@ -236,6 +257,7 @@ export function CasesWorkspace() {
   const queryClient = useQueryClient();
   const workspaceTitleId = useId();
   const queueTitleId = useId();
+  const detailPanelId = useId();
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | InternalCaseStatus>('all');
   const [kindFilter, setKindFilter] = useState<'all' | InternalSignalKind>('all');
@@ -264,6 +286,11 @@ export function CasesWorkspace() {
   const error = casesQuery.error as (Error & { status?: number }) | null;
   const authRequired = error?.status === 401;
   const forbidden = error?.status === 403;
+  const filtersActive = statusFilter !== 'all' || kindFilter !== 'all';
+  const clearFilters = () => {
+    setStatusFilter('all');
+    setKindFilter('all');
+  };
 
   return (
     <section className="cases-workspace" aria-labelledby={workspaceTitleId}>
@@ -276,40 +303,59 @@ export function CasesWorkspace() {
             disposition.
           </p>
         </div>
-        <div className="cases-workspace__filters">
-          <label>
-            <span>Case status</span>
-            <select
-              className="ds-input"
-              value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(event.target.value as 'all' | InternalCaseStatus)
-              }
-              disabled={authRequired || forbidden}
+        <div className="cases-workspace__controls">
+          <div className="cases-workspace__filters">
+            <label>
+              <span>Case status</span>
+              <select
+                className="ds-input"
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(event.target.value as 'all' | InternalCaseStatus)
+                }
+                disabled={authRequired || forbidden}
+              >
+                {CASE_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status === 'all' ? 'All statuses' : status.toLowerCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Signal kind</span>
+              <select
+                className="ds-input"
+                value={kindFilter}
+                onChange={(event) =>
+                  setKindFilter(event.target.value as 'all' | InternalSignalKind)
+                }
+                disabled={authRequired || forbidden}
+              >
+                <option value="all">All signal kinds</option>
+                {SIGNAL_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {labelSignalKind(kind)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="cases-workspace__actions">
+            {filtersActive ? (
+              <Button onClick={clearFilters} size="sm" variant="quiet">
+                Clear filters
+              </Button>
+            ) : null}
+            <Button
+              loading={casesQuery.isFetching}
+              onClick={() => void casesQuery.refetch()}
+              size="sm"
+              variant="secondary"
             >
-              {CASE_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status === 'all' ? 'All statuses' : status.toLowerCase()}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Signal kind</span>
-            <select
-              className="ds-input"
-              value={kindFilter}
-              onChange={(event) => setKindFilter(event.target.value as 'all' | InternalSignalKind)}
-              disabled={authRequired || forbidden}
-            >
-              <option value="all">All signal kinds</option>
-              {SIGNAL_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {labelSignalKind(kind)}
-                </option>
-              ))}
-            </select>
-          </label>
+              Refresh queue
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -342,6 +388,7 @@ export function CasesWorkspace() {
               ? 'Adjust the status or signal-kind filters to review other case records.'
               : 'Canonical cases will appear here when an operational signal requires attention.'
           }
+          action={filtersActive ? { label: 'Clear filters', onClick: clearFilters } : undefined}
         />
       ) : (
         <div className="cases-workspace__body">
@@ -353,10 +400,15 @@ export function CasesWorkspace() {
               </div>
               <span>{casesQuery.data?.length ?? 0} total</span>
             </div>
+            <p aria-live="polite" className="sr-only">
+              {visibleCases.length} case{visibleCases.length === 1 ? '' : 's'} visible
+              {filtersActive ? ' with the current filters' : ''}.
+            </p>
             <div>
               {visibleCases.map((item) => (
                 <CaseQueueRow
                   key={item.case.id}
+                  detailId={detailPanelId}
                   item={item}
                   selected={item.case.id === selectedCase?.case.id}
                   onSelect={() => setSelectedCaseId(item.case.id)}
@@ -376,7 +428,11 @@ export function CasesWorkspace() {
               }
             />
           ) : detailQuery.data ? (
-            <CaseDetailPanel key={detailQuery.data.case.id} detail={detailQuery.data} />
+            <CaseDetailPanel
+              key={detailQuery.data.case.id}
+              detail={detailQuery.data}
+              panelId={detailPanelId}
+            />
           ) : null}
         </div>
       )}

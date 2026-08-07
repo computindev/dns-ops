@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · system: Signal Room · tone: technical/austere · anchor hue: cobalt */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · genre: modern-minimal · macrostructure: Narrative Workflow · theme: Cobalt · enrichment: none · nav: N1b · footer: none · contrast: pass (40–41) · slop: pass (42–45) · mobile: pass (34, 49, 50–57) */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 :root {
@@ -53,6 +53,8 @@
   --radius-panel: 0.625rem;
   --radius-pill: 999rem;
   --rule: 1px;
+  --container-wide: 80rem;
+  --page-inline: clamp(var(--space-md), 4vw, var(--space-lg));
 
   --dur-micro: 120ms;
   --dur-short: 220ms;

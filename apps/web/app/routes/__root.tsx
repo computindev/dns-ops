@@ -124,12 +124,8 @@ function AuthNav() {
   if (isAuthenticated) {
     return (
       <>
-        <span className="text-sm text-muted">{userEmail}</span>
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="ds-nav-link cursor-pointer border-0 bg-transparent"
-        >
+        <span className="ds-principal">{userEmail}</span>
+        <button type="button" onClick={handleLogout} className="ds-nav-link ds-nav-link--button">
           Logout
         </button>
       </>
@@ -156,28 +152,38 @@ function RootComponent() {
         <body>
           <div className="ds-app-shell">
             <header className="ds-app-header">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between h-16 items-center">
-                  <Link to="/" className="ds-wordmark">
-                    DNS Ops Workbench
+              <div className="ds-app-header__inner">
+                <Link to="/" className="ds-wordmark">
+                  DNS Ops Workbench
+                </Link>
+                <nav aria-label="Primary navigation" className="ds-primary-nav">
+                  <Link
+                    to="/"
+                    className="ds-nav-link"
+                    activeProps={{ className: 'ds-nav-link active' }}
+                  >
+                    Home
                   </Link>
-                  <nav className="flex gap-6 items-center">
-                    <Link to="/" className="ds-nav-link">
-                      Home
-                    </Link>
-                    <Link to="/portfolio" className="ds-nav-link">
-                      Portfolio
-                    </Link>
-                    <Link to="/cases" className="ds-nav-link">
-                      Cases
-                    </Link>
-                    <AuthNav />
-                  </nav>
-                </div>
+                  <Link
+                    to="/portfolio"
+                    className="ds-nav-link"
+                    activeProps={{ className: 'ds-nav-link active' }}
+                  >
+                    Portfolio
+                  </Link>
+                  <Link
+                    to="/cases"
+                    className="ds-nav-link"
+                    activeProps={{ className: 'ds-nav-link active' }}
+                  >
+                    Cases
+                  </Link>
+                  <AuthNav />
+                </nav>
               </div>
             </header>
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <main className="ds-app-main">
               <Outlet />
             </main>
           </div>
