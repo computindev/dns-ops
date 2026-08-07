@@ -2,6 +2,7 @@ import {
   DomainRepository,
   type IDatabaseAdapter,
   ObservationRepository,
+  pingDatabase,
   RecordSetRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
@@ -75,23 +76,34 @@ async function resolveAccessibleSnapshot(
   return { snapshot, domain };
 }
 
-apiRoutes.get('/health', (c) => {
+// Railway readiness endpoint: 200 only after a real DB query succeeds.
+apiRoutes.get('/health', async (c) => {
   const db = c.get('db');
-  const hasDbConnection = !!db;
+  const degradedBody = {
+    status: 'degraded' as const,
+    service: 'dns-ops-web',
+    timestamp: new Date().toISOString(),
+    warning: 'Database connection not available - API functionality limited',
+  };
 
-  return c.json(
-    {
-      status: hasDbConnection ? 'healthy' : 'degraded',
-      service: 'dns-ops-web',
-      timestamp: new Date().toISOString(),
-      ...(hasDbConnection
-        ? {}
-        : {
-            warning: 'Database connection not available - API functionality limited',
-          }),
-    },
-    hasDbConnection ? 200 : 503
-  );
+  if (!db) {
+    return c.json(degradedBody, 503);
+  }
+
+  try {
+    // Prove reachability — adapter presence alone is a false-green.
+    await pingDatabase(db);
+    return c.json(
+      {
+        status: 'healthy' as const,
+        service: 'dns-ops-web',
+        timestamp: new Date().toISOString(),
+      },
+      200
+    );
+  } catch {
+    return c.json(degradedBody, 503);
+  }
 });
 
 // Detailed health check with admin access (PR-10.3)
