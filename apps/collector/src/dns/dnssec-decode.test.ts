@@ -48,6 +48,26 @@ describe('encodeDnsQuery', () => {
 
     expect((packet.flags ?? 0) & (dnsPacket.RECURSION_DESIRED as number)).toBe(0);
   });
+
+  // dns-packet's types.toType() calls name.toUpperCase() — numeric RR type
+  // codes (48/43) throw. Questions must carry string type names.
+  it('encodes DNSKEY as a string type accepted by dns-packet', () => {
+    const buf = encodeDnsQuery({ name: 'example.com', type: 'DNSKEY' });
+    const packet = dnsPacket.decode(buf);
+
+    expect(packet.questions).toHaveLength(1);
+    expect(packet.questions?.[0]?.type).toBe('DNSKEY');
+    expect(packet.questions?.[0]?.name).toBe('example.com');
+  });
+
+  it('encodes DS as a string type accepted by dns-packet', () => {
+    const buf = encodeDnsQuery({ name: 'example.com', type: 'DS' });
+    const packet = dnsPacket.decode(buf);
+
+    expect(packet.questions).toHaveLength(1);
+    expect(packet.questions?.[0]?.type).toBe('DS');
+    expect(packet.questions?.[0]?.name).toBe('example.com');
+  });
 });
 
 describe('decodeDnsResponse', () => {

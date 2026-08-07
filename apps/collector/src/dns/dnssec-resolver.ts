@@ -5,29 +5,22 @@
  * Node.js native dns module doesn't support these record types.
  */
 
+import dgram from 'node:dgram';
+import net from 'node:net';
 import { DNS_RCODE } from '@dns-ops/contracts';
 import * as dnsPacket from 'dns-packet';
 import type { DNSAnswer, DNSQuery } from './types.js';
 
 /**
- * DNS record types supported by dns-packet
- */
-const DNS_TYPES: Record<string, number> = {
-  DNSKEY: 48,
-  DS: 43,
-  RRSIG: 46,
-  NSEC: 47,
-  NSEC3: 50,
-  NSEC3PARAM: 51,
-  TLSA: 52,
-  CDS: 59,
-  CDNSKEY: 60,
-};
-
-/**
  * Default DNS servers for recursive queries
  */
 const DEFAULT_DNS_SERVERS = ['8.8.8.8', '1.1.1.1'];
+
+/**
+ * Wire transport used by queryWithDnsPacket. Tests inject a deterministic
+ * transport so coverage does not depend on public DNS.
+ */
+export type DnsTransport = (packet: Buffer, server: string, port: number) => Promise<Buffer>;
 
 /**
  * dns-packet decodes the response code as a string name ('NOERROR', 'NXDOMAIN',
@@ -70,18 +63,22 @@ export interface DnsResponseSections {
  */
 export interface DnsQueryOptions {
   recursionDesired?: boolean;
+  /** Override UDP/TCP transport (tests). Defaults to sendDnsQuery. */
+  transport?: DnsTransport;
 }
 
 /** Encode a DNS query without performing I/O so recursion policy is testable. */
 export function encodeDnsQuery(query: DNSQuery, options: DnsQueryOptions = {}): Buffer {
   const { recursionDesired = true } = options;
+  // dns-packet types.toType() requires string RR names (calls toUpperCase).
+  // Numeric codes (e.g. DNSKEY=48, DS=43) throw at encode time.
   return dnsPacket.encode({
     type: 'query',
     id: Math.floor(Math.random() * 0xffff),
     flags: recursionDesired ? (dnsPacket.RECURSION_DESIRED as number) : 0,
     questions: [
       {
-        type: DNS_TYPES[query.type] || query.type,
+        type: query.type,
         name: query.name,
         class: 'IN',
       },
@@ -94,7 +91,8 @@ export async function queryWithDnsPacket(
   dnsServer: string = DEFAULT_DNS_SERVERS[0],
   options: DnsQueryOptions = {}
 ): Promise<DnsResponseSections> {
-  const response = await sendDnsQuery(encodeDnsQuery(query, options), dnsServer, 53);
+  const { transport = sendDnsQuery, recursionDesired } = options;
+  const response = await transport(encodeDnsQuery(query, { recursionDesired }), dnsServer, 53);
   return decodeDnsResponse(response, query.type);
 }
 
@@ -284,7 +282,6 @@ async function sendDnsQuery(
   const { timeoutMs = 5000, fallbackToTcp = true } = options;
 
   return new Promise((resolve, reject) => {
-    const dgram = require('node:dgram');
     const client = dgram.createSocket('udp4');
 
     const timeout = setTimeout(() => {
@@ -331,7 +328,6 @@ async function sendDnsQueryTcp(
   timeoutMs: number = 5000
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const net = require('node:net');
     const client = new net.Socket();
 
     const timeout = setTimeout(() => {
@@ -357,7 +353,7 @@ async function sendDnsQueryTcp(
       }
 
       const responseLength = data.readUInt16BE(0);
-      const dnsResponse = data.slice(2);
+      const dnsResponse = data.subarray(2);
 
       if (dnsResponse.length < responseLength) {
         // Handle case where data comes in multiple chunks
