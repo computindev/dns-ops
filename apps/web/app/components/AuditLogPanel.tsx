@@ -89,11 +89,11 @@ const ACTION_ICONS: Record<string, string> = {
 
 // Color for each action category
 const ACTION_COLORS: Record<string, string> = {
-  created: 'text-green-600 bg-green-50',
-  updated: 'text-blue-600 bg-blue-50',
-  deleted: 'text-red-600 bg-red-50',
-  added: 'text-green-600 bg-green-50',
-  removed: 'text-red-600 bg-red-50',
+  created: 'text-success bg-success-surface',
+  updated: 'text-brand bg-info-surface',
+  deleted: 'text-danger bg-danger-surface',
+  added: 'text-success bg-success-surface',
+  removed: 'text-danger bg-danger-surface',
 };
 
 async function fetchAuditLog(limit: number): Promise<AuditEvent[]> {
@@ -157,14 +157,14 @@ export function AuditLogPanel() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-        <h3 className="text-lg font-medium text-gray-900">Audit Log</h3>
+    <div className="ds-panel portfolio-panel">
+      <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+        <h3 className="text-lg font-medium text-ink">Audit Log</h3>
         <button
           type="button"
           onClick={() => refetch()}
           disabled={isLoading || authRequired}
-          className="text-sm text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
+          className="text-sm text-brand hover:text-brand font-medium disabled:opacity-50"
         >
           Refresh
         </button>
@@ -172,25 +172,23 @@ export function AuditLogPanel() {
 
       <div className="p-4">
         {authRequired && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="mb-4 rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to view the tenant audit log.
           </div>
         )}
 
         {loadError && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+          <div className="mb-4 p-3 bg-danger-surface border border-danger rounded-lg text-danger text-sm">
             {loadError}
           </div>
         )}
 
         {isLoading ? (
-          <div className="text-center text-gray-500 py-8">Loading audit log...</div>
+          <div className="text-center text-muted py-8">Loading audit log...</div>
         ) : authRequired ? (
-          <div className="text-center text-gray-500 py-8">
-            Sign in to view the tenant audit log.
-          </div>
+          <div className="text-center text-muted py-8">Sign in to view the tenant audit log.</div>
         ) : events.length === 0 ? (
-          <div className="text-center text-gray-500 py-8">No audit events found</div>
+          <div className="text-center text-muted py-8">No audit events found</div>
         ) : (
           <div className="space-y-3">
             {events.map((event) => (
@@ -209,7 +207,7 @@ export function AuditLogPanel() {
                 <button
                   type="button"
                   onClick={() => setLimit(limit + 20)}
-                  className="text-sm text-blue-600 hover:text-blue-700"
+                  className="text-sm text-brand hover:text-brand"
                 >
                   Load more events
                 </button>
@@ -236,7 +234,7 @@ interface AuditEventCardProps {
 
 function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: AuditEventCardProps) {
   const iconPath = ACTION_ICONS[category] || ACTION_ICONS.note;
-  const colorClass = ACTION_COLORS[colorKey] || 'text-gray-600 bg-gray-50';
+  const colorClass = ACTION_COLORS[colorKey] || 'text-text bg-surface-muted';
 
   const formatTime = (dateString: string): string => {
     const date = new Date(dateString);
@@ -272,17 +270,15 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
       <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between">
           <div>
-            <span className="font-medium text-gray-900">
+            <span className="font-medium text-ink">
               {ACTION_LABELS[event.action] || event.action}
             </span>
-            <span className="text-gray-500 text-sm ml-2">
-              by {event.actorEmail || event.actorId}
-            </span>
+            <span className="text-muted text-sm ml-2">by {event.actorEmail || event.actorId}</span>
           </div>
-          <span className="text-xs text-gray-400 flex-shrink-0">{formatTime(event.createdAt)}</span>
+          <span className="text-xs text-faint flex-shrink-0">{formatTime(event.createdAt)}</span>
         </div>
 
-        <p className="text-sm text-gray-600 mt-0.5">
+        <p className="text-sm text-text mt-0.5">
           {event.entityType}{' '}
           <span className="font-mono text-xs">{event.entityId.slice(0, 8)}...</span>
         </p>
@@ -291,7 +287,7 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
           <button
             type="button"
             onClick={onToggle}
-            className="mt-1 text-xs text-gray-500 hover:text-gray-700"
+            className="mt-1 text-xs text-muted hover:text-text"
           >
             {isExpanded ? 'Hide details' : 'Show details'}
           </button>
@@ -301,16 +297,16 @@ function AuditEventCard({ event, isExpanded, onToggle, category, colorKey }: Aud
           <div className="mt-2 space-y-2">
             {event.previousValue && (
               <div>
-                <p className="text-xs font-medium text-gray-500">Before:</p>
-                <pre className="mt-1 bg-red-50 p-2 rounded text-xs text-red-800 overflow-x-auto">
+                <p className="text-xs font-medium text-muted">Before:</p>
+                <pre className="mt-1 bg-danger-surface p-2 rounded text-xs text-danger overflow-x-auto">
                   {JSON.stringify(event.previousValue, null, 2)}
                 </pre>
               </div>
             )}
             {event.newValue && (
               <div>
-                <p className="text-xs font-medium text-gray-500">After:</p>
-                <pre className="mt-1 bg-green-50 p-2 rounded text-xs text-green-800 overflow-x-auto">
+                <p className="text-xs font-medium text-muted">After:</p>
+                <pre className="mt-1 bg-success-surface p-2 rounded text-xs text-success overflow-x-auto">
                   {JSON.stringify(event.newValue, null, 2)}
                 </pre>
               </div>

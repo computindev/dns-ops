@@ -171,27 +171,27 @@ export function FleetReportsPanel() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">Fleet Reports</h3>
-        <p className="text-sm text-gray-500">Run bulk checks across your domain inventory</p>
+    <div className="ds-panel portfolio-panel">
+      <div className="px-4 py-3 border-b border-line">
+        <h3 className="text-lg font-medium text-ink">Fleet Reports</h3>
+        <p className="text-sm text-muted">Run bulk checks across your domain inventory</p>
       </div>
 
       <div className="p-4 space-y-4">
         {authRequired && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to import inventory or run tenant fleet reports.
           </div>
         )}
 
         {/* Error message */}
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+          <div className="p-3 bg-danger-surface border border-danger rounded-lg text-danger text-sm">
             {error}
             <button
               type="button"
               onClick={() => setError(null)}
-              className="ml-2 text-red-600 hover:text-red-800"
+              className="ml-2 text-danger hover:text-danger"
             >
               Dismiss
             </button>
@@ -200,7 +200,7 @@ export function FleetReportsPanel() {
 
         {/* Template Selection */}
         <div>
-          <p className="block text-sm font-medium text-gray-700 mb-2">Report Template</p>
+          <p className="block text-sm font-medium text-text mb-2">Report Template</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {templates.map((template) => (
               <button
@@ -209,17 +209,17 @@ export function FleetReportsPanel() {
                 onClick={() => setSelectedTemplate(template)}
                 className={`p-3 text-left rounded-lg border-2 transition-colors ${
                   selectedTemplate?.id === template.id
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-brand bg-info-surface'
+                    : 'border-line hover:border-line'
                 }`}
               >
-                <div className="font-medium text-gray-900">{template.name}</div>
-                <p className="text-xs text-gray-500 mt-1">{template.description}</p>
+                <div className="font-medium text-ink">{template.name}</div>
+                <p className="text-xs text-muted mt-1">{template.description}</p>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {template.checks.map((check) => (
                     <span
                       key={check}
-                      className="px-1.5 py-0.5 bg-gray-100 rounded text-xs text-gray-600 uppercase"
+                      className="px-1.5 py-0.5 bg-surface-muted rounded text-xs text-text uppercase"
                     >
                       {check}
                     </span>
@@ -232,10 +232,7 @@ export function FleetReportsPanel() {
 
         {/* Inventory Input */}
         <div>
-          <label
-            htmlFor={inventoryFieldId}
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
+          <label htmlFor={inventoryFieldId} className="block text-sm font-medium text-text mb-1">
             Domain Inventory
           </label>
           <textarea
@@ -246,13 +243,13 @@ export function FleetReportsPanel() {
             placeholder="Enter domain names, one per line or comma-separated:
 example.com
 example.org, example.net"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+            className="ds-input w-full px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-focus focus:border-brand font-mono text-sm"
           />
           <div className="mt-2 flex items-center gap-4">
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-muted">
               {parseInventory(inventoryInput).length} domains
             </span>
-            <label className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer">
+            <label className="text-xs text-brand hover:text-brand cursor-pointer">
               <input
                 type="file"
                 accept=".csv"
@@ -279,7 +276,7 @@ example.org, example.net"
               !selectedTemplate ||
               parseInventory(inventoryInput).length === 0
             }
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ds-button ds-button--primary ds-button--md"
           >
             {running ? 'Running Report...' : 'Run Report'}
           </button>
@@ -289,8 +286,8 @@ example.org, example.net"
         {report && (
           <div className="border-t pt-4 mt-4 space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="font-medium text-gray-900">Report Results</h4>
-              <span className="text-sm text-gray-500">
+              <h4 className="font-medium text-ink">Report Results</h4>
+              <span className="text-sm text-muted">
                 Generated {new Date(report.reportGeneratedAt).toLocaleString()}
               </span>
             </div>
@@ -317,25 +314,25 @@ example.org, example.net"
 
             {/* High Priority Issues */}
             {report.highPriorityIssues && report.highPriorityIssues.length > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h5 className="font-medium text-red-900 mb-2">High Priority Issues</h5>
+              <div className="bg-danger-surface border border-danger rounded-lg p-4">
+                <h5 className="font-medium text-danger mb-2">High Priority Issues</h5>
                 <div className="space-y-2">
                   {report.highPriorityIssues.slice(0, 10).map((issue) => (
                     <div key={`${issue.severity}-${issue.message}`} className="text-sm">
                       <span
                         className={`inline-block w-16 px-1.5 py-0.5 rounded text-xs text-center font-medium ${
                           issue.severity === 'critical'
-                            ? 'bg-red-600 text-white'
-                            : 'bg-orange-500 text-white'
+                            ? 'bg-danger text-brand-ink'
+                            : 'bg-warning text-brand-ink'
                         }`}
                       >
                         {issue.severity}
                       </span>
-                      <span className="ml-2 text-gray-700">{issue.message}</span>
+                      <span className="ml-2 text-text">{issue.message}</span>
                     </div>
                   ))}
                   {report.highPriorityIssues.length > 10 && (
-                    <p className="text-xs text-red-700">
+                    <p className="text-xs text-danger">
                       ...and {report.highPriorityIssues.length - 10} more
                     </p>
                   )}
@@ -349,7 +346,7 @@ example.org, example.net"
                 <button
                   type="button"
                   onClick={() => setShowResultDetails(!showResultDetails)}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  className="text-sm text-brand hover:text-brand font-medium"
                 >
                   {showResultDetails ? 'Hide Details' : 'Show Domain Details'}
                 </button>
@@ -366,9 +363,9 @@ example.org, example.net"
 
             {/* Errors */}
             {report.errors && report.errors.length > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                <h5 className="font-medium text-orange-900 mb-2">Errors</h5>
-                <div className="space-y-1 text-sm text-orange-800">
+              <div className="bg-warning-surface border border-warning rounded-lg p-4">
+                <h5 className="font-medium text-warning mb-2">Errors</h5>
+                <div className="space-y-1 text-sm text-warning">
                   {report.errors.slice(0, 10).map((err) => (
                     <div key={`${err.domain}-${err.error}`}>
                       <span className="font-mono">{err.domain}</span>: {err.error}
@@ -401,11 +398,11 @@ function SummaryCard({
   color: 'blue' | 'green' | 'yellow' | 'red' | 'orange';
 }) {
   const colorClasses = {
-    blue: 'bg-blue-50 text-blue-900',
-    green: 'bg-green-50 text-green-900',
-    yellow: 'bg-yellow-50 text-yellow-900',
-    red: 'bg-red-50 text-red-900',
-    orange: 'bg-orange-50 text-orange-900',
+    blue: 'bg-info-surface text-brand',
+    green: 'bg-success-surface text-success',
+    yellow: 'bg-warning-surface text-warning',
+    red: 'bg-danger-surface text-danger',
+    orange: 'bg-warning-surface text-warning',
   };
 
   return (
@@ -423,18 +420,18 @@ function DomainResultCard({ result }: { result: FleetReportResult }) {
   return (
     <div
       className={`p-3 rounded-lg border ${
-        hasIssues ? 'border-yellow-200 bg-yellow-50' : 'border-gray-200 bg-gray-50'
+        hasIssues ? 'border-warning bg-warning-surface' : 'border-line bg-surface-muted'
       }`}
     >
       <div className="flex items-center justify-between">
         <div>
-          <span className="font-medium text-gray-900">{result.domain}</span>
-          <span className="ml-2 text-xs text-gray-500">{result.findingsCount} findings</span>
+          <span className="font-medium text-ink">{result.domain}</span>
+          <span className="ml-2 text-xs text-muted">{result.findingsCount} findings</span>
         </div>
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="text-sm text-gray-500 hover:text-gray-700"
+          className="text-sm text-muted hover:text-text"
         >
           {expanded ? 'Hide' : 'Show'} checks
         </button>
@@ -448,10 +445,8 @@ function DomainResultCard({ result }: { result: FleetReportResult }) {
               className="flex items-center gap-2 text-sm"
             >
               <StatusBadge status={check.status} />
-              <span className="uppercase text-xs font-medium text-gray-600 w-20">
-                {check.check}
-              </span>
-              <span className="text-gray-700">{check.message}</span>
+              <span className="uppercase text-xs font-medium text-text w-20">{check.check}</span>
+              <span className="text-text">{check.message}</span>
             </div>
           ))}
         </div>
@@ -462,10 +457,10 @@ function DomainResultCard({ result }: { result: FleetReportResult }) {
 
 function StatusBadge({ status }: { status: CheckResult['status'] }) {
   const styles = {
-    pass: 'bg-green-100 text-green-700',
-    fail: 'bg-red-100 text-red-700',
-    warning: 'bg-yellow-100 text-yellow-700',
-    missing: 'bg-gray-100 text-gray-600',
+    pass: 'ds-badge--success',
+    fail: 'ds-badge--danger',
+    warning: 'ds-badge--warning',
+    missing: 'ds-badge--unknown',
   };
 
   const icons = {
@@ -475,11 +470,5 @@ function StatusBadge({ status }: { status: CheckResult['status'] }) {
     missing: '?',
   };
 
-  return (
-    <span
-      className={`w-5 h-5 flex items-center justify-center rounded text-xs font-bold ${styles[status]}`}
-    >
-      {icons[status]}
-    </span>
-  );
+  return <span className={`ds-badge ${styles[status]}`}>{icons[status]}</span>;
 }

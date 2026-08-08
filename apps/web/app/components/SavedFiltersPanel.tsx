@@ -140,15 +140,15 @@ export function SavedFiltersPanel({
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h3 className="text-lg font-medium text-gray-900">Saved Filters</h3>
+    <div className="ds-panel portfolio-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h3 className="text-lg font-medium text-ink">Saved Filters</h3>
         {activeFilters && (
           <button
             type="button"
             onClick={() => setShowSaveDialog(true)}
             disabled={controlsDisabled}
-            className="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+            className="text-sm font-medium text-brand hover:text-brand disabled:text-faint"
           >
             + Save Current
           </button>
@@ -157,18 +157,18 @@ export function SavedFiltersPanel({
 
       <div className="p-4">
         {authRequired && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="mb-4 rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to view or manage saved filters.
           </div>
         )}
 
         {localError && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <div className="mb-4 rounded-lg border border-danger bg-danger-surface p-3 text-sm text-danger">
             {localError}
             <button
               type="button"
               onClick={() => setLocalError(null)}
-              className="ml-2 text-red-600 hover:text-red-800"
+              className="ml-2 text-danger hover:text-danger"
             >
               Dismiss
             </button>
@@ -199,13 +199,11 @@ export function SavedFiltersPanel({
         )}
 
         {isLoading ? (
-          <div className="py-4 text-center text-gray-500">Loading saved filters...</div>
+          <div className="py-4 text-center text-muted">Loading saved filters...</div>
         ) : authRequired ? (
-          <div className="py-4 text-center text-gray-500">
-            Sign in to view tenant saved filters.
-          </div>
+          <div className="py-4 text-center text-muted">Sign in to view tenant saved filters.</div>
         ) : savedFilters.length === 0 ? (
-          <div className="py-4 text-center text-gray-500">
+          <div className="py-4 text-center text-muted">
             No saved filters yet.
             {activeFilters && (
               <>
@@ -213,7 +211,7 @@ export function SavedFiltersPanel({
                 <button
                   type="button"
                   onClick={() => setShowSaveDialog(true)}
-                  className="text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+                  className="text-brand hover:text-brand disabled:text-faint"
                   disabled={controlsDisabled}
                 >
                   Save current filters
@@ -266,37 +264,27 @@ function SavedFilterCard({
   return (
     <div
       className={`rounded-lg border p-3 ${
-        isActive ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-gray-50'
+        isActive ? 'border-brand bg-info-surface' : 'border-line bg-surface-muted'
       }`}
     >
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate font-medium text-gray-900">{filter.name}</span>
-            {filter.isShared && (
-              <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
-                Shared
-              </span>
-            )}
-            {isActive && (
-              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
-                Active
-              </span>
-            )}
+            <span className="truncate font-medium text-ink">{filter.name}</span>
+            {filter.isShared && <span className="ds-badge ds-badge--success">Shared</span>}
+            {isActive && <span className="ds-badge ds-badge--info">Active</span>}
             {!compatibility.supported && (
-              <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-800">
-                Partial
-              </span>
+              <span className="ds-badge ds-badge--unknown">Partial</span>
             )}
           </div>
           {filter.description && (
-            <p className="mt-1 truncate text-sm text-gray-600">{filter.description}</p>
+            <p className="mt-1 truncate text-sm text-text">{filter.description}</p>
           )}
-          <div className="mt-1 text-xs text-gray-500">
+          <div className="mt-1 text-xs text-muted">
             {criteriaCount} filter{criteriaCount !== 1 ? 's' : ''} · owner {filter.createdBy}
           </div>
           {!compatibility.supported && (
-            <p className="mt-1 text-xs text-yellow-700">
+            <p className="mt-1 text-xs text-warning">
               Unsupported criteria: {compatibility.reasons.join(', ')}
             </p>
           )}
@@ -307,7 +295,7 @@ function SavedFilterCard({
             type="button"
             onClick={onLoad}
             disabled={!compatibility.supported}
-            className="rounded p-1.5 text-gray-500 hover:bg-blue-50 hover:text-blue-600 disabled:text-gray-300 disabled:hover:bg-transparent"
+            className="rounded p-1.5 text-muted hover:bg-info-surface hover:text-brand disabled:text-faint disabled:hover:bg-transparent"
             title={compatibility.supported ? 'Load filter' : 'Filter uses unsupported criteria'}
           >
             <svg
@@ -329,7 +317,7 @@ function SavedFilterCard({
             type="button"
             onClick={onEdit}
             disabled={!filter.canManage}
-            className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:text-gray-300 disabled:hover:bg-transparent"
+            className="rounded p-1.5 text-muted hover:bg-surface-muted hover:text-text disabled:text-faint disabled:hover:bg-transparent"
             title={filter.canManage ? 'Edit filter' : 'Only the creator can edit this filter'}
           >
             <svg
@@ -351,10 +339,10 @@ function SavedFilterCard({
             type="button"
             onClick={onToggleShare}
             disabled={!filter.canManage}
-            className={`rounded p-1.5 disabled:text-gray-300 disabled:hover:bg-transparent ${
+            className={`rounded p-1.5 disabled:text-faint disabled:hover:bg-transparent ${
               filter.isShared
-                ? 'text-green-600 hover:bg-green-50 hover:text-green-700'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                ? 'text-success hover:bg-success-surface hover:text-success'
+                : 'text-muted hover:bg-surface-muted hover:text-text'
             }`}
             title={
               filter.canManage
@@ -383,7 +371,7 @@ function SavedFilterCard({
             type="button"
             onClick={onDelete}
             disabled={!filter.canManage}
-            className="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:text-gray-300 disabled:hover:bg-transparent"
+            className="rounded p-1.5 text-muted hover:bg-danger-surface hover:text-danger disabled:text-faint disabled:hover:bg-transparent"
             title={filter.canManage ? 'Delete filter' : 'Only the creator can delete this filter'}
           >
             <svg
@@ -492,29 +480,29 @@ function SaveFilterDialog({
   const criteriaPreview = editingFilter?.criteria || currentFiltersToSavedCriteria(currentFilters);
 
   return (
-    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <form onSubmit={handleSubmit}>
-        <h4 className="mb-3 font-medium text-gray-900">
+        <h4 className="mb-3 font-medium text-ink">
           {editingFilter ? 'Edit Filter Metadata' : 'Save Filter'}
         </h4>
 
         {editingFilter && (
-          <p className="mb-3 text-sm text-gray-600">
+          <p className="mb-3 text-sm text-text">
             Editing updates name, description, and sharing only. Stored filter criteria stay
             unchanged.
           </p>
         )}
 
         {error && (
-          <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+          <div className="mb-3 rounded border border-danger bg-danger-surface p-2 text-sm text-danger">
             {error}
           </div>
         )}
 
         <div className="space-y-3">
           <div>
-            <label htmlFor={nameId} className="mb-1 block text-sm font-medium text-gray-700">
-              Name <span className="text-red-500">*</span>
+            <label htmlFor={nameId} className="mb-1 block text-sm font-medium text-text">
+              Name <span className="text-danger">*</span>
             </label>
             <input
               type="text"
@@ -523,12 +511,12 @@ function SaveFilterDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g., Critical Issues"
               disabled={authRequired}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+              className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
             />
           </div>
 
           <div>
-            <label htmlFor={descriptionId} className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor={descriptionId} className="mb-1 block text-sm font-medium text-text">
               Description
             </label>
             <input
@@ -538,7 +526,7 @@ function SaveFilterDialog({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description..."
               disabled={authRequired}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+              className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
             />
           </div>
 
@@ -549,15 +537,15 @@ function SaveFilterDialog({
               checked={isShared}
               onChange={(e) => setIsShared(e.target.checked)}
               disabled={authRequired}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="h-4 w-4 rounded border-line text-brand focus:ring-focus"
             />
-            <label htmlFor={sharedId} className="text-sm text-gray-700">
+            <label htmlFor={sharedId} className="text-sm text-text">
               Share with team
             </label>
           </div>
 
-          <div className="rounded border border-gray-200 bg-white p-2">
-            <p className="mb-1 text-xs font-medium text-gray-500">Filter criteria:</p>
+          <div className="rounded border border-line bg-surface p-2">
+            <p className="mb-1 text-xs font-medium text-muted">Filter criteria:</p>
             <CriteriaPreview criteria={criteriaPreview} />
           </div>
         </div>
@@ -566,7 +554,7 @@ function SaveFilterDialog({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+            className="px-3 py-1.5 text-sm text-text hover:text-text"
             disabled={saving || authRequired}
           >
             Cancel
@@ -574,7 +562,7 @@ function SaveFilterDialog({
           <button
             type="submit"
             disabled={saving || authRequired || !name.trim()}
-            className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            className="ds-button ds-button--primary ds-button--sm"
           >
             {saving ? 'Saving...' : editingFilter ? 'Update' : 'Save'}
           </button>
@@ -610,13 +598,13 @@ function CriteriaPreview({ criteria }: { criteria: FilterCriteria }) {
   }
 
   if (chips.length === 0) {
-    return <span className="text-xs text-gray-400">No filters selected</span>;
+    return <span className="text-xs text-faint">No filters selected</span>;
   }
 
   return (
     <div className="flex flex-wrap gap-1">
       {chips.map((chip) => (
-        <span key={chip} className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+        <span key={chip} className="rounded bg-surface-muted px-2 py-0.5 text-xs text-text">
           {chip}
         </span>
       ))}
@@ -630,10 +618,9 @@ function isFilterActive(currentFilters: CurrentFilters, filter: SavedFilter): bo
     return false;
   }
 
-  return (
-    JSON.stringify(normalizeCurrentFilters(currentFilters)) ===
-    JSON.stringify(savedCriteriaToCurrentFilters(filter.criteria))
-  );
+  const normalizedCurrent = JSON.stringify(normalizeCurrentFilters(currentFilters));
+  const normalizedSaved = JSON.stringify(savedCriteriaToCurrentFilters(filter.criteria));
+  return Object.is(normalizedCurrent, normalizedSaved);
 }
 
 function getCriteriaCount(criteria: FilterCriteria): number {

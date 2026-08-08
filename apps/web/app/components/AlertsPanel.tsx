@@ -55,19 +55,19 @@ const SEVERITY_OPTIONS: Array<{ value: 'all' | AlertSeverity; label: string }> =
 ];
 
 const SEVERITY_BADGES: Record<AlertSeverity, string> = {
-  critical: 'bg-red-100 text-red-800',
-  high: 'bg-orange-100 text-orange-800',
-  medium: 'bg-yellow-100 text-yellow-800',
-  low: 'bg-blue-100 text-blue-800',
-  info: 'bg-gray-100 text-gray-700',
+  critical: 'ds-badge ds-badge--danger',
+  high: 'ds-badge ds-badge--warning',
+  medium: 'ds-badge ds-badge--warning',
+  low: 'ds-badge ds-badge--info',
+  info: 'ds-badge ds-badge--neutral',
 };
 
 const STATUS_BADGES: Record<AlertStatus, string> = {
-  pending: 'bg-red-50 text-red-700',
-  sent: 'bg-blue-50 text-blue-700',
-  suppressed: 'bg-gray-100 text-gray-700',
-  acknowledged: 'bg-amber-100 text-amber-800',
-  resolved: 'bg-green-100 text-green-800',
+  pending: 'ds-badge ds-badge--danger',
+  sent: 'ds-badge ds-badge--info',
+  suppressed: 'ds-badge ds-badge--neutral',
+  acknowledged: 'ds-badge ds-badge--warning',
+  resolved: 'ds-badge ds-badge--success',
 };
 
 function canAcknowledge(status: AlertStatus): boolean {
@@ -251,23 +251,23 @@ export function AlertsPanel() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="ds-panel portfolio-panel">
+      <div className="px-4 py-3 border-b border-line flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg font-medium text-gray-900">Alerts</h3>
-          <p className="text-sm text-gray-500">
+          <h3 className="text-lg font-medium text-ink">Alerts</h3>
+          <p className="text-sm text-muted">
             Review alert state, triage, and resolve operator-visible issues
           </p>
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row">
-          <label className="text-sm text-gray-600">
+          <label className="text-sm text-text">
             <span className="sr-only">Filter by status</span>
             <select
               value={statusFilter}
               onChange={(event) => handleStatusChange(event.target.value as 'all' | AlertStatus)}
               disabled={authRequired}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+              className="rounded-lg border border-line px-3 py-2 text-sm disabled:bg-surface-muted disabled:text-muted"
             >
               {STATUS_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -277,7 +277,7 @@ export function AlertsPanel() {
             </select>
           </label>
 
-          <label className="text-sm text-gray-600">
+          <label className="text-sm text-text">
             <span className="sr-only">Filter by severity</span>
             <select
               value={severityFilter}
@@ -285,7 +285,7 @@ export function AlertsPanel() {
                 handleSeverityChange(event.target.value as 'all' | AlertSeverity)
               }
               disabled={authRequired}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+              className="rounded-lg border border-line px-3 py-2 text-sm disabled:bg-surface-muted disabled:text-muted"
             >
               {SEVERITY_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -299,7 +299,7 @@ export function AlertsPanel() {
 
       <div className="p-4 space-y-4">
         {authRequired ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to review or mutate tenant alerts.
           </div>
         ) : null}
@@ -314,7 +314,7 @@ export function AlertsPanel() {
         ) : null}
 
         {actionError ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-danger bg-danger-surface p-3 text-sm text-danger">
             {actionError}
           </div>
         ) : null}
@@ -343,7 +343,7 @@ export function AlertsPanel() {
           />
         ) : (
           <div className="space-y-3">
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-muted">
               Showing {alerts.length} of {total} alerts
             </div>
             {alerts.map((alert) => {
@@ -352,7 +352,7 @@ export function AlertsPanel() {
               const resolveExpanded = expandedResolveAlertId === alert.id;
 
               return (
-                <div key={alert.id} className="rounded-lg border border-gray-200 p-4 space-y-3">
+                <div key={alert.id} className="rounded-lg border border-line p-4 space-y-3">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -360,12 +360,12 @@ export function AlertsPanel() {
                           <Link
                             to="/domain/$domain"
                             params={{ domain: alert.domainName.toLowerCase() }}
-                            className="font-medium text-blue-600 hover:text-blue-700"
+                            className="font-medium text-brand hover:text-brand"
                           >
                             {alert.domainName}
                           </Link>
                         ) : (
-                          <h4 className="font-medium text-gray-900">Unknown domain</h4>
+                          <h4 className="font-medium text-ink">Unknown domain</h4>
                         )}
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_BADGES[alert.severity]}`}
@@ -378,10 +378,10 @@ export function AlertsPanel() {
                           {alert.status}
                         </span>
                       </div>
-                      <p className="mt-1 text-sm font-medium text-gray-800">{alert.title}</p>
-                      <p className="mt-1 text-sm text-gray-600">{alert.description}</p>
+                      <p className="mt-1 text-sm font-medium text-text">{alert.title}</p>
+                      <p className="mt-1 text-sm text-text">{alert.description}</p>
                     </div>
-                    <div className="text-xs text-gray-500 text-left sm:text-right">
+                    <div className="text-xs text-muted text-left sm:text-right">
                       <div>Created {formatTimestamp(alert.createdAt)}</div>
                       {alert.acknowledgedAt ? (
                         <div>Acknowledged {formatTimestamp(alert.acknowledgedAt)}</div>
@@ -393,7 +393,7 @@ export function AlertsPanel() {
                   </div>
 
                   {alert.resolutionNote ? (
-                    <div className="rounded bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                    <div className="rounded bg-surface-muted px-3 py-2 text-sm text-text">
                       Resolution note: {alert.resolutionNote}
                     </div>
                   ) : null}
@@ -404,7 +404,7 @@ export function AlertsPanel() {
                         type="button"
                         disabled={!!actionInFlight || authRequired}
                         onClick={() => runAlertAction(alert.id, 'acknowledge')}
-                        className="focus-ring rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
+                        className="focus-ring rounded-lg border border-line px-3 py-2 text-sm text-text hover:bg-surface-muted disabled:bg-surface-muted disabled:text-faint"
                       >
                         {actionInFlight === 'acknowledge' ? 'Acknowledging...' : 'Acknowledge'}
                       </button>
@@ -415,7 +415,7 @@ export function AlertsPanel() {
                         type="button"
                         disabled={!!actionInFlight || authRequired}
                         onClick={() => runAlertAction(alert.id, 'suppress')}
-                        className="focus-ring rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
+                        className="focus-ring rounded-lg border border-line px-3 py-2 text-sm text-text hover:bg-surface-muted disabled:bg-surface-muted disabled:text-faint"
                       >
                         {actionInFlight === 'suppress' ? 'Suppressing...' : 'Suppress'}
                       </button>
@@ -432,7 +432,7 @@ export function AlertsPanel() {
                             [alert.id]: current[alert.id] ?? alert.resolutionNote ?? '',
                           }));
                         }}
-                        className="focus-ring rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:bg-gray-400"
+                        className="ds-button ds-button--primary ds-button--sm"
                       >
                         Resolve
                       </button>
@@ -440,8 +440,8 @@ export function AlertsPanel() {
                   </div>
 
                   {resolveExpanded ? (
-                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">
+                    <div className="rounded-lg border border-brand bg-info-surface p-3 space-y-2">
+                      <label className="block text-sm font-medium text-text">
                         Resolution note
                         <textarea
                           value={resolveDraft}
@@ -453,7 +453,7 @@ export function AlertsPanel() {
                           }
                           rows={3}
                           disabled={!!actionInFlight || authRequired}
-                          className="focus-ring mt-1 block w-full rounded-md border-gray-300 shadow-sm disabled:bg-gray-100"
+                          className="ds-input mt-1 block w-full rounded-md border-line disabled:bg-surface-muted"
                           placeholder="Describe how this alert was resolved"
                         />
                       </label>
@@ -464,7 +464,7 @@ export function AlertsPanel() {
                           onClick={() =>
                             runAlertAction(alert.id, 'resolve', resolveDraft.trim() || undefined)
                           }
-                          className="focus-ring rounded-lg bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:bg-gray-400"
+                          className="ds-button ds-button--primary ds-button--sm"
                         >
                           {actionInFlight === 'resolve' ? 'Resolving...' : 'Confirm Resolve'}
                         </button>
@@ -472,7 +472,7 @@ export function AlertsPanel() {
                           type="button"
                           disabled={!!actionInFlight}
                           onClick={() => setExpandedResolveAlertId(null)}
-                          className="focus-ring rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          className="focus-ring rounded-lg border border-line px-3 py-2 text-sm text-text hover:bg-surface-muted"
                         >
                           Cancel
                         </button>
@@ -488,7 +488,7 @@ export function AlertsPanel() {
                 type="button"
                 disabled={isFetchingNextPage || authRequired}
                 onClick={() => fetchNextPage()}
-                className="focus-ring rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
+                className="focus-ring rounded-lg border border-line px-4 py-2 text-sm text-text hover:bg-surface-muted disabled:bg-surface-muted disabled:text-faint"
               >
                 {isFetchingNextPage ? 'Loading more...' : 'Load more alerts'}
               </button>

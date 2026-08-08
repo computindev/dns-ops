@@ -148,28 +148,28 @@ export function PortfolioSearchPanel({
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-200 px-4 py-3">
-        <h3 className="text-lg font-medium text-gray-900">Portfolio Search</h3>
-        <p className="text-sm text-gray-500">
+    <div className="ds-panel portfolio-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="text-lg font-medium text-ink">Portfolio Search</h3>
+        <p className="text-sm text-muted">
           Search tenant domains by name, tag, severity, and zone-management state.
         </p>
       </div>
 
       <div className="space-y-4 p-4">
         {authRequired && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to search tenant domains and load saved filters.
           </div>
         )}
 
         {searchError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <div className="rounded-lg border border-danger bg-danger-surface p-3 text-sm text-danger">
             {searchError}
             <button
               type="button"
               onClick={() => queryClient.invalidateQueries({ queryKey: ['portfolio-search'] })}
-              className="ml-2 text-red-600 hover:text-red-800"
+              className="ml-2 text-danger hover:text-danger"
             >
               Retry
             </button>
@@ -177,7 +177,7 @@ export function PortfolioSearchPanel({
         )}
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700" htmlFor={queryId}>
+          <label className="mb-1 block text-sm font-medium text-text" htmlFor={queryId}>
             Query
           </label>
           <input
@@ -187,12 +187,12 @@ export function PortfolioSearchPanel({
             onChange={(e) => updateFilters({ query: e.target.value })}
             disabled={authRequired}
             placeholder="example.com"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+            className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700" htmlFor={tagsId}>
+          <label className="mb-1 block text-sm font-medium text-text" htmlFor={tagsId}>
             Tags
           </label>
           <div className="flex gap-2">
@@ -209,13 +209,13 @@ export function PortfolioSearchPanel({
               }}
               disabled={authRequired}
               placeholder="Add a tag"
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+              className="ds-input flex-1"
             />
             <button
               type="button"
               onClick={() => addTag(tagDraft)}
-              disabled={authRequired || tagDraft.trim().length === 0}
-              className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
+              disabled={authRequired || !tagDraft.trim().length}
+              className="ds-button ds-button--primary ds-button--sm"
             >
               Add
             </button>
@@ -228,7 +228,7 @@ export function PortfolioSearchPanel({
                   type="button"
                   onClick={() => removeTag(tag)}
                   disabled={authRequired}
-                  className="rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-800 disabled:opacity-60"
+                  className="rounded-full bg-info-surface px-3 py-1 text-sm text-brand disabled:opacity-60"
                 >
                   {tag} ×
                 </button>
@@ -243,7 +243,7 @@ export function PortfolioSearchPanel({
                   type="button"
                   onClick={() => addTag(tag)}
                   disabled={authRequired}
-                  className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 disabled:opacity-60"
+                  className="rounded bg-surface-muted px-2 py-1 text-xs text-text disabled:opacity-60"
                 >
                   {tag}
                 </button>
@@ -253,10 +253,10 @@ export function PortfolioSearchPanel({
         </div>
 
         <fieldset>
-          <legend className="mb-1 text-sm font-medium text-gray-700">Severity</legend>
+          <legend className="mb-1 text-sm font-medium text-text">Severity</legend>
           <div className="flex flex-wrap gap-3">
             {SEVERITIES.map((severity) => (
-              <label key={severity} className="flex items-center gap-2 text-sm text-gray-700">
+              <label key={severity} className="flex items-center gap-2 text-sm text-text">
                 <input
                   type="checkbox"
                   checked={normalizedFilters.severities.includes(severity)}
@@ -270,10 +270,10 @@ export function PortfolioSearchPanel({
         </fieldset>
 
         <fieldset>
-          <legend className="mb-1 text-sm font-medium text-gray-700">Zone Management</legend>
+          <legend className="mb-1 text-sm font-medium text-text">Zone Management</legend>
           <div className="flex flex-wrap gap-3">
             {ZONE_MANAGEMENT.map((zoneManagement) => (
-              <label key={zoneManagement} className="flex items-center gap-2 text-sm text-gray-700">
+              <label key={zoneManagement} className="flex items-center gap-2 text-sm text-text">
                 <input
                   type="checkbox"
                   checked={normalizedFilters.zoneManagement.includes(zoneManagement)}
@@ -291,17 +291,17 @@ export function PortfolioSearchPanel({
             type="button"
             onClick={clearFilters}
             disabled={authRequired}
-            className="text-sm text-gray-600 hover:text-gray-800 disabled:text-gray-400"
+            className="ds-button ds-button--quiet ds-button--sm"
           >
             Clear filters
           </button>
         </div>
 
-        <div className="border-t border-gray-200 pt-4">
+        <div className="border-t border-line pt-4">
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="font-medium text-gray-900">Results</h4>
+            <h4 className="font-medium text-ink">Results</h4>
             {!isLoading && hasSearched && !authRequired && (
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-muted">
                 {results.length === 20
                   ? 'Showing first 20 matching domains. Refine filters to narrow results.'
                   : `Showing ${results.length} matching domain${results.length === 1 ? '' : 's'}`}
@@ -310,13 +310,13 @@ export function PortfolioSearchPanel({
           </div>
 
           {isLoading ? (
-            <div className="py-8 text-center text-gray-500">Searching portfolio...</div>
+            <div className="py-8 text-center text-muted">Searching portfolio...</div>
           ) : authRequired ? (
-            <div className="py-8 text-center text-gray-500">Sign in to search tenant domains.</div>
+            <div className="py-8 text-center text-muted">Sign in to search tenant domains.</div>
           ) : searchError ? (
-            <div className="py-8 text-center text-gray-500">Search is unavailable right now.</div>
+            <div className="py-8 text-center text-muted">Search is unavailable right now.</div>
           ) : results.length === 0 ? (
-            <div className="py-8 text-center text-gray-500">
+            <div className="py-8 text-center text-muted">
               No tenant domains matched the current filters.
             </div>
           ) : (
@@ -342,18 +342,18 @@ function SearchResultCard({ result }: { result: SearchResult }) {
   );
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="rounded-lg border border-line bg-surface-muted p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <Link
             to="/domain/$domain"
             params={{ domain: result.normalizedName }}
-            className="text-base font-medium text-blue-600 hover:text-blue-700"
+            className="text-base font-medium text-brand hover:text-brand"
           >
             {result.name}
           </Link>
-          <div className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
-            <span className="rounded bg-white px-2 py-0.5 text-gray-700">
+          <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted">
+            <span className="rounded bg-surface px-2 py-0.5 text-text">
               {result.zoneManagement}
             </span>
             {result.latestSnapshot ? (
@@ -368,9 +368,9 @@ function SearchResultCard({ result }: { result: SearchResult }) {
         </div>
       </div>
 
-      <div className="mt-3 text-sm text-gray-600">
+      <div className="mt-3 text-sm text-text">
         {!result.findingsEvaluated ? (
-          <span>
+          <span className="ds-badge ds-badge--unknown">
             Needs setup/evidence. {result.evaluationCoverage.errors[0]?.unknown.explanation}{' '}
             <strong>
               {result.evaluationCoverage.errors[0]?.unknown.actionLabel ?? 'Run a fresh scan'}.
@@ -381,7 +381,7 @@ function SearchResultCard({ result }: { result: SearchResult }) {
         ) : (
           <div className="flex flex-wrap gap-2">
             {SEVERITIES.filter((severity) => counts[severity] > 0).map((severity) => (
-              <span key={severity} className="rounded bg-white px-2 py-0.5 text-xs text-gray-700">
+              <span key={severity} className="rounded bg-surface px-2 py-0.5 text-xs text-text">
                 {severity}: {counts[severity]}
               </span>
             ))}
