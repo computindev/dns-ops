@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId } from 'react';
+import { Button } from './ui/Button.js';
 
 export type Unknown = {
   reason: string;
@@ -95,28 +96,34 @@ export function DomainEvidencePanel({ domain }: { domain: string }) {
       fetchJson<EvidenceResponse>(`/api/domains/${encodeURIComponent(domain)}/evidence`),
   });
 
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: ['domain-profile', domain] });
+    void queryClient.invalidateQueries({ queryKey: ['domain-evidence', domain] });
+  };
+
   if (profile.isLoading || evidence.isLoading) {
     return (
-      <p className="text-sm text-gray-500" role="status">
-        Loading evidence coverage…
-      </p>
+      <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
+        <p id={headingId} className="domain-evidence__state" role="status">
+          Loading evidence coverage…
+        </p>
+      </section>
     );
   }
   if (profile.error || evidence.error) {
     return (
-      <div className="text-sm text-gray-600" role="alert">
-        Evidence setup status is currently unavailable.
-        <button
-          type="button"
-          className="ml-2 font-medium underline"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ['domain-profile', domain] });
-            void queryClient.invalidateQueries({ queryKey: ['domain-evidence', domain] });
-          }}
-        >
-          Retry
-        </button>
-      </div>
+      <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
+        <div className="domain-evidence__error" role="alert">
+          <div>
+            <p className="ds-kicker">Evidence status</p>
+            <h3 id={headingId}>Evidence setup is unavailable</h3>
+            <p>Evidence setup status is currently unavailable.</p>
+          </div>
+          <Button onClick={retry} size="sm" variant="quiet">
+            Retry
+          </Button>
+        </div>
+      </section>
     );
   }
 
@@ -130,38 +137,52 @@ export function DomainEvidencePanel({ domain }: { domain: string }) {
   const observed = evidence.data?.evidence.filter(isCurrentEvidence) ?? [];
 
   return (
-    <section className="space-y-3" aria-labelledby={headingId}>
-      <div>
-        <h3 id={headingId} className="font-semibold text-gray-900">
-          Evidence coverage
-        </h3>
-        <p className="text-sm text-gray-500">
-          Known risk and completed evidence are separate. Unknown checks are never healthy.
-        </p>
-      </div>
+    <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
+      <header className="domain-evidence__header">
+        <div>
+          <p className="ds-kicker">Evidence integrity</p>
+          <h3 id={headingId}>Evidence coverage</h3>
+        </div>
+        <p>Known risk and completed evidence are separate. Unknown checks are never healthy.</p>
+      </header>
+
       {uniqueSetup.length > 0 ? (
-        <div
-          className="rounded-lg border border-amber-200 bg-amber-50 p-3"
+        <section
+          className="domain-evidence__setup ds-panel--muted"
+          aria-labelledby={`${headingId}-setup`}
           data-testid="domain-needs-setup-evidence"
         >
-          <h4 className="font-medium text-amber-900">Needs setup/evidence</h4>
-          <ul className="mt-2 space-y-2 text-sm text-amber-900">
+          <div>
+            <p className="ds-kicker">Baseline and freshness</p>
+            <h4 id={`${headingId}-setup`}>Needs setup/evidence</h4>
+          </div>
+          <ul>
             {uniqueSetup.map((unknown) => (
               <li key={`${unknown.reason}-${unknown.action}-${unknown.explanation}`}>
-                <span className="font-medium">{unknown.actionLabel}:</span> {unknown.explanation}
+                <span className="ds-badge ds-badge--unknown">{unknown.actionLabel}</span>
+                <p>{unknown.explanation}</p>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       ) : null}
+
       {profile.data?.profile ? (
-        <p className="text-sm text-gray-600">
-          Purpose: <span className="font-medium">{profile.data.profile.purpose}</span> ·
-          Criticality: <span className="font-medium">{profile.data.profile.criticality}</span>
-        </p>
+        <dl className="domain-evidence__profile">
+          <div>
+            <dt>Purpose</dt>
+            <dd>{profile.data.profile.purpose}</dd>
+          </div>
+          <div>
+            <dt>Criticality</dt>
+            <dd>{profile.data.profile.criticality}</dd>
+          </div>
+        </dl>
       ) : null}
+
       {observed.length > 0 ? (
-        <p className="text-sm text-green-700" data-testid="domain-current-evidence">
+        <p className="domain-evidence__current" data-testid="domain-current-evidence">
+          <span className="ds-badge ds-badge--success">Current</span>
           {observed.length} probe observation{observed.length === 1 ? '' : 's'} recorded with
           current evidence.
         </p>

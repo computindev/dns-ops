@@ -17,6 +17,26 @@ import {
 const TEST_DOMAIN = 'tanstack-query-test.com';
 const SNAPSHOT_ID = 'snap-tq-001';
 
+async function expectSignalRoomWarningSurface(
+  page: import('@playwright/test').Page,
+  testId: string
+): Promise<void> {
+  await expect(page.getByTestId(testId)).toHaveAttribute('data-state', 'warning');
+  await expect(page.getByTestId(testId)).toHaveClass(/domain-360__state--warning/);
+  const colors = await page.getByTestId(testId).evaluate((element) => {
+    const tokenSample = document.createElement('div');
+    tokenSample.style.backgroundColor = 'var(--color-warning-surface)';
+    document.body.append(tokenSample);
+    const result = {
+      surface: getComputedStyle(element).backgroundColor,
+      token: getComputedStyle(tokenSample).backgroundColor,
+    };
+    tokenSample.remove();
+    return result;
+  });
+  expect(colors.surface).toBe(colors.token);
+}
+
 test.describe.configure({ mode: 'parallel' });
 
 // ---------------------------------------------------------------------------
@@ -95,10 +115,7 @@ test.describe('Simulation Panel Cache', () => {
 
 test.describe('Error Banner Retry', () => {
   test('portfolio search error shows retry button', async ({ page }) => {
-    await page.goto('/portfolio');
-    await expect(page.getByText('Portfolio workflows')).toBeVisible();
-
-    // Intercept the search endpoint to always return an error
+    // Register before navigation so the initial reactive search cannot escape the fixture.
     await page.route('**/api/portfolio/search', async (route) => {
       await route.fulfill({
         status: 503,
@@ -106,12 +123,11 @@ test.describe('Error Banner Retry', () => {
       });
     });
 
-    // Trigger a search by typing in the query field
-    const queryInput = page.getByLabel(/Query/i);
-    await queryInput.fill('test');
-    await page.keyboard.press('Enter');
+    await page.goto('/portfolio');
+    await expect(page.getByText('Portfolio workflows')).toBeVisible();
 
-    // Wait for error banner (TanStack Query retries 3x with backoff, so this takes time)
+    // The Portfolio search is reactive, so the initial query exercises the retry state.
+    // Wait for the error banner after TanStack Query's bounded retries complete.
     const errorBanner = page.getByText('Service unavailable');
     await expect(errorBanner).toBeVisible({ timeout: 15000 });
 
@@ -185,7 +201,7 @@ test.describe('Domain 360 Error States', () => {
     await page.unroute(`**/api/domain/${TEST_DOMAIN}/latest`);
   });
 
-  test('shows yellow banner for 404 (no snapshot)', async ({ page }) => {
+  test('shows a Signal Room warning surface for 404 (no snapshot)', async ({ page }) => {
     await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, async (route) => {
       await route.fulfill({ status: 404, body: JSON.stringify({ error: 'Not found' }) });
     });
@@ -193,10 +209,10 @@ test.describe('Domain 360 Error States', () => {
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
-    // Should show yellow "no data" banner
+    // A missing snapshot is recoverable and must retain warning-token treatment.
     const banner = page.getByTestId('domain-no-data-banner');
     await expect(banner).toBeVisible();
-    await expect(banner).toHaveClass(/bg-yellow-50/);
+    await expectSignalRoomWarningSurface(page, 'domain-no-data-banner');
 
     await page.unroute(`**/api/domain/${TEST_DOMAIN}/latest`);
   });
