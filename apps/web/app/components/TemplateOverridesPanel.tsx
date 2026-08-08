@@ -103,14 +103,14 @@ export function TemplateOverridesPanel() {
   const writeControlsDisabled = authRequired || writeBlocked;
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h3 className="text-lg font-medium text-gray-900">Template Overrides</h3>
+    <div className="ds-panel portfolio-panel">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h3 className="text-lg font-medium text-ink">Template Overrides</h3>
         <button
           type="button"
           onClick={() => setShowCreateDialog(true)}
           disabled={writeControlsDisabled}
-          className="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+          className="text-sm font-medium text-brand hover:text-brand disabled:text-faint"
         >
           + New Override
         </button>
@@ -118,23 +118,20 @@ export function TemplateOverridesPanel() {
 
       <div className="p-4">
         {authRequired && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="mb-4 rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to view or edit tenant template overrides.
           </div>
         )}
 
         {writeBlocked && (
-          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          <div className="mb-4 rounded-lg border border-brand bg-info-surface p-4 text-sm text-brand">
             You can view tenant overrides here, but your current role cannot create, edit, or delete
             them.
           </div>
         )}
 
         <div className="mb-4">
-          <label
-            htmlFor={providerSelectId}
-            className="mb-1 block text-sm font-medium text-gray-700"
-          >
+          <label htmlFor={providerSelectId} className="mb-1 block text-sm font-medium text-text">
             Select Provider
           </label>
           <select
@@ -142,7 +139,7 @@ export function TemplateOverridesPanel() {
             value={selectedProvider}
             onChange={(e) => setSelectedProvider(e.target.value)}
             disabled={readControlsDisabled}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+            className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
           >
             <option value="">Choose a provider...</option>
             {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
@@ -154,12 +151,12 @@ export function TemplateOverridesPanel() {
         </div>
 
         {localError && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <div className="mb-4 rounded-lg border border-danger bg-danger-surface p-3 text-sm text-danger">
             {localError}
             <button
               type="button"
               onClick={() => setLocalError(null)}
-              className="ml-2 text-red-600 hover:text-red-800"
+              className="ml-2 text-danger hover:text-danger"
             >
               Dismiss
             </button>
@@ -188,22 +185,22 @@ export function TemplateOverridesPanel() {
         )}
 
         {authRequired ? (
-          <div className="py-8 text-center text-gray-500">
+          <div className="py-8 text-center text-muted">
             Sign in to view and manage tenant template overrides.
           </div>
         ) : !selectedProvider ? (
-          <div className="py-8 text-center text-gray-500">
+          <div className="py-8 text-center text-muted">
             Select a provider to view and manage template overrides
           </div>
         ) : isLoading ? (
-          <div className="py-8 text-center text-gray-500">Loading overrides...</div>
+          <div className="py-8 text-center text-muted">Loading overrides...</div>
         ) : overrides.length === 0 ? (
-          <div className="py-8 text-center text-gray-500">
+          <div className="py-8 text-center text-muted">
             No overrides for {PROVIDER_LABELS[selectedProvider] || selectedProvider}.{' '}
             <button
               type="button"
               onClick={() => setShowCreateDialog(true)}
-              className="text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+              className="text-brand hover:text-brand disabled:text-faint"
               disabled={writeControlsDisabled}
             >
               Create one
@@ -238,19 +235,19 @@ function OverrideCard({ override, disabled, onEdit, onDelete }: OverrideCardProp
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+    <div className="rounded-lg border border-line bg-surface-muted p-3">
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-gray-900">{override.templateKey}</span>
+            <span className="font-mono text-sm text-ink">{override.templateKey}</span>
             {override.appliesToDomains && override.appliesToDomains.length > 0 && (
-              <span className="rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-700">
+              <span className="ds-badge ds-badge--info">
                 {override.appliesToDomains.length} domain
                 {override.appliesToDomains.length > 1 ? 's' : ''}
               </span>
             )}
           </div>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-1 text-xs text-muted">
             Created by {override.createdBy} on {new Date(override.createdAt).toLocaleDateString()}
           </p>
         </div>
@@ -259,7 +256,7 @@ function OverrideCard({ override, disabled, onEdit, onDelete }: OverrideCardProp
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            className="rounded p-1.5 text-muted hover:bg-surface-muted hover:text-text"
             title={expanded ? 'Collapse' : 'Expand'}
           >
             <svg
@@ -281,7 +278,7 @@ function OverrideCard({ override, disabled, onEdit, onDelete }: OverrideCardProp
             type="button"
             onClick={onEdit}
             disabled={disabled}
-            className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:text-gray-400 disabled:hover:bg-transparent"
+            className="rounded p-1.5 text-muted hover:bg-surface-muted hover:text-text disabled:text-faint disabled:hover:bg-transparent"
             title="Edit"
           >
             <svg
@@ -303,7 +300,7 @@ function OverrideCard({ override, disabled, onEdit, onDelete }: OverrideCardProp
             type="button"
             onClick={onDelete}
             disabled={disabled}
-            className="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:text-gray-400 disabled:hover:bg-transparent"
+            className="rounded p-1.5 text-muted hover:bg-danger-surface hover:text-danger disabled:text-faint disabled:hover:bg-transparent"
             title="Delete"
           >
             <svg
@@ -325,19 +322,19 @@ function OverrideCard({ override, disabled, onEdit, onDelete }: OverrideCardProp
       </div>
 
       {expanded && (
-        <div className="mt-3 border-t border-gray-200 pt-3">
-          <p className="mb-1 text-xs font-medium text-gray-500">Override Data:</p>
-          <pre className="overflow-x-auto rounded border border-gray-200 bg-white p-2 text-xs text-gray-700">
+        <div className="mt-3 border-t border-line pt-3">
+          <p className="mb-1 text-xs font-medium text-muted">Override Data:</p>
+          <pre className="overflow-x-auto rounded border border-line bg-surface p-2 text-xs text-text">
             {JSON.stringify(override.overrideData, null, 2)}
           </pre>
           {override.appliesToDomains && override.appliesToDomains.length > 0 && (
             <div className="mt-2">
-              <p className="mb-1 text-xs font-medium text-gray-500">Applies to:</p>
+              <p className="mb-1 text-xs font-medium text-muted">Applies to:</p>
               <div className="flex flex-wrap gap-1">
                 {override.appliesToDomains.map((domain) => (
                   <span
                     key={domain}
-                    className="rounded border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600"
+                    className="rounded border border-line bg-surface px-2 py-0.5 text-xs text-text"
                   >
                     {domain}
                   </span>
@@ -452,14 +449,14 @@ function OverrideDialog({
   };
 
   return (
-    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <form onSubmit={handleSubmit}>
-        <h4 className="mb-3 font-medium text-gray-900">
+        <h4 className="mb-3 font-medium text-ink">
           {editingOverride ? 'Edit Override' : 'New Override'}
         </h4>
 
         {error && (
-          <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+          <div className="mb-3 rounded border border-danger bg-danger-surface p-2 text-sm text-danger">
             {error}
           </div>
         )}
@@ -467,14 +464,14 @@ function OverrideDialog({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor={providerId} className="mb-1 block text-sm font-medium text-gray-700">
-                Provider Key <span className="text-red-500">*</span>
+              <label htmlFor={providerId} className="mb-1 block text-sm font-medium text-text">
+                Provider Key <span className="text-danger">*</span>
               </label>
               <select
                 id={providerId}
                 value={providerKey}
                 onChange={(e) => setProviderKey(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
                 disabled={!!editingOverride || controlsDisabled}
               >
                 <option value="">Select...</option>
@@ -487,8 +484,8 @@ function OverrideDialog({
             </div>
 
             <div>
-              <label htmlFor={templateId} className="mb-1 block text-sm font-medium text-gray-700">
-                Template Key <span className="text-red-500">*</span>
+              <label htmlFor={templateId} className="mb-1 block text-sm font-medium text-text">
+                Template Key <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
@@ -496,15 +493,15 @@ function OverrideDialog({
                 value={templateKey}
                 onChange={(e) => setTemplateKey(e.target.value)}
                 placeholder="e.g., dkim_record"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
                 disabled={!!editingOverride || controlsDisabled}
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor={dataId} className="mb-1 block text-sm font-medium text-gray-700">
-              Override Data (JSON) <span className="text-red-500">*</span>
+            <label htmlFor={dataId} className="mb-1 block text-sm font-medium text-text">
+              Override Data (JSON) <span className="text-danger">*</span>
             </label>
             <textarea
               id={dataId}
@@ -512,13 +509,13 @@ function OverrideDialog({
               onChange={(e) => setOverrideDataJson(e.target.value)}
               rows={5}
               disabled={controlsDisabled}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+              className="ds-input w-full rounded-lg border border-line px-3 py-2 font-mono text-sm focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
               placeholder='{"key": "value"}'
             />
           </div>
 
           <div>
-            <label htmlFor={domainsId} className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor={domainsId} className="mb-1 block text-sm font-medium text-text">
               Applies to Domains (comma-separated, leave empty for all)
             </label>
             <input
@@ -527,7 +524,7 @@ function OverrideDialog({
               value={appliesToDomains}
               onChange={(e) => setAppliesToDomains(e.target.value)}
               placeholder="example.com, test.com"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+              className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
               disabled={controlsDisabled}
             />
           </div>
@@ -537,7 +534,7 @@ function OverrideDialog({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+            className="px-3 py-1.5 text-sm text-text hover:text-text"
             disabled={saving || authRequired}
           >
             Cancel
@@ -545,7 +542,7 @@ function OverrideDialog({
           <button
             type="submit"
             disabled={saving || controlsDisabled || !providerKey.trim() || !templateKey.trim()}
-            className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            className="ds-button ds-button--primary ds-button--sm"
           >
             {saving ? 'Saving...' : editingOverride ? 'Update' : 'Create'}
           </button>

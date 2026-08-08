@@ -123,31 +123,31 @@ export function SharedReportsPanel() {
   });
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      <div className="px-4 py-3 border-b border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">Shared Reports</h3>
-        <p className="text-sm text-gray-500">
+    <div className="ds-panel portfolio-panel">
+      <div className="px-4 py-3 border-b border-line">
+        <h3 className="text-lg font-medium text-ink">Shared Reports</h3>
+        <p className="text-sm text-muted">
           Create persisted, redacted reports for external stakeholders
         </p>
       </div>
 
       <div className="p-4 space-y-4">
         {localError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg border border-danger bg-danger-surface p-3 text-sm text-danger">
             {localError}
           </div>
         )}
 
         {authRequired && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to list or create tenant shared reports. Public share links
             continue to work without sign-in.
           </div>
         )}
 
-        <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="rounded-lg border border-line p-4 space-y-3">
           <div>
-            <label htmlFor={reportTitleId} className="block text-sm font-medium text-gray-700">
+            <label htmlFor={reportTitleId} className="block text-sm font-medium text-text">
               Report title
             </label>
             <input
@@ -157,7 +157,7 @@ export function SharedReportsPanel() {
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Weekly stakeholder report"
               disabled={authRequired}
-              className="focus-ring mt-1 block w-full rounded-md border-gray-300 shadow-sm disabled:bg-gray-100 disabled:text-gray-500"
+              className="ds-input mt-1 block w-full rounded-md border-line disabled:bg-surface-muted disabled:text-muted"
             />
           </div>
 
@@ -165,20 +165,20 @@ export function SharedReportsPanel() {
             type="button"
             onClick={() => createMutation.mutate(title)}
             disabled={createMutation.isPending || authRequired}
-            className="focus-ring min-h-10 rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-gray-400"
+            className="ds-button ds-button--primary ds-button--md"
           >
             {createMutation.isPending ? 'Creating...' : 'Create Shared Report'}
           </button>
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-gray-500">Loading reports...</p>
+          <p className="text-sm text-muted">Loading reports...</p>
         ) : authRequired ? (
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+          <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-text">
             Sign in to list and create tenant shared reports.
           </div>
         ) : reports.length === 0 ? (
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+          <div className="rounded-lg border border-line bg-surface-muted p-4 text-sm text-text">
             No shared reports yet.
           </div>
         ) : (
@@ -188,18 +188,16 @@ export function SharedReportsPanel() {
                 ? `${origin}/api/alerts/reports/shared/${report.shareToken}`
                 : null;
               return (
-                <div key={report.id} className="rounded-lg border border-gray-200 p-4 space-y-2">
+                <div key={report.id} className="rounded-lg border border-line p-4 space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h4 className="font-medium text-gray-900">{report.title}</h4>
-                      <p className="text-xs text-gray-500">
+                      <h4 className="font-medium text-ink">{report.title}</h4>
+                      <p className="text-xs text-muted">
                         {report.status} · {new Date(report.createdAt).toLocaleString()}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
-                        {report.visibility}
-                      </span>
+                      <span className="ds-badge ds-badge--neutral">{report.visibility}</span>
                       {report.status !== 'expired' && !authRequired && (
                         <button
                           type="button"
@@ -207,7 +205,7 @@ export function SharedReportsPanel() {
                           disabled={
                             expireMutation.isPending && expireMutation.variables === report.id
                           }
-                          className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:text-gray-400"
+                          className="rounded border border-line px-2 py-1 text-xs text-text hover:bg-surface-muted disabled:text-faint"
                         >
                           {expireMutation.isPending && expireMutation.variables === report.id
                             ? 'Expiring...'
@@ -217,20 +215,17 @@ export function SharedReportsPanel() {
                     </div>
                   </div>
 
-                  <p className="text-sm text-gray-700">
+                  <p className="text-sm text-text">
                     {report.summary.activeAlerts} active alerts across{' '}
                     {report.summary.totalMonitored} monitored domains.
                   </p>
 
                   {shareUrl && (
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted">
                         Share link
                       </p>
-                      <a
-                        className="text-sm text-blue-600 break-all hover:text-blue-700"
-                        href={shareUrl}
-                      >
+                      <a className="text-sm text-brand break-all hover:text-brand" href={shareUrl}>
                         {shareUrl}
                       </a>
                     </div>
