@@ -96,13 +96,24 @@ cp .env.example .env
 
 ## Database
 
+Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`), invoked automatically as the web service Railway `releaseCommand`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) are unavailable (410) and direct operators back to this runner.
+
+Local / disposable DB:
+
 ```bash
 cd packages/db
 bun run build
 bun run generate
 bun run check-drift
 DATABASE_URL=postgres://... bun run verify-migrations
+
+# Apply forward migrations to a local or disposable database (same runner as deploy):
+DATABASE_URL=postgres://... bun run migrate
+# or from repo root:
+DATABASE_URL=postgres://... node scripts/run-migrations.mjs
 ```
+
+Do **not** use app HTTP endpoints to reset/rebuild schema in hope of request-time recovery — that path was removed in RT-4.
 
 ## Run
 

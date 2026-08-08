@@ -58,17 +58,21 @@ This installs all workspace deps and builds the collector + its package dependen
 
 Start: `node apps/collector/dist/index.js`
 
-## 5. Push DB Schema
+## 5. DB Schema (release runner)
 
-After first deploy, push the Drizzle schema:
+The web service `releaseCommand` runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer** (`_migrations_applied` ledger). App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
+
+After first deploy, schema should already be applied by release. To run the same runner out-of-band against a disposable/target DB:
 
 ```bash
-# Using Railway CLI
-railway run bunx drizzle-kit push --force
+# Using Railway CLI (web service context)
+railway run node scripts/run-migrations.mjs
 
-# Or locally with the Railway DATABASE_URL
-DATABASE_URL="postgresql://..." bunx drizzle-kit push --force
+# Or locally with the target DATABASE_URL
+DATABASE_URL="postgresql://..." node scripts/run-migrations.mjs
 ```
+
+Prefer forward SQL migrations under `packages/db/src/migrations` over `drizzle-kit push` for environments that must match production deploy semantics.
 
 ## 6. Deploy Web App (Cloudflare Pages)
 
@@ -129,7 +133,7 @@ Expected:
 
 **Web can't reach collector** — Verify `COLLECTOR_URL` matches Railway's public URL. Verify `INTERNAL_SECRET` matches between both services.
 
-**Schema not applied** — Run `railway run bunx drizzle-kit push --force`.
+**Schema not applied** — Confirm the web service release command ran `node scripts/run-migrations.mjs` successfully, or run it out-of-band with the target `DATABASE_URL`. Do not use `/api/migrate/reset` or `/rebuild` (they are unavailable).
 
 **Health check failing** — `/healthz` = liveness (process alive). `/readyz` = readiness (DB connected, may 503 if DB unreachable).
 

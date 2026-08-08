@@ -1,24 +1,49 @@
 /**
- * Database Migration Tests
+ * Database migration inspection routes.
  *
- * Tests that verify all required database tables exist
- * and have the correct schema.
+ * RT-4: release runner (scripts/run-migrations.mjs via Railway releaseCommand)
+ * is the sole automatic schema writer. Destructive recovery endpoints that used
+ * to clear ledgers / drop tables and promise request-time re-migration are
+ * permanently unavailable — request traffic never applies DDL.
  */
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createLogger } from '@dns-ops/logging';
 import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import type { Env } from '../types.js';
-
-const logger = createLogger({ service: 'migrate-routes' });
 
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
 const migrateRoutes = new Hono<Env>();
+
+/** Operator guidance when HTTP recovery endpoints are invoked. */
+export const SCHEMA_RECOVERY_UNAVAILABLE_MESSAGE =
+  'Schema recovery is not available via the HTTP API. The release runner (scripts/run-migrations.mjs via Railway releaseCommand) is the sole automatic schema writer. Recover schema by running that runner through the deploy/release pipeline (or out-of-band with the target DATABASE_URL) — not via app request routes.';
+
+export const SCHEMA_RECOVERY_UNAVAILABLE_CODE = 'SCHEMA_RECOVERY_VIA_RELEASE_ONLY' as const;
+
+function recoveryUnavailableResponse(c: {
+  json: (
+    body: {
+      status: 'unavailable';
+      code: typeof SCHEMA_RECOVERY_UNAVAILABLE_CODE;
+      message: string;
+    },
+    status: 410
+  ) => Response;
+}) {
+  return c.json(
+    {
+      status: 'unavailable',
+      code: SCHEMA_RECOVERY_UNAVAILABLE_CODE,
+      message: SCHEMA_RECOVERY_UNAVAILABLE_MESSAGE,
+    },
+    410
+  );
+}
 
 // All tables that should exist in the database
 const REQUIRED_TABLES = [
@@ -141,7 +166,7 @@ migrateRoutes.get('/schema', async (c) => {
       const colResultObj = colResults as unknown as { rows: { column_name: string }[] };
       const colRows = colResultObj.rows || [];
       const existingCols = colRows.map((r) => r.column_name);
-      const missing = requiredCols.filter((c) => !existingCols.includes(c));
+      const missing = requiredCols.filter((col) => !existingCols.includes(col));
 
       schemaResults[table] = {
         columns: existingCols,
@@ -176,24 +201,9 @@ migrateRoutes.get('/schema', async (c) => {
 
 /**
  * POST /api/migrate/reset
- * Reset migration tracker to force re-run all migrations
+ * Permanently unavailable: clearing ledgers cannot trigger request-time recovery.
  */
-migrateRoutes.post('/reset', async (c) => {
-  const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
-
-  try {
-    await db.execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
-    return c.json({
-      status: 'reset',
-      message: 'Migration tracker cleared. Migrations will re-run on next request.',
-    });
-  } catch (err: unknown) {
-    return c.json({ status: 'error', message: getErrorMessage(err) }, 500);
-  }
-});
+migrateRoutes.post('/reset', (c) => recoveryUnavailableResponse(c));
 
 /**
  * POST /api/migrate/repair
@@ -217,56 +227,9 @@ migrateRoutes.post('/repair', async (c) => {
 
 /**
  * POST /api/migrate/rebuild
- * Nuclear option: drop all broken tables and recreate from real migrations
+ * Permanently unavailable: dropping tables cannot trigger request-time recovery.
  */
-migrateRoutes.post('/rebuild', async (c) => {
-  const db = c.get('db');
-  if (!db) {
-    return c.json({ error: 'Database not available' }, 503);
-  }
-
-  try {
-    // Drop all tables that might be broken (except users/sessions which have real data)
-    const tablesToDrop = [
-      'alerts',
-      'audit_events',
-      'domain_notes',
-      'domain_tags',
-      'findings',
-      'fleet_reports',
-      'monitored_domains',
-      'observations',
-      'probe_observations',
-      'record_sets',
-      'ruleset_versions',
-      'saved_filters',
-      'shared_reports',
-      'snapshots',
-      'suggestions',
-      'template_overrides',
-    ];
-
-    for (const table of tablesToDrop) {
-      try {
-        await db.execute(sql.raw(`DROP TABLE IF EXISTS "${table}" CASCADE;`));
-        logger.info(`[Rebuild] Dropped ${table}`);
-      } catch (err: unknown) {
-        logger.warn(`[Rebuild] Could not drop ${table}: ${getErrorMessage(err)}`);
-      }
-    }
-
-    // Clear migration tracker
-    await db.execute(sql`DROP TABLE IF EXISTS __drizzle_migrations;`);
-
-    return c.json({
-      status: 'rebuilt',
-      dropped: tablesToDrop,
-      message: 'Broken tables dropped. Real migrations will recreate them on next request.',
-    });
-  } catch (err: unknown) {
-    return c.json({ status: 'error', message: getErrorMessage(err) }, 500);
-  }
-});
+migrateRoutes.post('/rebuild', (c) => recoveryUnavailableResponse(c));
 
 /**
  * POST /api/migrate/run-init
