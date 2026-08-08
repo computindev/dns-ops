@@ -345,8 +345,10 @@ function Domain360Page() {
           </div>
         ) : (
           <div
-            className="domain-360__state domain-360__state--empty"
+            className="domain-360__state domain-360__state--warning"
+            data-state="warning"
             data-testid="domain-no-data-banner"
+            role="status"
           >
             <p>
               No DNS data for {domain} yet. Click <strong>Refresh</strong> to collect now.

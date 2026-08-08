@@ -824,7 +824,7 @@
     border-color: var(--color-unknown);
   }
 
-  .domain-360__state--empty {
+  .domain-360__state--warning {
     background: var(--color-warning-surface);
     border-color: var(--color-warning);
   }

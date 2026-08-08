@@ -10,6 +10,26 @@ import { mockRefresh, waitForDomainPageReady } from './support/domain-fixtures.j
 
 const TEST_DOMAIN = 'new-untested-domain.example.com';
 
+async function expectSignalRoomWarningSurface(
+  page: import('@playwright/test').Page,
+  testId: string
+): Promise<void> {
+  await expect(page.getByTestId(testId)).toHaveAttribute('data-state', 'warning');
+  await expect(page.getByTestId(testId)).toHaveClass(/domain-360__state--warning/);
+  const colors = await page.getByTestId(testId).evaluate((element) => {
+    const tokenSample = document.createElement('div');
+    tokenSample.style.backgroundColor = 'var(--color-warning-surface)';
+    document.body.append(tokenSample);
+    const result = {
+      surface: getComputedStyle(element).backgroundColor,
+      token: getComputedStyle(tokenSample).backgroundColor,
+    };
+    tokenSample.remove();
+    return result;
+  });
+  expect(colors.surface).toBe(colors.token);
+}
+
 async function mockNoSnapshot(page: import('@playwright/test').Page): Promise<void> {
   await page.route(`**/api/domain/${TEST_DOMAIN}/latest`, (route) => {
     route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
@@ -19,22 +39,21 @@ async function mockNoSnapshot(page: import('@playwright/test').Page): Promise<vo
 
 /**
  * Tests for empty DB state
- * The empty state should show a yellow warning (not an error)
+ * The empty state must expose the Signal Room warning state (not an error).
  */
 test.describe('Empty DB State', () => {
-  test('shows yellow warning for domain without snapshot', async ({ page }) => {
+  test('shows a semantic warning for a domain without snapshot', async ({ page }) => {
     // Mock API to return 404 (no snapshot) for this unknown domain
     await mockNoSnapshot(page);
     await page.goto(`/domain/${TEST_DOMAIN}`);
     await waitForDomainPageReady(page);
 
-    // Should show yellow "no snapshot" warning, not an error
+    // A 404 is a recoverable warning, never an error or healthy state.
     const noSnapshotWarning = page.getByTestId('domain-no-data-banner');
     await expect(noSnapshotWarning).toBeVisible();
     await expect(noSnapshotWarning).toContainText(/no dns data/i);
 
-    // The warning should be yellow-ish (has yellow background)
-    await expect(noSnapshotWarning).toHaveClass(/yellow/);
+    await expectSignalRoomWarningSurface(page, 'domain-no-data-banner');
   });
 
   test('shows notes and tags panels even without snapshot', async ({ page }) => {
