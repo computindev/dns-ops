@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check src",
     "test": "vitest run src",
-    "test:live-dns": "RUN_LIVE_DNS_TESTS=1 vitest run src/dns/integration.test.ts --testTimeout=30000 --hookTimeout=30000",
+    "test:live-dns": "RUN_LIVE_DNS_TESTS=1 vitest run src/dns/integration.test.ts src/e2e/dnssec-resolver.e2e.test.ts --testTimeout=30000 --hookTimeout=30000",
     "docker:build": "docker build -f Dockerfile -t dns-ops-collector ../..",
     "docker:run": "docker run -p 3001:3001 --env-file .env dns-ops-collector"
   },
@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "esbuild": "^0.28.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",
     "vitest": "^4.1.0"
