@@ -29,7 +29,7 @@ export function Button({
   return (
     <button
       {...props}
-      aria-busy={buttonState === 'loading' || undefined}
+      aria-busy={buttonState === 'loading'}
       className={`ds-button ds-button--${variant} ds-button--${size} ${className}`}
       data-state={buttonState}
       disabled={isDisabled}

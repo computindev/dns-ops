@@ -1,22 +1,7 @@
-/**
- * Snapshot History Panel — Bead 07 UI
- *
- * Lists snapshots for a domain and allows comparing two snapshots
- * to see record changes, finding changes, scope/ruleset drift.
- *
- * API endpoints consumed:
- *   GET  /api/snapshots/:domain          → snapshot list
- *   POST /api/snapshots/:domain/diff     → compare two snapshots
- *   POST /api/snapshots/:domain/compare-latest → compare latest two
- */
-
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Button } from './ui/Button.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
-
-// ---------------------------------------------------------------------------
-// Types — mirrors JSON responses from snapshots.ts
-// ---------------------------------------------------------------------------
 
 interface SnapshotListItem {
   id: string;
@@ -66,8 +51,8 @@ interface DiffComparison {
     namesRemoved: string[];
     typesAdded: string[];
     typesRemoved: string[];
-    vantagesAdded: string[];
     vantagesRemoved: string[];
+    vantagesAdded: string[];
     message: string;
   } | null;
   rulesetChange: {
@@ -108,23 +93,19 @@ interface DiffResponse {
   warnings?: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 interface SnapshotHistoryPanelProps {
   domain: string;
 }
 
 async function fetchSnapshots(domain: string): Promise<SnapshotListItem[]> {
-  const res = await fetch(`/api/snapshots/${encodeURIComponent(domain)}?limit=50`, {
+  const response = await fetch(`/api/snapshots/${encodeURIComponent(domain)}?limit=50`, {
     credentials: 'include',
   });
-  if (!res.ok) {
-    if (res.status === 404) return [];
-    throw new Error(`Failed to load snapshots: ${res.status} ${res.statusText}`);
+  if (!response.ok) {
+    if (response.status === 404) return [];
+    throw new Error(`Failed to load snapshots: ${response.status} ${response.statusText}`);
   }
-  const data = (await res.json()) as { snapshots: SnapshotListItem[] };
+  const data = (await response.json()) as { snapshots: SnapshotListItem[] };
   return data.snapshots ?? [];
 }
 
@@ -151,45 +132,36 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
         ? `/api/snapshots/${encodeURIComponent(domain)}/diff`
         : `/api/snapshots/${encodeURIComponent(domain)}/compare-latest`;
       const body = snapshotA ? JSON.stringify({ snapshotA, snapshotB }) : undefined;
-      const res = await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(
-          body.error ?? `${snapshotA ? 'Diff' : 'Compare latest'} failed: ${res.status}`
+          errorBody.error ?? `${snapshotA ? 'Diff' : 'Compare latest'} failed: ${response.status}`
         );
       }
-      return (await res.json()) as DiffResponse;
+      return (await response.json()) as DiffResponse;
     },
     onSuccess: (data) => {
       setDiffResult(data);
       setDiffError(null);
     },
-    onError: (err) => {
-      setDiffError(err instanceof Error ? err.message : 'Unknown error');
+    onError: (error) => {
+      setDiffError(error instanceof Error ? error.message : 'Unknown error');
     },
   });
 
   const compareSelected = () => {
-    if (!selectedA || !selectedB) return;
-    compareMutation.mutate({ snapshotA: selectedA, snapshotB: selectedB });
-  };
-
-  const compareLatest = () => {
-    compareMutation.mutate({});
-  };
-
-  const clearDiff = () => {
-    setDiffResult(null);
-    setDiffError(null);
+    if (selectedA && selectedB)
+      compareMutation.mutate({ snapshotA: selectedA, snapshotB: selectedB });
   };
 
   if (isLoading) {
     return (
-      <div data-testid="snapshot-history-loading">
+      <div className="domain-history ds-panel" data-testid="snapshot-history-loading">
         <LoadingState message="Loading snapshot history…" />
       </div>
     );
@@ -197,7 +169,7 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
 
   if (error) {
     return (
-      <div data-testid="snapshot-history-error">
+      <div className="domain-history ds-panel" data-testid="snapshot-history-error">
         <ErrorState message={error.message} onRetry={refetch} />
       </div>
     );
@@ -205,7 +177,7 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
 
   if (snapshots.length === 0) {
     return (
-      <div data-testid="snapshot-history-empty">
+      <div className="domain-history ds-panel" data-testid="snapshot-history-empty">
         <EmptyState
           icon="document"
           title="No snapshots yet"
@@ -219,100 +191,95 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
   const diffLoading = compareMutation.isPending;
 
   return (
-    <div className="space-y-6" data-testid="snapshot-history-panel">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900">Snapshot History</h3>
-          <p className="text-sm text-gray-500">
-            {snapshots.length} snapshot{snapshots.length !== 1 ? 's' : ''} collected
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {snapshots.length >= 2 && (
-            <button
-              type="button"
-              onClick={compareLatest}
-              disabled={diffLoading}
-              className="focus-ring px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+    <section className="domain-history" data-testid="snapshot-history-panel" aria-label="Snapshots">
+      <div className="domain-history__toolbar">
+        <p className="domain-history__count">
+          {snapshots.length} snapshot{snapshots.length !== 1 ? 's' : ''} collected
+        </p>
+        <div className="domain-history__actions">
+          {snapshots.length >= 2 ? (
+            <Button
+              loading={diffLoading && !selectedA}
+              onClick={() => compareMutation.mutate({})}
+              size="sm"
+              variant="primary"
               data-testid="compare-latest-btn"
             >
-              {diffLoading && !selectedA ? 'Comparing…' : 'Compare Latest'}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={compareSelected}
+              Compare latest
+            </Button>
+          ) : null}
+          <Button
             disabled={diffLoading || !selectedA || !selectedB || selectedA === selectedB}
-            className="focus-ring px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={compareSelected}
+            size="sm"
+            variant="secondary"
             data-testid="compare-selected-btn"
           >
-            Compare Selected
-          </button>
+            Compare selected
+          </Button>
         </div>
       </div>
 
-      <div className="overflow-x-auto border border-gray-200 rounded-lg">
-        <table className="min-w-full text-sm" data-testid="snapshot-list-table">
-          <thead className="bg-gray-50 text-gray-600">
+      <div className="domain-history__table-wrap">
+        <table className="domain-history__table" data-testid="snapshot-list-table">
+          <thead>
             <tr>
-              <th className="px-3 py-2 text-left font-medium">A</th>
-              <th className="px-3 py-2 text-left font-medium">B</th>
-              <th className="px-3 py-2 text-left font-medium">Created</th>
-              <th className="px-3 py-2 text-left font-medium">Ruleset</th>
-              <th className="px-3 py-2 text-left font-medium">Findings</th>
-              <th className="px-3 py-2 text-left font-medium">Scope</th>
+              <th scope="col">A</th>
+              <th scope="col">B</th>
+              <th scope="col">Created</th>
+              <th scope="col">Ruleset</th>
+              <th scope="col">Findings</th>
+              <th scope="col">Scope</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {snapshots.map((snap) => (
+          <tbody>
+            {snapshots.map((snapshot) => (
               <tr
-                key={snap.id}
-                className={`hover:bg-gray-50 ${
-                  selectedA === snap.id || selectedB === snap.id ? 'bg-blue-50' : ''
-                }`}
+                key={snapshot.id}
+                className={
+                  selectedA === snapshot.id || selectedB === snapshot.id ? 'is-selected' : ''
+                }
               >
-                <td className="px-3 py-2">
+                <td data-label="A">
                   <input
                     type="radio"
                     name="snapshotA"
-                    checked={selectedA === snap.id}
-                    onChange={() => setSelectedA(snap.id)}
-                    aria-label={`Select snapshot ${snap.id.slice(0, 8)} as A (older)`}
-                    className="accent-blue-600"
+                    checked={selectedA === snapshot.id}
+                    onChange={() => setSelectedA(snapshot.id)}
+                    aria-label={`Select snapshot ${snapshot.id.slice(0, 8)} as A (older)`}
+                    className="domain-history__selection"
                   />
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="B">
                   <input
                     type="radio"
                     name="snapshotB"
-                    checked={selectedB === snap.id}
-                    onChange={() => setSelectedB(snap.id)}
-                    aria-label={`Select snapshot ${snap.id.slice(0, 8)} as B (newer)`}
-                    className="accent-blue-600"
+                    checked={selectedB === snapshot.id}
+                    onChange={() => setSelectedB(snapshot.id)}
+                    aria-label={`Select snapshot ${snapshot.id.slice(0, 8)} as B (newer)`}
+                    className="domain-history__selection"
                   />
                 </td>
-                <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                  {new Date(snap.createdAt).toLocaleString()}
+                <td data-label="Created" className="domain-history__timestamp">
+                  {new Date(snapshot.createdAt).toLocaleString()}
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">
-                  {snap.rulesetVersionId ? snap.rulesetVersionId.slice(0, 8) : '—'}
+                <td data-label="Ruleset" className="domain-history__mono">
+                  {snapshot.rulesetVersionId ? snapshot.rulesetVersionId.slice(0, 8) : '—'}
                 </td>
-                <td className="px-3 py-2">
-                  {snap.findingsEvaluated ? (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                      Evaluated
-                    </span>
+                <td data-label="Findings">
+                  {snapshot.findingsEvaluated ? (
+                    <span className="ds-badge ds-badge--success">Evaluated</span>
                   ) : (
                     <span
-                      className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"
-                      title={`${snap.evaluationCoverage.errors[0]?.unknown.explanation ?? 'Evaluation coverage is incomplete'} ${snap.evaluationCoverage.errors[0]?.unknown.actionLabel ?? 'Run a fresh scan'}.`}
+                      className="ds-badge ds-badge--unknown"
+                      title={`${snapshot.evaluationCoverage.errors[0]?.unknown.explanation ?? 'Evaluation coverage is incomplete'} ${snapshot.evaluationCoverage.errors[0]?.unknown.actionLabel ?? 'Run a fresh scan'}.`}
                     >
-                      UNKNOWN — run fresh scan
+                      Unknown — refresh
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-xs text-gray-500">
-                  {snap.queryScope.names.length} names, {snap.queryScope.types.length} types
+                <td data-label="Scope" className="domain-history__scope">
+                  {snapshot.queryScope.names.length} names, {snapshot.queryScope.types.length} types
                 </td>
               </tr>
             ))}
@@ -320,284 +287,259 @@ export function SnapshotHistoryPanel({ domain }: SnapshotHistoryPanelProps) {
         </table>
       </div>
 
-      {diffError && (
-        <div
-          className="p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700"
-          role="alert"
-          data-testid="diff-error"
-        >
+      {diffError ? (
+        <div className="domain-history__error" role="alert" data-testid="diff-error">
           {diffError}
         </div>
-      )}
+      ) : null}
 
-      {diffLoading && (
-        <div data-testid="diff-loading">
+      {diffLoading ? (
+        <div className="domain-history__loading" data-testid="diff-loading">
           <LoadingState message="Computing snapshot diff…" size="sm" />
         </div>
-      )}
+      ) : null}
 
-      {diffResult && <DiffResultView result={diffResult} onClose={clearDiff} />}
-    </div>
+      {diffResult ? (
+        <DiffResultView result={diffResult} onClose={() => setDiffResult(null)} />
+      ) : null}
+    </section>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Diff Result View
-// ---------------------------------------------------------------------------
 
 function DiffResultView({ result, onClose }: { result: DiffResponse; onClose: () => void }) {
   const { diff, warnings } = result;
   const { findingsSummary, comparison } = diff;
-
-  const safeRecordChanges = Array.isArray(comparison?.recordChanges)
-    ? comparison.recordChanges
-    : [];
-  const nonUnchangedRecords = safeRecordChanges.filter((r) => r.type !== 'unchanged');
+  const recordChanges = Array.isArray(comparison?.recordChanges) ? comparison.recordChanges : [];
+  const nonUnchangedRecords = recordChanges.filter((record) => record.type !== 'unchanged');
   const recordStats = {
-    added: safeRecordChanges.filter((r) => r.type === 'added').length,
-    removed: safeRecordChanges.filter((r) => r.type === 'removed').length,
-    modified: safeRecordChanges.filter((r) => r.type === 'modified').length,
-    unchanged: safeRecordChanges.filter((r) => r.type === 'unchanged').length,
+    added: recordChanges.filter((record) => record.type === 'added').length,
+    removed: recordChanges.filter((record) => record.type === 'removed').length,
+    modified: recordChanges.filter((record) => record.type === 'modified').length,
+    unchanged: recordChanges.filter((record) => record.type === 'unchanged').length,
   };
 
   return (
-    <div className="space-y-4" data-testid="diff-result">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold text-gray-900">Comparison Result</h4>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-sm text-gray-500 hover:text-gray-700"
-          data-testid="close-diff-btn"
-        >
-          ✕ Close
-        </button>
+    <section
+      className="domain-diff ds-panel"
+      data-testid="diff-result"
+      aria-label="Snapshot comparison"
+    >
+      <div className="domain-diff__header">
+        <div>
+          <p className="ds-kicker">Evidence comparison</p>
+          <h3>Comparison result</h3>
+        </div>
+        <Button onClick={onClose} size="sm" variant="quiet" data-testid="close-diff-btn">
+          Close
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="font-medium text-gray-700">Snapshot A (older)</p>
-          <p className="text-xs text-gray-500 tabular-nums">
-            {new Date(diff.snapshotA.createdAt).toLocaleString()}
-          </p>
-          <p className="text-xs text-gray-500 font-mono">
-            Ruleset: {diff.snapshotA.rulesetVersion.slice(0, 8)}
-          </p>
-        </div>
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="font-medium text-gray-700">Snapshot B (newer)</p>
-          <p className="text-xs text-gray-500 tabular-nums">
-            {new Date(diff.snapshotB.createdAt).toLocaleString()}
-          </p>
-          <p className="text-xs text-gray-500 font-mono">
-            Ruleset: {diff.snapshotB.rulesetVersion.slice(0, 8)}
-          </p>
-        </div>
+      <div className="domain-diff__snapshots">
+        <SnapshotReference label="Snapshot A (older)" snapshot={diff.snapshotA} />
+        <SnapshotReference label="Snapshot B (newer)" snapshot={diff.snapshotB} />
       </div>
 
-      {warnings && warnings.length > 0 && (
+      {warnings?.length ? (
         <div
-          className="p-3 rounded-lg border border-yellow-200 bg-yellow-50 text-sm text-yellow-800"
+          className="domain-diff__notice domain-diff__notice--warning"
           data-testid="diff-warnings"
         >
-          <p className="font-medium mb-1">⚠ Warnings</p>
-          <ul className="list-disc list-inside space-y-1">
-            {warnings.map((w) => (
-              <li key={w}>{w}</li>
+          <p>Warnings</p>
+          <ul>
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
             ))}
           </ul>
         </div>
-      )}
+      ) : null}
 
-      <div>
-        <h5 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-          DNS Records
-        </h5>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="diff-summary">
-          <SummaryCard label="Added" value={recordStats.added} color="green" />
-          <SummaryCard label="Removed" value={recordStats.removed} color="red" />
-          <SummaryCard label="Modified" value={recordStats.modified} color="yellow" />
-          <SummaryCard label="Unchanged" value={recordStats.unchanged} color="gray" />
+      <section>
+        <p className="ds-kicker">DNS records</p>
+        <div className="domain-diff__summary" data-testid="diff-summary">
+          <SummaryCard label="Added" value={recordStats.added} tone="success" />
+          <SummaryCard label="Removed" value={recordStats.removed} tone="danger" />
+          <SummaryCard label="Modified" value={recordStats.modified} tone="warning" />
+          <SummaryCard label="Unchanged" value={recordStats.unchanged} tone="neutral" />
         </div>
-      </div>
+      </section>
 
-      {comparison.scopeChanges && (
+      {comparison.scopeChanges ? (
         <div
-          className="p-3 rounded-lg border border-orange-200 bg-orange-50 text-sm"
+          className="domain-diff__notice domain-diff__notice--warning"
           data-testid="scope-changes"
         >
-          <p className="font-medium text-orange-800 mb-1">Scope Changed</p>
-          <p className="text-orange-700">{comparison.scopeChanges.message}</p>
+          <p>Scope changed</p>
+          <span>{comparison.scopeChanges.message}</span>
         </div>
-      )}
+      ) : null}
 
-      {comparison.rulesetChange && (
+      {comparison.rulesetChange ? (
         <div
-          className="p-3 rounded-lg border border-purple-200 bg-purple-50 text-sm"
+          className="domain-diff__notice domain-diff__notice--info"
           data-testid="ruleset-changes"
         >
-          <p className="font-medium text-purple-800 mb-1">Ruleset Changed</p>
-          <p className="text-purple-700">{comparison.rulesetChange.message}</p>
+          <p>Ruleset changed</p>
+          <span>{comparison.rulesetChange.message}</span>
         </div>
-      )}
+      ) : null}
 
-      {nonUnchangedRecords.length > 0 && (
-        <ChangeSection title="Record Changes" testId="record-changes">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-3 py-1.5 text-left font-medium">Change</th>
-                  <th className="px-3 py-1.5 text-left font-medium">Name</th>
-                  <th className="px-3 py-1.5 text-left font-medium">Type</th>
-                  <th className="px-3 py-1.5 text-left font-medium">Values</th>
+      {nonUnchangedRecords.length ? (
+        <ChangeSection title="Record changes" testId="record-changes">
+          <DiffTable>
+            <thead>
+              <tr>
+                <th scope="col">Change</th>
+                <th scope="col">Name</th>
+                <th scope="col">Type</th>
+                <th scope="col">Values</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nonUnchangedRecords.map((record) => (
+                <tr key={`${record.name}-${record.recordType}-${record.type}`}>
+                  <td data-label="Change">
+                    <ChangeBadge type={record.type} />
+                  </td>
+                  <td data-label="Name" className="domain-history__mono">
+                    {record.name}
+                  </td>
+                  <td data-label="Type" className="domain-history__mono">
+                    {record.recordType}
+                  </td>
+                  <td data-label="Values">
+                    {record.type === 'added' && record.valuesB?.join(', ')}
+                    {record.type === 'removed' ? (
+                      <span className="domain-diff__removed">{record.valuesA?.join(', ')}</span>
+                    ) : null}
+                    {record.type === 'modified' ? (
+                      <span>
+                        <span className="domain-diff__removed">
+                          {record.diff?.removed?.join(', ')}
+                        </span>{' '}
+                        <span className="domain-diff__added">{record.diff?.added?.join(', ')}</span>
+                      </span>
+                    ) : null}
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {nonUnchangedRecords.map((r) => (
-                  <tr key={`${r.name}-${r.recordType}-${r.type}`}>
-                    <td className="px-3 py-1.5">
-                      <ChangeBadge type={r.type} />
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-xs">{r.name}</td>
-                    <td className="px-3 py-1.5 font-mono text-xs">{r.recordType}</td>
-                    <td className="px-3 py-1.5 text-xs">
-                      {r.type === 'added' && r.valuesB?.join(', ')}
-                      {r.type === 'removed' && (
-                        <span className="line-through text-gray-400">{r.valuesA?.join(', ')}</span>
-                      )}
-                      {r.type === 'modified' && (
-                        <span>
-                          <span className="line-through text-red-400 mr-1">
-                            {r.diff?.removed?.join(', ')}
-                          </span>
-                          <span className="text-green-700">{r.diff?.added?.join(', ')}</span>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </DiffTable>
         </ChangeSection>
-      )}
+      ) : null}
 
-      {comparison.ttlChanges.length > 0 && (
-        <ChangeSection title="TTL Changes" testId="ttl-changes">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-3 py-1.5 text-left font-medium">Name</th>
-                  <th className="px-3 py-1.5 text-left font-medium">Type</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Before</th>
-                  <th className="px-3 py-1.5 text-right font-medium">After</th>
-                  <th className="px-3 py-1.5 text-right font-medium">Δ</th>
+      {comparison.ttlChanges.length ? (
+        <ChangeSection title="TTL changes" testId="ttl-changes">
+          <DiffTable>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Type</th>
+                <th scope="col">Before</th>
+                <th scope="col">After</th>
+                <th scope="col">Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.ttlChanges.map((ttl) => (
+                <tr key={`${ttl.name}-${ttl.recordType}`}>
+                  <td data-label="Name" className="domain-history__mono">
+                    {ttl.name}
+                  </td>
+                  <td data-label="Type" className="domain-history__mono">
+                    {ttl.recordType}
+                  </td>
+                  <td data-label="Before" className="domain-history__timestamp">
+                    {ttl.ttlA}s
+                  </td>
+                  <td data-label="After" className="domain-history__timestamp">
+                    {ttl.ttlB}s
+                  </td>
+                  <td
+                    data-label="Change"
+                    className={ttl.change > 0 ? 'domain-diff__added' : 'domain-diff__removed'}
+                  >
+                    {ttl.change > 0 ? '+' : ''}
+                    {ttl.change}s
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {comparison.ttlChanges.map((t) => (
-                  <tr key={`${t.name}-${t.recordType}`}>
-                    <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
-                    <td className="px-3 py-1.5 font-mono text-xs">{t.recordType}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{t.ttlA}s</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{t.ttlB}s</td>
-                    <td
-                      className={`px-3 py-1.5 text-right tabular-nums ${t.change > 0 ? 'text-green-700' : 'text-red-700'}`}
-                    >
-                      {t.change > 0 ? '+' : ''}
-                      {t.change}s
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </DiffTable>
         </ChangeSection>
-      )}
+      ) : null}
 
-      {findingsSummary.totalChanges > 0 && (
-        <ChangeSection title="Finding Changes" testId="finding-changes">
-          <div className="space-y-2">
-            <div className="flex gap-3 text-xs text-gray-500 mb-2">
-              <span>+{findingsSummary.added} added</span>
-              <span>−{findingsSummary.removed} removed</span>
-              <span>~{findingsSummary.modified} modified</span>
-            </div>
+      {findingsSummary.totalChanges ? (
+        <ChangeSection title="Finding changes" testId="finding-changes">
+          <div className="domain-diff__finding-summary">
+            <span>+{findingsSummary.added} added</span>
+            <span>−{findingsSummary.removed} removed</span>
+            <span>~{findingsSummary.modified} modified</span>
+          </div>
+          <ul className="domain-diff__findings">
             {comparison.findingChanges
-              .filter((f) => f.type !== 'unchanged')
-              .map((f) => (
-                <div
-                  key={`${f.findingType}-${f.type}`}
-                  className="flex items-start gap-2 p-2 rounded border border-gray-100"
-                >
-                  <ChangeBadge type={f.type} />
+              .filter((finding) => finding.type !== 'unchanged')
+              .map((finding) => (
+                <li key={`${finding.findingType}-${finding.type}`}>
+                  <ChangeBadge type={finding.type} />
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{f.title}</p>
-                    <p className="text-xs text-gray-500">
-                      {f.findingType}
-                      {f.severityA && f.severityB && f.severityA !== f.severityB
-                        ? ` · severity ${f.severityA} → ${f.severityB}`
-                        : f.severityB
-                          ? ` · ${f.severityB}`
+                    <strong>{finding.title}</strong>
+                    <p>
+                      {finding.findingType}
+                      {finding.severityA &&
+                      finding.severityB &&
+                      finding.severityA !== finding.severityB
+                        ? ` · severity ${finding.severityA} → ${finding.severityB}`
+                        : finding.severityB
+                          ? ` · ${finding.severityB}`
                           : ''}
                     </p>
-                    {f.description && (
-                      <p className="text-xs text-gray-400 mt-0.5">{f.description}</p>
-                    )}
+                    {finding.description ? <small>{finding.description}</small> : null}
                   </div>
-                </div>
+                </li>
               ))}
-          </div>
+          </ul>
         </ChangeSection>
-      )}
+      ) : null}
 
-      {nonUnchangedRecords.length === 0 &&
-        comparison.ttlChanges.length === 0 &&
-        findingsSummary.totalChanges === 0 && (
-          <div className="text-center py-6 text-gray-500 text-sm" data-testid="no-changes">
-            No record or finding changes detected between these snapshots.
-          </div>
-        )}
+      {!nonUnchangedRecords.length &&
+      !comparison.ttlChanges.length &&
+      !findingsSummary.totalChanges ? (
+        <p className="domain-diff__empty" data-testid="no-changes">
+          No record or finding changes detected between these snapshots.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function SnapshotReference({
+  label,
+  snapshot,
+}: {
+  label: string;
+  snapshot: { createdAt: string; rulesetVersion: string };
+}) {
+  return (
+    <div className="domain-diff__snapshot ds-panel--muted">
+      <p>{label}</p>
+      <span className="domain-history__timestamp">
+        {new Date(snapshot.createdAt).toLocaleString()}
+      </span>
+      <code>Ruleset: {snapshot.rulesetVersion.slice(0, 8)}</code>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
-
-function SummaryCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: 'green' | 'red' | 'yellow' | 'gray';
-}) {
-  const bg = {
-    green: 'bg-green-50',
-    red: 'bg-red-50',
-    yellow: 'bg-yellow-50',
-    gray: 'bg-gray-50',
-  };
+function SummaryCard({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
-    <div className={`${bg[color]} rounded-lg p-3 text-center`}>
-      <div className="text-xl font-bold text-gray-900 tabular-nums">{value}</div>
-      <div className="text-xs text-gray-600">{label}</div>
+    <div className={`domain-diff__summary-card domain-diff__summary-card--${tone}`}>
+      <strong>{value}</strong>
+      <span>{label}</span>
     </div>
   );
 }
 
 function ChangeBadge({ type }: { type: string }) {
-  const styles: Record<string, string> = {
-    added: 'bg-green-100 text-green-800',
-    removed: 'bg-red-100 text-red-800',
-    modified: 'bg-yellow-100 text-yellow-800',
-    unchanged: 'bg-gray-100 text-gray-600',
-  };
   const labels: Record<string, string> = {
     added: '+',
     removed: '−',
@@ -605,9 +547,7 @@ function ChangeBadge({ type }: { type: string }) {
     unchanged: '=',
   };
   return (
-    <span
-      className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold ${styles[type] ?? styles.unchanged}`}
-    >
+    <span className={`domain-change-badge domain-change-badge--${type}`}>
       {labels[type] ?? '?'}
     </span>
   );
@@ -623,9 +563,17 @@ function ChangeSection({
   children: React.ReactNode;
 }) {
   return (
-    <div data-testid={testId}>
-      <h5 className="font-medium text-gray-900 mb-2">{title}</h5>
+    <section className="domain-diff__section" data-testid={testId}>
+      <h4>{title}</h4>
       {children}
+    </section>
+  );
+}
+
+function DiffTable({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="domain-history__table-wrap">
+      <table className="domain-history__table domain-history__table--diff">{children}</table>
     </div>
   );
 }

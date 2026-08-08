@@ -14,6 +14,7 @@ import { SimulationPanel } from '../../components/SimulationPanel.js';
 import { SnapshotHistoryPanel } from '../../components/SnapshotHistoryPanel.js';
 import { ResultStateBadge, ZoneManagementBadge } from '../../components/StatusBadges.js';
 import { TagsPanel } from '../../components/TagsPanel.js';
+import { Button } from '../../components/ui/Button.js';
 import { isDelegationTabEnabled, isSimulationEnabled } from '../../config/features.js';
 
 type DomainTabId = 'overview' | 'dns' | 'mail' | 'history' | 'delegation';
@@ -280,71 +281,63 @@ function Domain360Page() {
   }, [refreshMutation.mutate]);
 
   return (
-    <div data-loaded={!isLoading || undefined}>
-      <div className="mb-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-3xl font-bold text-gray-900 break-all">{domain}</h1>
-          <button
-            type="button"
+    <div className="domain-360" data-loaded={!isLoading || undefined}>
+      <header className="domain-360__header ds-panel">
+        <div className="domain-360__title-row">
+          <div>
+            <p className="ds-kicker">Domain 360</p>
+            <h1>{domain}</h1>
+          </div>
+          <Button
+            loading={refreshMutation.isPending}
             onClick={handleRefresh}
-            disabled={refreshMutation.isPending}
             aria-busy={refreshMutation.isPending}
-            className="focus-ring min-h-10 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+            variant="primary"
           >
-            {refreshMutation.isPending ? 'Refreshing...' : 'Refresh'}
-          </button>
+            Refresh
+          </Button>
         </div>
 
         {snapshot ? (
           <>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="domain-360__metadata">
               <ZoneManagementBadge type={snapshot.zoneManagement} />
               <ResultStateBadge state={snapshot.resultState} />
-              <span className="text-sm text-gray-500 tabular-nums">
+              <span className="domain-360__timestamp">
                 Last updated: {new Date(snapshot.createdAt).toLocaleString()}
               </span>
             </div>
             {snapshot.metadata?.authoritativeEvidence?.state === 'UNKNOWN' && (
-              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="domain-360__alert domain-360__alert--unknown ds-panel--muted">
                 <strong>Authoritative evidence UNKNOWN.</strong>{' '}
                 {snapshot.metadata.authoritativeEvidence.unknown?.explanation}{' '}
-                <button
-                  type="button"
-                  onClick={handleRefresh}
+                <Button
                   disabled={refreshMutation.isPending}
-                  className="font-semibold underline disabled:opacity-50"
+                  onClick={handleRefresh}
+                  size="sm"
+                  variant="quiet"
                 >
                   {snapshot.metadata.authoritativeEvidence.unknown?.actionLabel ??
                     'Retry authoritative DNS collection'}
-                </button>
+                </Button>
               </div>
             )}
           </>
         ) : loaderError ? (
           <div
-            className={`mt-4 p-4 rounded-lg border ${
-              loaderError.type === 'api_unreachable'
-                ? 'bg-red-50 border-red-200'
-                : 'bg-orange-50 border-orange-200'
-            }`}
+            className="domain-360__state domain-360__state--error"
             data-testid="loader-error-banner"
           >
-            <p
-              className={
-                loaderError.type === 'api_unreachable' ? 'text-red-800' : 'text-orange-800'
-              }
-            >
-              {loaderError.message}
-            </p>
+            <p>{loaderError.message}</p>
           </div>
         ) : refreshMutation.isPending ? (
           <div
-            className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"
+            className="domain-360__state domain-360__state--collecting"
             data-testid="domain-collecting-banner"
           >
             <div className="flex items-center gap-3">
-              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
-              <p className="text-blue-800">
+              <div className="ds-button__spinner" aria-hidden="true" />
+              <p>
                 Collecting DNS data for <strong>{domain}</strong>... This takes about 5 seconds.
                 {addToPortfolio ? ' This domain will be added to your portfolio.' : ''}
               </p>
@@ -352,10 +345,10 @@ function Domain360Page() {
           </div>
         ) : (
           <div
-            className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg"
+            className="domain-360__state domain-360__state--empty"
             data-testid="domain-no-data-banner"
           >
-            <p className="text-yellow-800">
+            <p>
               No DNS data for {domain} yet. Click <strong>Refresh</strong> to collect now.
             </p>
           </div>
@@ -363,53 +356,43 @@ function Domain360Page() {
 
         {refreshError ? (
           <div
-            className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            className="domain-360__alert domain-360__state--error"
             data-testid="domain-refresh-error-banner"
             role="alert"
           >
-            {refreshError}
-            <button
-              type="button"
-              onClick={handleRefresh}
-              className="ml-3 font-medium underline"
+            <span>{refreshError}</span>
+            <Button
               disabled={refreshMutation.isPending}
+              onClick={handleRefresh}
+              size="sm"
+              variant="quiet"
             >
               Retry
-            </button>
+            </Button>
           </div>
         ) : null}
+      </header>
+
+      <div role="tablist" aria-label="Domain DNS views" className="domain-360__tabs">
+        {DOMAIN_TABS.map((tab, index) => (
+          <button
+            key={tab.id}
+            type="button"
+            id={getTabId(tab.id)}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls={getPanelId(tab.id)}
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => handleTabChange(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
+            className="domain-360__tab"
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      <div className="border-b border-gray-200 mb-6 overflow-x-auto">
-        <div
-          role="tablist"
-          aria-label="Domain DNS views"
-          className="-mb-px flex w-max min-w-full space-x-4 sm:space-x-8"
-        >
-          {DOMAIN_TABS.map((tab, index) => (
-            <button
-              key={tab.id}
-              type="button"
-              id={getTabId(tab.id)}
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              aria-controls={getPanelId(tab.id)}
-              tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => handleTabChange(tab.id)}
-              onKeyDown={(event) => handleTabKeyDown(event, index)}
-              className={`focus-ring min-h-10 whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+      <div className="domain-360__panel ds-panel">
         <div
           role="tabpanel"
           id={getPanelId('overview')}
@@ -480,6 +463,9 @@ function OverviewTab({
   snapshot: Snapshot | null;
   observations: Observation[];
 }) {
+  const scopeHeadingId = useId();
+  const metadataHeadingId = useId();
+
   if (!snapshot) {
     return (
       <div className="space-y-6">
@@ -513,7 +499,7 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="domain-stat-grid">
         <StatCard label="Total Queries" value={observations.length} />
         <StatCard label="Successful" value={successCount} color="green" />
         <StatCard
@@ -535,45 +521,51 @@ function OverviewTab({
         </div>
       )}
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 className="font-semibold text-blue-900 mb-3">Query Scope</h3>
-        <div className="space-y-3">
+      <section className="domain-scope ds-panel--muted" aria-labelledby={scopeHeadingId}>
+        <div>
+          <p className="ds-kicker">Collection boundary</p>
+          <h3 id={scopeHeadingId}>Query scope</h3>
+        </div>
+        <div className="domain-scope__lists">
           <ScopeList label="Names" values={snapshot.queriedNames || []} />
           <ScopeList label="Types" values={snapshot.queriedTypes || []} />
           <ScopeList label="Vantages" values={snapshot.vantages || []} />
         </div>
         {snapshot.zoneManagement === 'unmanaged' ? (
-          <p className="mt-3 text-xs text-blue-700">
+          <p className="domain-scope__notice">
             Targeted inspection mode: this is a DNS evidence snapshot, not a full zone enumeration.
           </p>
         ) : null}
-      </div>
+      </section>
 
-      <div>
-        <h3 className="font-semibold text-gray-900 mb-2">Snapshot Metadata</h3>
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+      <section className="domain-metadata" aria-labelledby={metadataHeadingId}>
+        <div>
+          <p className="ds-kicker">Collected evidence</p>
+          <h3 id={metadataHeadingId}>Snapshot metadata</h3>
+        </div>
+        <dl>
           <div>
-            <dt className="text-gray-500">Created</dt>
-            <dd className="text-gray-900 tabular-nums">
+            <dt>Created</dt>
+            <dd className="domain-360__timestamp">
               {new Date(snapshot.createdAt).toLocaleString()}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Duration</dt>
-            <dd className="text-gray-900 tabular-nums">
+            <dt>Duration</dt>
+            <dd className="domain-360__timestamp">
               {snapshot.collectionDurationMs ? `${snapshot.collectionDurationMs}ms` : 'N/A'}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Triggered By</dt>
-            <dd className="text-gray-900">{snapshot.triggeredBy || 'Unknown'}</dd>
+            <dt>Triggered by</dt>
+            <dd>{snapshot.triggeredBy || 'Unknown'}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Ruleset</dt>
-            <dd className="text-gray-900">{snapshot.rulesetVersionId || 'Pending evaluation'}</dd>
+            <dt>Ruleset</dt>
+            <dd>{snapshot.rulesetVersionId || 'Pending evaluation'}</dd>
           </div>
         </dl>
-      </div>
+      </section>
 
       <div className="space-y-4">
         <div>
@@ -668,11 +660,10 @@ function MailTab({ domain, snapshotId }: { domain: string; snapshotId?: string }
 function HistoryTab({ domain }: { domain: string }) {
   return (
     <div>
-      <div className="mb-4">
-        <h3 className="font-semibold text-gray-900">Snapshot History</h3>
-        <p className="text-sm text-gray-500">
-          View and compare past DNS snapshots to track changes over time for {domain}.
-        </p>
+      <div className="domain-section-heading">
+        <p className="ds-kicker">Evidence timeline</p>
+        <h2>Snapshot history</h2>
+        <p>View and compare past DNS snapshots to track changes over time for {domain}.</p>
       </div>
       <SnapshotHistoryPanel domain={domain} />
     </div>
@@ -702,37 +693,28 @@ function StatCard({
   value: number;
   color?: 'gray' | 'green' | 'red';
 }) {
-  const colorClasses = {
-    gray: 'bg-gray-50',
-    green: 'bg-green-50',
-    red: 'bg-red-50',
-  };
-
   return (
-    <div className={`${colorClasses[color]} rounded-lg p-4 text-center`}>
-      <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
-      <div className="text-sm text-gray-600">{label}</div>
+    <div className={`domain-stat-card domain-stat-card--${color}`}>
+      <strong>{value}</strong>
+      <span>{label}</span>
     </div>
   );
 }
 
 function ScopeList({ label, values }: { label: string; values: string[] }) {
   return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{label}</p>
+    <div className="domain-scope__list">
+      <p>{label}</p>
       {values.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1.5">
+        <div>
           {values.map((value) => (
-            <span
-              key={`${label}-${value}`}
-              className="rounded-full bg-white/80 border border-blue-200 px-2 py-0.5 text-xs text-blue-900"
-            >
+            <span key={`${label}-${value}`} className="ds-badge ds-badge--info">
               {value}
             </span>
           ))}
         </div>
       ) : (
-        <p className="mt-1 text-sm text-blue-800">N/A</p>
+        <span className="domain-scope__empty">N/A</span>
       )}
     </div>
   );
