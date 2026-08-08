@@ -32,9 +32,9 @@ vi.mock('./queue.js', () => {
     getMonitoringQueue: vi.fn().mockReturnValue(mockQueue),
     scheduleMonitoringJob: vi.fn().mockResolvedValue('job-123'),
     QUEUE_NAMES: {
-      COLLECTION: 'dns-ops:collection',
-      MONITORING: 'dns-ops:monitoring',
-      REPORTS: 'dns-ops:reports',
+      COLLECTION: 'dns-ops-collection',
+      MONITORING: 'dns-ops-monitoring',
+      REPORTS: 'dns-ops-reports',
     },
   };
 });

@@ -57,9 +57,9 @@ vi.mock('./queue.js', () => ({
     add: vi.fn().mockResolvedValue({ id: 'queued-job-123' }),
   }),
   QUEUE_NAMES: {
-    COLLECTION: 'dns-ops:collection',
-    MONITORING: 'dns-ops:monitoring',
-    REPORTS: 'dns-ops:reports',
+    COLLECTION: 'dns-ops-collection',
+    MONITORING: 'dns-ops-monitoring',
+    REPORTS: 'dns-ops-reports',
   },
 }));
 

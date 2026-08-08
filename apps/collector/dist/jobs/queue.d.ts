@@ -43,9 +43,9 @@ export type JobData = {
     data: FleetReportJobData;
 };
 export declare const QUEUE_NAMES: {
-    readonly COLLECTION: "dns-ops:collection";
-    readonly MONITORING: "dns-ops:monitoring";
-    readonly REPORTS: "dns-ops:reports";
+    readonly COLLECTION: "dns-ops-collection";
+    readonly MONITORING: "dns-ops-monitoring";
+    readonly REPORTS: "dns-ops-reports";
 };
 /**
  * Create Redis connection from environment
