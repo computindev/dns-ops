@@ -88,3 +88,24 @@ Before committing, verify:
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Agent Flywheel (NucBox)
+
+- Repository: `dns-ops`
+- Runtime markers: Bun
+- Workbench control plane: not mapped; run `mde search dns-ops` before reporting project status
+- Repository memory: `.cass/playbook.yaml`; keep rules project-specific.
+- Git remains the code authority; Workbench is the coordination authority when mapped.
+
+Before any non-trivial task:
+
+```bash
+TASK="describe the task"
+cm context "$TASK" --workspace "$PWD" --json
+cass search "$TASK" --workspace "$PWD" --days 90 --json --fields summary
+```
+
+Search Workbench with plain `mde search`, then read the exact document with `mde cat`.
+Before committing, run `ubs --diff .` and `ubs --staged`.
+Keep `dcg` active; explain blocks and prefer reversible alternatives.
+Use `herdr --session dns-ops` for persistent remote agent work.
