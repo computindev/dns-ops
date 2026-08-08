@@ -175,6 +175,8 @@ export function createAdapterFromConfig(config: DBConfig): IDatabaseAdapter {
     connectionString: config.connectionString,
     ssl: parseSSLConfig(config.connectionString),
   });
+  // Idle client errors (server restart/teardown) must not crash the process.
+  pool.on('error', () => {});
 
   const db = drizzlePg(pool, { schema });
   return createSimpleAdapter(db, 'postgres');
@@ -188,6 +190,8 @@ export function createPostgresAdapter(connectionString: string): IDatabaseAdapte
     connectionString,
     ssl: parseSSLConfig(connectionString, { strictDefault: true }),
   });
+  // Idle client errors (server restart/teardown) must not crash the process.
+  pool.on('error', () => {});
 
   const db = drizzlePg(pool, { schema });
   return createSimpleAdapter(db, 'postgres');

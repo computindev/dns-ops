@@ -24,13 +24,11 @@ import { probeRoutes } from './jobs/probe-routes.js';
 import { closeQueues, getQueueHealth } from './jobs/queue.js';
 import { cleanupSchedules, initializeSchedules } from './jobs/scheduler.js';
 import { startWorkers, stopWorkers, workersRunning } from './jobs/worker.js';
-import { dbMiddleware, getSharedDbAdapter } from './middleware/db.js';
+import { checkDatabaseReady, dbMiddleware } from './middleware/db.js';
 import { requireServiceAuthMiddleware } from './middleware/index.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { notificationRoutes } from './notifications/routes.js';
 import type { Env } from './types.js';
-
-assertEnvValid();
 
 // Create logger before middleware that uses it
 const collectorLogger = createLogger({
@@ -38,6 +36,38 @@ const collectorLogger = createLogger({
   version: '1.0.0',
   minLevel: 'info',
 });
+
+/** Bound queue/redis readiness so a hung Redis client cannot stall the probe forever. */
+const QUEUE_HEALTH_TIMEOUT_MS = 2_000;
+
+/** Public-safe dependency messages — never echo driver/host/user details. */
+const PUBLIC_QUEUE_NOT_READY_MESSAGE = 'Queue connection unavailable';
+const PUBLIC_WORKERS_NOT_READY_MESSAGE = 'Workers not running';
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 const app = new Hono<Env>();
 
@@ -50,6 +80,7 @@ app.use(
   }) as unknown as MiddlewareHandler
 );
 
+// Liveness: process-only. Never probe dependencies here.
 app.get('/healthz', (c) => {
   return c.json({
     status: 'ok',
@@ -66,7 +97,7 @@ app.get('/health', (c) => {
   });
 });
 
-// Shared health endpoint for unified railway.toml healthcheckPath
+// Shared health endpoint for unified railway.toml healthcheckPath (liveness-style).
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
@@ -79,30 +110,46 @@ app.get('/readyz', async (c) => {
   const checks: Record<string, { status: 'ok' | 'error'; message?: string }> = {};
   let allHealthy = true;
 
-  try {
-    getSharedDbAdapter();
+  // Real dependency proof — bounded SELECT 1, not adapter construction.
+  const dbCheck = await checkDatabaseReady();
+  if (dbCheck.ok) {
     checks.database = { status: 'ok' };
-  } catch (error) {
-    checks.database = {
-      status: 'error',
-      message: error instanceof Error ? error.message : 'DB not initialized',
-    };
+  } else {
+    checks.database = { status: 'error', message: dbCheck.message };
     allHealthy = false;
   }
 
   if (process.env.WORKER_ENABLED === 'true') {
-    const queueHealth = await getQueueHealth();
+    // Queue/redis failures must surface as 503 (not_ready), never as an uncaught 500.
+    try {
+      const queueHealth = await withTimeout(
+        getQueueHealth(),
+        QUEUE_HEALTH_TIMEOUT_MS,
+        'Queue health check'
+      );
 
-    checks.queues = queueHealth.available
-      ? { status: 'ok' }
-      : { status: 'error', message: 'Queue connection unavailable' };
-    if (!queueHealth.available) {
+      checks.queues = queueHealth.available
+        ? { status: 'ok' }
+        : { status: 'error', message: PUBLIC_QUEUE_NOT_READY_MESSAGE };
+      if (!queueHealth.available) {
+        allHealthy = false;
+      }
+    } catch (error) {
+      collectorLogger.error(
+        'Queue readiness check failed',
+        error instanceof Error ? error : new Error(String(error)),
+        { path: '/readyz' }
+      );
+      checks.queues = {
+        status: 'error',
+        message: PUBLIC_QUEUE_NOT_READY_MESSAGE,
+      };
       allHealthy = false;
     }
 
     checks.workers = workersRunning()
       ? { status: 'ok' }
-      : { status: 'error', message: 'Workers not running' };
+      : { status: 'error', message: PUBLIC_WORKERS_NOT_READY_MESSAGE };
     if (!workersRunning()) {
       allHealthy = false;
     }
@@ -155,52 +202,75 @@ app.onError((err, c) => {
   );
 });
 
-const { port } = getEnvConfig();
+export default app;
 
-const server = serve(
-  {
-    fetch: app.fetch,
-    port,
-  },
-  async (info) => {
-    collectorLogger.info('DNS Ops Collector started', {
-      port: info.port,
-      livenessUrl: `http://localhost:${info.port}/healthz`,
-      readinessUrl: `http://localhost:${info.port}/readyz`,
-    });
+/**
+ * Boot the HTTP server and optional workers.
+ * Skipped under Vitest so readiness tests can import the app without binding a port.
+ */
+async function bootstrap(): Promise<void> {
+  assertEnvValid();
 
-    if (process.env.WORKER_ENABLED === 'true') {
-      collectorLogger.info('Starting job queue workers...');
-      await startWorkers();
+  const { port } = getEnvConfig();
 
-      collectorLogger.info('Initializing monitoring schedules...');
-      await initializeSchedules();
+  // Start workers before accepting traffic so configured /readyz healthchecks
+  // do not observe a transient workers-not-running window after listen.
+  if (process.env.WORKER_ENABLED === 'true') {
+    collectorLogger.info('Starting job queue workers...');
+    await startWorkers();
+
+    collectorLogger.info('Initializing monitoring schedules...');
+    await initializeSchedules();
+  }
+
+  const server = serve(
+    {
+      fetch: app.fetch,
+      port,
+    },
+    (info) => {
+      collectorLogger.info('DNS Ops Collector started', {
+        port: info.port,
+        livenessUrl: `http://localhost:${info.port}/healthz`,
+        readinessUrl: `http://localhost:${info.port}/readyz`,
+      });
     }
+  );
+
+  async function shutdown(signal: string): Promise<void> {
+    collectorLogger.info('Received shutdown signal', { signal });
+
+    if (workersRunning()) {
+      collectorLogger.info('Cleaning up schedules...');
+      await cleanupSchedules();
+
+      collectorLogger.info('Stopping workers...');
+      await stopWorkers();
+    }
+
+    collectorLogger.info('Closing queue connections...');
+    await closeQueues();
+
+    collectorLogger.info('Closing HTTP server...');
+    server.close();
+
+    collectorLogger.info('Shutdown complete');
+    process.exit(0);
   }
-);
 
-async function shutdown(signal: string): Promise<void> {
-  collectorLogger.info('Received shutdown signal', { signal });
-
-  if (workersRunning()) {
-    collectorLogger.info('Cleaning up schedules...');
-    await cleanupSchedules();
-
-    collectorLogger.info('Stopping workers...');
-    await stopWorkers();
-  }
-
-  collectorLogger.info('Closing queue connections...');
-  await closeQueues();
-
-  collectorLogger.info('Closing HTTP server...');
-  server.close();
-
-  collectorLogger.info('Shutdown complete');
-  process.exit(0);
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+const shouldBootstrap =
+  process.env.VITEST !== 'true' && process.env.COLLECTOR_SKIP_LISTEN !== 'true';
 
-export default app;
+if (shouldBootstrap) {
+  void bootstrap().catch((error: unknown) => {
+    collectorLogger.error(
+      'Collector bootstrap failed',
+      error instanceof Error ? error : new Error(String(error))
+    );
+    process.exit(1);
+  });
+}

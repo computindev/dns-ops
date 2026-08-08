@@ -2,11 +2,13 @@ import {
   DomainRepository,
   type IDatabaseAdapter,
   ObservationRepository,
+  pingDatabaseForReadiness,
   RecordSetRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
 import { type Domain, domains } from '@dns-ops/db/schema';
 import { Hono } from 'hono';
+import { getEnvConfig } from '../config/env.js';
 import { collectorCircuit, proxyToCollector } from '../lib/collector-proxy.js';
 import {
   requireAdminAccess,
@@ -75,23 +77,43 @@ async function resolveAccessibleSnapshot(
   return { snapshot, domain };
 }
 
-apiRoutes.get('/health', (c) => {
+// Railway readiness endpoint: 200 only after a real DB query succeeds.
+apiRoutes.get('/health', async (c) => {
   const db = c.get('db');
-  const hasDbConnection = !!db;
+  const degradedBody = {
+    status: 'degraded' as const,
+    service: 'dns-ops-web',
+    timestamp: new Date().toISOString(),
+    warning: 'Database connection not available - API functionality limited',
+  };
 
-  return c.json(
-    {
-      status: hasDbConnection ? 'healthy' : 'degraded',
-      service: 'dns-ops-web',
-      timestamp: new Date().toISOString(),
-      ...(hasDbConnection
-        ? {}
-        : {
-            warning: 'Database connection not available - API functionality limited',
-          }),
-    },
-    hasDbConnection ? 200 : 503
-  );
+  // Adapter presence alone is a false-green; require a configured URL and a
+  // bounded SELECT 1. Resolve URL the same way db middleware does (bindings +
+  // HYPERDRIVE_URL fallback), not process.env.DATABASE_URL alone.
+  // Public body never includes driver/host/user details.
+  const { databaseUrl } = getEnvConfig(c.env);
+  if (!db || !databaseUrl) {
+    return c.json(degradedBody, 503);
+  }
+
+  try {
+    await pingDatabaseForReadiness(databaseUrl);
+    return c.json(
+      {
+        status: 'healthy' as const,
+        service: 'dns-ops-web',
+        timestamp: new Date().toISOString(),
+      },
+      200
+    );
+  } catch (error) {
+    getWebLogger().error(
+      'Web readiness DB check failed',
+      error instanceof Error ? error : new Error(String(error)),
+      { path: '/api/health', method: 'GET' }
+    );
+    return c.json(degradedBody, 503);
+  }
 });
 
 // Detailed health check with admin access (PR-10.3)

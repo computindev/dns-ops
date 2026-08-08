@@ -87,9 +87,10 @@ RUN groupadd -r collector && useradd -r -g collector collector
 RUN chown -R collector:collector /app
 USER collector
 
-# Health check endpoint (uses curl which is installed above)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3001/health || exit 1
+# Readiness probe — dependency failure must not count as healthy.
+# start-period covers worker/queue startup before /readyz is required.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:3001/readyz || exit 1
 
 EXPOSE 3001
 
