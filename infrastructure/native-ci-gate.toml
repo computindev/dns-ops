@@ -1,0 +1,21 @@
+schema = "native-ci-gate/v1"
+repository = "computindev/dns-ops"
+source_remote = "https://github.com/computindev/dns-ops.git"
+default_ref = "refs/heads/master"
+source_ref_required = true
+gate = "native-ci-gate/v1"
+gate_path = "scripts/ci-gate"
+
+[[jobs]]
+id = "shellcheck"
+required = true
+image = "ghcr.io/computindev/custom-buzz-ci/shellcheck"
+image_digest = "sha256:3390e53888f915ca7b956612c397a19f11146f30a57d02c56d51d9bdb08527d5"
+command = ["/workspace/scripts/ci-gate", "shellcheck"]
+
+[terminal]
+field = "type"
+value = "run.finish"
+conclusion_field = "conclusion"
+success_value = "success"
+failure_value = "failure"

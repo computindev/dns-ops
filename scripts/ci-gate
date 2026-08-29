@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Repository-owned Native CI gate. Offline: no package install, no network.
+set -euo pipefail
+case "${1:-}" in
+  shellcheck)
+    command -v shellcheck >/dev/null 2>&1 || { echo "FAIL: shellcheck missing" >&2; exit 74; }
+    shellcheck -S warning -- "$0"
+    ;;
+  *)
+    echo "usage: $0 shellcheck" >&2
+    exit 2
+    ;;
+esac
