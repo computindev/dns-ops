@@ -1,8 +1,10 @@
 # Railway Deployment Guide
 
-Deploy the DNS Ops web app, collector, Postgres, and Redis on Railway.
+Railway Node is the **configured deployment target** for the DNS Ops web app, collector, Postgres, and Redis. It is not a currently linked live DNS Ops deploy.
 
-Web is TanStack Start + Hono on Railway Node (`apps/web/app.config.ts` preset `node-server`, `apps/web/railway.toml`).
+Do not run deploy or migration commands until an authorized Railway project, environment, and service are identified. Never use `dnsops-live-fixtures` as the app target.
+
+Web is TanStack Start + Hono configured for Railway Node (`apps/web/app.config.ts` preset `node-server`, `apps/web/railway.toml`).
 
 ## Architecture
 
@@ -42,6 +44,7 @@ Collector:
 | `NODE_ENV` | `production` | ✅ |
 | `PORT` | `3001` | ✅ |
 | `INTERNAL_SECRET` | Generate: `openssl rand -hex 16` | ✅ |
+| `WORKER_ENABLED` | `true` | ✅ starts workers/schedules |
 | `ENABLE_ACTIVE_PROBES` | `false` | Default |
 
 Web:
@@ -52,12 +55,10 @@ Web:
 | `COLLECTOR_URL` | Collector public URL | ✅ |
 | `INTERNAL_SECRET` | Same value as collector | ✅ |
 | `NODE_ENV` | `production` | ✅ |
-| `BETTER_AUTH_SECRET` | `openssl rand -hex 16` | ✅ |
-| `WEB_DOMAIN` | Public web origin | ✅ |
 
 ## 4. Deploy
 
-Railway auto-deploys on push to master.
+Only after an authorized project, environment, and service are linked. Railway can auto-deploy on push to master for that authorized target.
 
 Web start: `node apps/web/.output/server/index.mjs`  
 Collector start: `node apps/collector/dist/index.js` (image `CMD`; `apps/collector/railway.toml` also sets a start command)
@@ -66,13 +67,13 @@ Collector start: `node apps/collector/dist/index.js` (image `CMD`; `apps/collect
 
 The web service `releaseCommand` runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer**. App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
 
-After first deploy, schema should already be applied by release. To run the same runner out-of-band against a disposable/target DB:
+After first deploy, schema should already be applied by release. To run the same runner out-of-band, first confirm the authorized Railway project, environment, and service. Never point this at `dnsops-live-fixtures`.
 
 ```bash
-# Using Railway CLI (web service context)
+# Using Railway CLI (authorized web service context only)
 railway run node scripts/run-migrations.mjs
 
-# Or locally with the target DATABASE_URL
+# Or locally with the authorized target DATABASE_URL
 DATABASE_URL="postgresql://..." node scripts/run-migrations.mjs
 ```
 

@@ -1,15 +1,15 @@
 # DNS Ops API Reference
 
 > **Source of Truth**: This document is derived from the actual route definitions in the codebase.
-> Last updated: 2026-03-22
+> Last updated: 2026-08-30
 
 ## Overview
 
 DNS Ops consists of two services:
-- **Web App** (`apps/web`): TanStack Start + Hono on Railway Node; UI and primary API at port 3000
+- **Web App** (`apps/web`): TanStack Start + Hono configured for Railway Node; UI and primary API at port 3000
 - **Collector** (`apps/collector`): Node.js + PostgreSQL + Redis; DNS/mail collection at port 3001
 
-`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, and delegation reads are not public.
+`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, delegation, and shared-report reads are not public. There is no token-only exemption for `/alerts/reports/shared/:token`.
 
 ---
 
@@ -89,7 +89,7 @@ Base URL: `http://localhost:3000/api`
 | GET | `/alerts/reports` | Yes | List shared reports |
 | POST | `/alerts/reports` | Yes | Create shared report |
 | POST | `/alerts/reports/:id/expire` | Yes | Expire shared report |
-| GET | `/alerts/reports/shared/:token` | No | Read public shared report |
+| GET | `/alerts/reports/shared/:token` | Yes | Read shared report (session auth required; token is not a public exemption) |
 
 ### Mail & Remediation
 

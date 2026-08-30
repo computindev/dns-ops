@@ -1,12 +1,12 @@
 # DNS Ops Workbench
 
-DNS + mail operations platform with deterministic rules engine, DNS change simulation, and multi-tenant operator workflows.
+DNS + mail operations platform with deterministic rules engine, guidance-only DNS change simulation, and multi-tenant operator workflows.
 
 ## Architecture
 
-Split runtime:
+Split runtime. Railway Node is the configured web deployment target, not a currently linked live DNS Ops project.
 
-- **`apps/web`** — TanStack Start + Hono on Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `apps/web/railway.toml`.
+- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `apps/web/railway.toml` after an authorized project/environment/service is identified.
 - **`apps/collector`** — Node.js + PostgreSQL + Redis for DNS collection, probes, and background jobs
 - **`packages/db`** — PostgreSQL/Drizzle schema + repositories
 - **`packages/rules`** — Deterministic rules engine (DNS + mail rules, simulation engine)
@@ -56,18 +56,19 @@ DNS change simulation UI is gated by `VITE_FEATURE_SIMULATION` (default `false`)
 
 ### DNS Change Simulation Engine
 
-Simulation is available as an API; the Domain 360 panel stays off unless `VITE_FEATURE_SIMULATION=true`.
+Simulation is a **guidance-only API**. It does not emit executable mutations or dry-run provider-aware record changes. `packages/rules/src/simulation/index.ts` returns `mode: 'GUIDANCE_ONLY'`, `detectedProvider: 'unknown'`, and `proposedChanges: []`.
 
-- `POST /api/simulate` — takes a snapshot or finding, generates concrete DNS record mutations, dry-runs them through the rules engine
-- `GET /api/simulate/actionable-types` — returns fixable finding types
-- Provider-aware fixes for Google Workspace, Microsoft 365, Amazon SES, SendGrid, Mailgun
-- Supports 8 finding types: SPF, DMARC, MX, MTA-STS, TLS-RPT, DKIM, SPF malformed, CNAME conflicts
-- Deterministic — no AI/LLM, reuses existing rules engine + provider templates
+The Domain 360 simulation panel stays off unless `VITE_FEATURE_SIMULATION=true`.
+
+- `POST /api/simulate` — returns non-executable guidance for supported finding types
+- `GET /api/simulate/actionable-types` — lists finding types that have guidance
+- Guidance covers SPF, DMARC, MX, MTA-STS, TLS-RPT, DKIM, SPF malformed, and CNAME conflicts
+- No executable mutations, provider-confirmed change sets, or dry-run record writes
 
 ### Backend
 
 - Authoritative datastore: **PostgreSQL only**
-- Web runtime: Railway Node (`node apps/web/.output/server/index.mjs`) + PostgreSQL
+- Web runtime: configured Railway Node target (`node apps/web/.output/server/index.mjs`) + PostgreSQL
 - Collector runtime: Node.js + PostgreSQL + Redis (queue-backed jobs)
 - Collector health: `/healthz` liveness (process-only), `/readyz` dependency-aware (DB/queues; 503 when not ready)
 - Web health: `GET /api/health` returns 503 if the DB is down
@@ -163,7 +164,7 @@ Live DNS fixture env vars:
 
 ## API routes
 
-`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, and delegation reads are not public.
+`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, delegation, and shared-report reads are not public.
 
 | Route group | Path prefix | Auth | Description |
 |---|---|---|---|
@@ -172,11 +173,11 @@ Live DNS fixture env vars:
 | Snapshots | `/api/snapshots` | Required | DNS snapshot CRUD, latest, diff |
 | Findings | `/api/findings` | Required | Rule evaluation, acknowledge, false-positive |
 | Selectors | `/api/selectors` | Required | Persisted DNS selectors |
-| Simulation | `/api/simulate` | Required | DNS change simulation + dry-run (UI flag off by default) |
+| Simulation | `/api/simulate` | Required | Guidance-only simulation; no executable mutations (UI flag off by default) |
 | Mail | `/api/mail` | Required | Mail diagnostics, remediation |
 | Monitoring | `/api/monitoring` | Required | Domain monitoring CRUD + toggle |
 | Alerts | `/api/alerts` | Required | Alert lifecycle (ack/resolve/suppress) |
-| Shared reports | `/api/alerts/reports/shared/:token` | Token | Unauthenticated token read of a shared report |
+| Shared reports | `/api/alerts/reports/shared/:token` | Required | Session-auth read of a shared report (token is not a public exemption) |
 | Portfolio | `/api/portfolio` | Required | Search, filters, tags, reports, overrides, audit |
 | Fleet reports | `/api/fleet-report` | Required | Collector proxy for fleet reports |
 | Shadow comparison | `/api/shadow` | Required | Provider shadow comparison (API only, no UI) |

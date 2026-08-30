@@ -1,6 +1,6 @@
 # Runtime Topology
 
-**Status:** Authoritative for current deploy shape
+**Status:** Authoritative for configured runtime shape
 
 ## Overview
 
@@ -33,7 +33,7 @@ This document defines the runtime topology for the DNS Ops Workbench: where prod
 
 | Property | Value |
 |----------|-------|
-| Runtime | Railway Node (`node-server`) |
+| Runtime | Configured Railway Node target (`node-server`) |
 | Framework | TanStack Start + Hono |
 | Database Access | Direct PostgreSQL (`DATABASE_URL`) |
 | Start | `node apps/web/.output/server/index.mjs` |
@@ -47,7 +47,7 @@ This document defines the runtime topology for the DNS Ops Workbench: where prod
 Railway Node (apps/web) → PostgreSQL
 ```
 
-Current deploy is Railway Node. Edge-worker bindings are not in use.
+Railway Node is the configured deployment target, not a currently linked live DNS Ops project. Edge-worker bindings are not in use.
 
 ### Collector (apps/collector)
 
@@ -215,5 +215,5 @@ This is a known limitation tracked as DNS-001.
 
 - [Query Scope](../rules/query-scope.md) - DNS query policies
 - [Trust Boundary](../rules/trust-boundary.md) - Probe policies
-- [Railway deploy](../guides/railway-deploy.md) - Current deploy shape
+- [Railway deploy](../guides/railway-deploy.md) - Configured Railway Node target; requires an authorized project/environment/service
 - [README](../../README.md) - Operator entrypoint
