@@ -1,13 +1,13 @@
 # DNS Ops Workbench
 
-DNS + mail operations platform with deterministic rules engine, DNS change simulation, and multi-tenant operator workflows.
+DNS + mail operations platform with deterministic rules engine, guidance-only DNS change simulation, and multi-tenant operator workflows.
 
 ## Architecture
 
-Split runtime:
+Split runtime. Railway Node is the configured web deployment target, not a currently linked live DNS Ops project.
 
-- **`apps/web`** — TanStack Start + Hono on Cloudflare Workers (UI + API)
-- **`apps/collector`** — Node.js service for DNS collection, probes, and background jobs
+- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `apps/web/railway.toml` after an authorized project/environment/service is identified.
+- **`apps/collector`** — Node.js + PostgreSQL + Redis for DNS collection, probes, and background jobs
 - **`packages/db`** — PostgreSQL/Drizzle schema + repositories
 - **`packages/rules`** — Deterministic rules engine (DNS + mail rules, simulation engine)
 - **`packages/contracts`** — Shared TypeScript types, DTOs, enums
@@ -20,7 +20,7 @@ Split runtime:
 ```text
 dns-ops/
 ├── apps/
-│   ├── web/              # Workers-based web app + API
+│   ├── web/              # Railway Node web app + API
 │   └── collector/        # Node.js DNS collection service
 ├── packages/
 │   ├── contracts/        # Shared types and DTOs
@@ -30,16 +30,18 @@ dns-ops/
 │   ├── logging/          # Structured logging
 │   └── testkit/          # Test fixtures
 ├── docs/
-└── beads/
+└── beads/                # Historical specs only
 ```
 
 ## Current product truth
 
 ### Domain 360 (`/domain/:domain`)
 
-- **Overview** — stat cards, query scope, notes, tags, DNS change simulation panel
+- **Overview** — stat cards, query scope, notes, tags
 - **DNS** — delegation evidence, snapshots, findings, selectors
 - **Mail** — mail findings (persisted), DKIM selectors with provider detection, preview badge, live diagnostics
+
+DNS change simulation UI is gated by `VITE_FEATURE_SIMULATION` (default `false`). The `/api/simulate` API may exist; it is not a default operator panel.
 
 ### Portfolio (`/portfolio`)
 
@@ -54,20 +56,22 @@ dns-ops/
 
 ### DNS Change Simulation Engine
 
-The simulation engine closes the operational loop: **finding detected → fix proposed → dry-run verified → operator sees impact before acting**.
+Simulation is a **guidance-only API**. It does not emit executable mutations or dry-run provider-aware record changes. `packages/rules/src/simulation/index.ts` returns `mode: 'GUIDANCE_ONLY'`, `detectedProvider: 'unknown'`, and `proposedChanges: []`.
 
-- `POST /api/simulate` — takes a snapshot or finding, generates concrete DNS record mutations, dry-runs them through the rules engine
-- `GET /api/simulate/actionable-types` — returns fixable finding types
-- Provider-aware fixes for Google Workspace, Microsoft 365, Amazon SES, SendGrid, Mailgun
-- Supports 8 finding types: SPF, DMARC, MX, MTA-STS, TLS-RPT, DKIM, SPF malformed, CNAME conflicts
-- 100% deterministic — no AI/LLM, reuses existing rules engine + provider templates
+The Domain 360 simulation panel stays off unless `VITE_FEATURE_SIMULATION=true`.
+
+- `POST /api/simulate` — returns non-executable guidance for supported finding types
+- `GET /api/simulate/actionable-types` — lists finding types that have guidance
+- Guidance covers SPF, DMARC, MX, MTA-STS, TLS-RPT, DKIM, SPF malformed, and CNAME conflicts
+- No executable mutations, provider-confirmed change sets, or dry-run record writes
 
 ### Backend
 
 - Authoritative datastore: **PostgreSQL only**
-- Web runtime: Cloudflare Workers + PostgreSQL connection config
-- Collector runtime: Node.js + direct PostgreSQL + Redis (queue-backed jobs)
-- Collector public health: `/health`, `/healthz`, `/readyz`
+- Web runtime: configured Railway Node target (`node apps/web/.output/server/index.mjs`) + PostgreSQL
+- Collector runtime: Node.js + PostgreSQL + Redis (queue-backed jobs)
+- Collector health: `/healthz` liveness (process-only), `/readyz` dependency-aware (DB/queues; 503 when not ready)
+- Web health: `GET /api/health` returns 503 if the DB is down
 - Collector `/api/*` requires service auth
 - All write paths tenant-scoped with actor attribution
 - Monitoring, alert, remediation, shared-report mutations emit persisted audit events
@@ -75,11 +79,14 @@ The simulation engine closes the operational loop: **finding detected → fix pr
 
 ### Test coverage
 
-- **2212 tests** (114 test files) — tenant isolation, auth, and integration tests comprehensive
-- **58 E2E tests** (5 spec files) — Domain 360 states, delegation, selectors, write flows, smoke
-- Well-covered: rules engine, auth, monitoring, alerts, portfolio, parsing
-- All write paths require auth with tenant isolation enforced at schema, repository, and route layers
-- Runtime route tests follow mock-DB + `app.request()` pattern
+Do not treat hardcoded counts as current truth. Run:
+
+```bash
+bun run test
+bun run --filter @dns-ops/web e2e
+```
+
+Default `bun run test` covers unit/integration plus harness and migration checks. E2E needs a running dev server (see Validation). Coverage emphasis: rules engine, auth, monitoring, alerts, portfolio, parsing. Write paths require auth with tenant isolation at schema, repository, and route layers. Runtime route tests follow mock-DB + `app.request()`.
 
 ## Setup
 
@@ -96,7 +103,7 @@ cp .env.example .env
 
 ## Database
 
-Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`), invoked automatically as the web service Railway `releaseCommand`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) are unavailable (410) and direct operators back to this runner.
+Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`) only, invoked automatically as the web service Railway `releaseCommand`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) return 410 and direct operators back to this runner.
 
 Local / disposable DB:
 
@@ -113,7 +120,7 @@ DATABASE_URL=postgres://... bun run migrate
 DATABASE_URL=postgres://... node scripts/run-migrations.mjs
 ```
 
-Do **not** use app HTTP endpoints to reset/rebuild schema in hope of request-time recovery — that path was removed in RT-4.
+Do **not** use app HTTP endpoints to reset/rebuild schema — that path was removed in RT-4.
 
 ## Run
 
@@ -157,34 +164,33 @@ Live DNS fixture env vars:
 
 ## API routes
 
+`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, delegation, and shared-report reads are not public.
+
 | Route group | Path prefix | Auth | Description |
 |---|---|---|---|
-| Snapshots | `/api/snapshots` | Tenant-scoped | DNS snapshot CRUD, latest, diff |
-| Findings | `/api/findings` | Tenant-scoped | Rule evaluation, acknowledge, false-positive |
-| Selectors | `/api/selectors` | Tenant-scoped | Persisted DNS selectors |
-| Simulation | `/api/simulate` | Tenant-scoped | DNS change simulation + dry-run |
-| Mail | `/api/mail` | Tenant-scoped | Mail diagnostics, remediation |
-| Monitoring | `/api/monitoring` | Tenant-scoped | Domain monitoring CRUD + toggle |
-| Alerts | `/api/alerts` | Tenant-scoped | Alert lifecycle (ack/resolve/suppress) |
-| Portfolio | `/api/portfolio` | Tenant-scoped | Search, filters, tags, reports, overrides, audit |
-| Fleet reports | `/api/fleet-report` | Tenant-scoped | Collector proxy for fleet reports |
-| Shadow comparison | `/api/shadow` | Tenant-scoped | Provider shadow comparison (API only, no UI) |
-| Legacy tools | `/api/legacy-tools` | Tenant-scoped | DMARC/DKIM deeplinks, shadow stats |
-| Delegation | `/api/delegation` | Public reads | NS delegation + DNSSEC evidence |
-| Domain reads | `/api/snapshots`, `/api/findings` | Public reads | Unscoped domain reads |
+| Health | `/api/health` | Public | Web readiness; 503 if DB down |
+| Auth | `/api/auth` | Public login | Session login/logout/me |
+| Snapshots | `/api/snapshots` | Required | DNS snapshot CRUD, latest, diff |
+| Findings | `/api/findings` | Required | Rule evaluation, acknowledge, false-positive |
+| Selectors | `/api/selectors` | Required | Persisted DNS selectors |
+| Simulation | `/api/simulate` | Required | Guidance-only simulation; no executable mutations (UI flag off by default) |
+| Mail | `/api/mail` | Required | Mail diagnostics, remediation |
+| Monitoring | `/api/monitoring` | Required | Domain monitoring CRUD + toggle |
+| Alerts | `/api/alerts` | Required | Alert lifecycle (ack/resolve/suppress) |
+| Shared reports | `/api/alerts/reports/shared/:token` | Required | Session-auth read of a shared report (token is not a public exemption) |
+| Portfolio | `/api/portfolio` | Required | Search, filters, tags, reports, overrides, audit |
+| Fleet reports | `/api/fleet-report` | Required | Collector proxy for fleet reports |
+| Shadow comparison | `/api/shadow` | Required | Provider shadow comparison (API only, no UI) |
+| Legacy tools | `/api/legacy-tools` | Required | DMARC/DKIM deeplinks, shadow stats |
+| Delegation | `/api/delegation` | Required | NS delegation + DNSSEC evidence |
 
-## Beads
+## Tracking
 
-This repo uses `br` for issue tracking:
-
-```bash
-br sync --flush-only
-```
+Live work is tracked in **GitHub issues**. `beads/` is historical specs, not the live tracker.
 
 ## Key docs
 
-- `STATUS_REPORT.md` — current validation truth
 - `docs/architecture/runtime-topology.md`
+- `docs/guides/railway-deploy.md`
 - `docs/rules/query-scope.md`
 - `docs/rules/trust-boundary.md`
-- `packages/contracts/docs/API_REFERENCE.md`

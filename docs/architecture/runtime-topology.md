@@ -1,12 +1,10 @@
 # Runtime Topology
 
-**Version:** 1.0
-**Effective Date:** 2026-03-20
-**Status:** Authoritative
+**Status:** Authoritative for configured runtime shape
 
 ## Overview
 
-This document defines the authoritative runtime topology for the DNS Ops Workbench. It resolves all ambiguity about where product data lives and how different runtimes interact.
+This document defines the runtime topology for the DNS Ops Workbench: where product data lives and how the two Node services interact.
 
 ## Authoritative Data Store
 
@@ -27,7 +25,7 @@ This document defines the authoritative runtime topology for the DNS Ops Workben
 1. **Consistency**: Both web and collector need the same data
 2. **Transactions**: Complex writes require ACID guarantees
 3. **Schema**: Drizzle ORM works identically for both runtimes
-4. **Scalability**: Managed PostgreSQL (Neon/Supabase/RDS) handles our scale
+4. **Scalability**: Managed PostgreSQL handles our scale
 
 ## Runtime Contracts
 
@@ -35,30 +33,38 @@ This document defines the authoritative runtime topology for the DNS Ops Workben
 
 | Property | Value |
 |----------|-------|
-| Runtime | Cloudflare Workers |
+| Runtime | Configured Railway Node target (`node-server`) |
 | Framework | TanStack Start + Hono |
-| Database Access | Hyperdrive → PostgreSQL |
-| Primary Role | Read-heavy dashboard, API endpoints |
+| Database Access | Direct PostgreSQL (`DATABASE_URL`) |
+| Start | `node apps/web/.output/server/index.mjs` |
+| Health | `GET /api/health` — 503 if DB down |
+| Schema | `node scripts/run-migrations.mjs` as Railway `releaseCommand` only |
+| Primary Role | Dashboard + API |
 | Write Scope | Operator-triggered collection requests, portfolio management |
 
 **Connection Flow:**
 ```
-Cloudflare Worker → Hyperdrive (connection pooling) → PostgreSQL
+Railway Node (apps/web) → PostgreSQL
 ```
+
+Railway Node is the configured deployment target, not a currently linked live DNS Ops project. Edge-worker bindings are not in use.
 
 ### Collector (apps/collector)
 
 | Property | Value |
 |----------|-------|
-| Runtime | Node.js (Docker container) |
+| Runtime | Node.js (Docker on Railway) |
 | Framework | Hono |
-| Database Access | Direct PostgreSQL connection |
+| Database Access | Direct PostgreSQL |
+| Queue | Redis (BullMQ) |
+| Health | `/healthz` liveness (process-only); `/readyz` dependency-aware (DB/queues, 503 when not ready) |
 | Primary Role | DNS collection, rules evaluation, probe execution |
 | Write Scope | Snapshots, observations, findings, suggestions |
 
 **Connection Flow:**
 ```
-Node.js Container → PostgreSQL (direct/pooled)
+Node.js Container → PostgreSQL
+Node.js Container → Redis (queue-backed jobs)
 ```
 
 ## Environment Matrix
@@ -69,129 +75,70 @@ Node.js Container → PostgreSQL (direct/pooled)
 |----------|-------|---------|
 | `DATABASE_URL` | `postgresql://user@localhost:5432/dns_ops` | Both |
 | `COLLECTOR_URL` | `http://localhost:3001` | Web |
+| `REDIS_URL` | `redis://localhost:6379` | Collector queues |
 | `NODE_ENV` | `development` | Both |
 
-### Staging
+### Staging / Production
 
 | Variable | Value | Used By |
 |----------|-------|---------|
-| `DATABASE_URL` | `postgresql://.../dns_ops_staging` | Collector |
-| `HYPERDRIVE_URL` | `hyperdrive://staging-id` | Web |
-| `COLLECTOR_URL` | `https://collector-staging.example.com` | Web |
-| `NODE_ENV` | `staging` | Both |
+| `DATABASE_URL` | Managed Postgres URL | Both |
+| `COLLECTOR_URL` | Collector public URL | Web |
+| `REDIS_URL` | Managed Redis URL | Collector queues |
+| `INTERNAL_SECRET` | Shared service secret | Both |
+| `NODE_ENV` | `staging` / `production` | Both |
 
-### Production
+## Railway Configuration
 
-| Variable | Value | Used By |
-|----------|-------|---------|
-| `DATABASE_URL` | `postgresql://.../dns_ops_prod` | Collector |
-| `HYPERDRIVE_URL` | `hyperdrive://prod-id` | Web |
-| `COLLECTOR_URL` | `https://collector.example.com` | Web |
-| `NODE_ENV` | `production` | Both |
+Web (`apps/web/railway.toml`): Dockerfile `apps/web/Dockerfile.railway`, `releaseCommand = node scripts/run-migrations.mjs`, `startCommand = node apps/web/.output/server/index.mjs`, `healthcheckPath = /api/health`.
 
-## Wrangler Configuration (Production)
+Collector (`apps/collector/railway.toml`): Dockerfile `apps/collector/Dockerfile.railway`, `healthcheckPath = /readyz`.
 
-```jsonc
-{
-  "name": "dns-ops-web",
-  "compatibility_date": "2024-01-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "hyperdrive": [
-    {
-      "binding": "HYPERDRIVE",
-      "id": "your-hyperdrive-id-here"
-    }
-  ],
-  "vars": {
-    "ENVIRONMENT": "production",
-    "COLLECTOR_URL": "https://collector.example.com"
-  }
-}
-```
+HTTP `POST /api/migrate/reset` and `POST /api/migrate/rebuild` return 410.
 
-## D1 Status
+## Unused edge bindings
 
-**D1 is NOT used for product data.**
-
-D1 may be used for:
-- Edge caching (read-only replicas, if needed)
-- Session storage (non-critical)
-- Rate limiting state
-
-Any D1 usage must be explicitly documented and must not create data inconsistency with PostgreSQL.
+Product data is PostgreSQL only. There is no edge-worker config in this repo.
 
 ## Invariants
 
 1. **Single Source of Truth**: All product data reads and writes go to PostgreSQL
-2. **No Silent Drift**: If PostgreSQL is unavailable, operations fail explicitly
+2. **No Silent Drift**: If PostgreSQL is unavailable, operations fail explicitly (`/api/health` and collector `/readyz` return 503)
 3. **Consistent Schema**: Both runtimes use the same Drizzle schema from `@dns-ops/db`
-4. **Explicit Fallbacks**: No automatic fallback to D1 or other stores
+4. **No request-path DDL**: Schema changes go through `scripts/run-migrations.mjs` only
 
 ## Startup Validation
 
 Both web and collector must validate their configuration at startup:
 
 ```typescript
-// Pseudo-code for startup validation
 function validateConfig(config: RuntimeConfig): void {
-  if (!config.databaseUrl && !config.hyperdriveBinding) {
-    throw new Error('DATABASE_URL or Hyperdrive binding required');
+  if (!config.databaseUrl) {
+    throw new Error('DATABASE_URL required');
   }
 
   if (config.environment === 'production' && !config.collectorUrl) {
     throw new Error('COLLECTOR_URL required in production');
   }
-
-  // Test database connection
-  await testDatabaseConnection(config);
 }
 ```
-
-## Migration Path
-
-### Current State (Pre-Bead 02)
-
-- Web app has D1 binding in wrangler.jsonc
-- Collector uses PostgreSQL
-- Local dev uses PostgreSQL
-
-### Target State (Post-Bead 02)
-
-- Web app uses Hyperdrive → PostgreSQL
-- Collector uses PostgreSQL (unchanged)
-- Local dev uses PostgreSQL (unchanged)
-- D1 bindings removed from wrangler.jsonc
 
 ## Deployment Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Cloudflare Edge                            │
-│  ┌─────────────┐                                                │
-│  │  Workers    │──── Hyperdrive ────┐                          │
-│  │ (dns-ops-  │                     │                          │
-│  │    web)    │                     │                          │
-│  └─────────────┘                     │                          │
-└─────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    PostgreSQL (Neon/Supabase/RDS)               │
-│                                                                 │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
-│  │ domains  │ │snapshots │ │findings  │ │portfolios│           │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                                       ▲
-                                       │
-┌─────────────────────────────────────────────────────────────────┐
-│                    Container Runtime                            │
-│  ┌─────────────┐                                                │
-│  │  Collector  │──── Direct Connection ─────────────────────────┘
-│  │ (Node.js)  │                                                 │
-│  └─────────────┘                                                │
-└─────────────────────────────────────────────────────────────────┘
+│                    Railway                                      │
+│  ┌─────────────┐         ┌─────────────┐                        │
+│  │  Web        │         │  Collector  │                        │
+│  │  Node       │──SQL──┐ │  Node       │──SQL──┐                │
+│  │  (TanStack  │       │ │  + Redis    │       │                │
+│  │   Start)    │       │ └─────────────┘       │                │
+│  └─────────────┘       │                       │                │
+└────────────────────────┼───────────────────────┼────────────────┘
+                         ▼                       ▼
+              ┌─────────────────────────────────────────┐
+              │           PostgreSQL                    │
+              └─────────────────────────────────────────┘
 ```
 
 ## Collection Patterns
@@ -254,46 +201,6 @@ To enable true authoritative querying with AA flag detection:
 2. **Parse response flags directly**: Extract AA, AD, TC bits from response
 3. **Implement EDNS0 support**: Handle larger responses and DNSSEC
 
-```typescript
-// Future implementation sketch
-import * as dnsPacket from 'dns-packet';
-import * as dgram from 'node:dgram';
-
-function queryAuthoritative(
-  name: string,
-  type: string,
-  nameserver: string
-): Promise<DNSQueryResult> {
-  const socket = dgram.createSocket('udp4');
-  const query = dnsPacket.encode({
-    type: 'query',
-    id: Math.floor(Math.random() * 65535),
-    flags: dnsPacket.RECURSION_DESIRED,
-    questions: [{ name, type }],
-  });
-
-  return new Promise((resolve, reject) => {
-    socket.send(query, 53, nameserver, (err) => {
-      if (err) reject(err);
-    });
-
-    socket.once('message', (response) => {
-      const decoded = dnsPacket.decode(response);
-      resolve({
-        ...,
-        flags: {
-          aa: decoded.flags & dnsPacket.AUTHORITATIVE_ANSWER !== 0,
-          ad: decoded.flags & dnsPacket.AUTHENTIC_DATA !== 0,
-          // ... other flags
-        },
-      });
-    });
-  });
-}
-```
-
-### Impact on Delegation Detection
-
 Until true authoritative querying is implemented:
 
 - `DelegationCollector.detectLameDelegation()` only reports actual failures
@@ -308,4 +215,5 @@ This is a known limitation tracked as DNS-001.
 
 - [Query Scope](../rules/query-scope.md) - DNS query policies
 - [Trust Boundary](../rules/trust-boundary.md) - Probe policies
-- [REPO_STRUCTURE.md](../../REPO_STRUCTURE.md) - Monorepo layout
+- [Railway deploy](../guides/railway-deploy.md) - Configured Railway Node target; requires an authorized project/environment/service
+- [README](../../README.md) - Operator entrypoint
