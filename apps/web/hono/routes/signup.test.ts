@@ -1,9 +1,8 @@
 /**
  * Session cookie security tests.
  *
- * TB-1 (AuthZ hardening): the dns_ops_session cookie must carry the Secure
- * attribute (alongside HttpOnly; SameSite=Lax) on both issuance (login) and
- * clearing (logout) so the token is never transmitted over plain HTTP.
+ * Secure is scheme-aware: HTTPS (or X-Forwarded-Proto: https) keeps Secure so
+ * the token is not sent on plaintext; HTTP local omits Secure so the cookie can persist.
  */
 
 import { Hono } from 'hono';
@@ -50,14 +49,13 @@ describe('session cookie attributes', () => {
     app = createApp();
   });
 
-  it('login issues a session cookie with Secure + HttpOnly + SameSite=Lax', async () => {
-    const res = await app.request('/api/auth/login', {
+  it('login over HTTPS issues Secure + HttpOnly + SameSite=Lax', async () => {
+    const res = await app.request('https://dns-ops.example/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'user@example.com', password: 'correct-horse' }),
     });
 
-    // Success precondition: login succeeded and a cookie was issued.
     expect(res.status).toBe(200);
     const cookie = res.headers.get('set-cookie');
     expect(cookie, 'Set-Cookie must be present').not.toBeNull();
@@ -67,8 +65,39 @@ describe('session cookie attributes', () => {
     expect(cookie).toContain('SameSite=Lax');
   });
 
-  it('logout clears the session cookie with Secure', async () => {
-    const res = await app.request('/api/auth/logout', {
+  it('login over HTTP omits Secure so local cookies can persist', async () => {
+    const res = await app.request('http://localhost/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'user@example.com', password: 'correct-horse' }),
+    });
+
+    expect(res.status).toBe(200);
+    const cookie = res.headers.get('set-cookie');
+    expect(cookie, 'Set-Cookie must be present').not.toBeNull();
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).not.toContain('Secure');
+  });
+
+  it('login behind HTTPS proxy (X-Forwarded-Proto) sets Secure', async () => {
+    const res = await app.request('http://127.0.0.1/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Forwarded-Proto': 'https',
+      },
+      body: JSON.stringify({ email: 'user@example.com', password: 'correct-horse' }),
+    });
+
+    expect(res.status).toBe(200);
+    const cookie = res.headers.get('set-cookie');
+    expect(cookie, 'Set-Cookie must be present').not.toBeNull();
+    expect(cookie).toContain('Secure');
+  });
+
+  it('logout over HTTPS clears the session cookie with Secure', async () => {
+    const res = await app.request('https://dns-ops.example/api/auth/logout', {
       method: 'POST',
       headers: { Cookie: 'dns_ops_session=existing-token' },
     });
@@ -79,5 +108,18 @@ describe('session cookie attributes', () => {
 
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('Max-Age=0');
+  });
+
+  it('logout over HTTP omits Secure', async () => {
+    const res = await app.request('http://localhost/api/auth/logout', {
+      method: 'POST',
+      headers: { Cookie: 'dns_ops_session=existing-token' },
+    });
+
+    expect(res.status).toBe(200);
+    const cookie = res.headers.get('set-cookie');
+    expect(cookie, 'Set-Cookie must be present').not.toBeNull();
+    expect(cookie).toContain('Max-Age=0');
+    expect(cookie).not.toContain('Secure');
   });
 });

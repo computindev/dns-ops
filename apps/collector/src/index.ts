@@ -192,14 +192,7 @@ app.onError((err, c) => {
     path: c.req.path,
     method: c.req.method,
   });
-  return c.json(
-    {
-      error: 'Internal Server Error',
-      message: err.message,
-      requestId,
-    },
-    500
-  );
+  return c.json({ error: 'Internal Server Error', requestId }, 500);
 });
 
 export default app;
