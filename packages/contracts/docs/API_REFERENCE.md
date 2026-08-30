@@ -6,10 +6,10 @@
 ## Overview
 
 DNS Ops consists of two services:
-- **Web App** (`apps/web`): UI and primary API at port 3000
-- **Collector** (`apps/collector`): DNS/mail collection service at port 4000
+- **Web App** (`apps/web`): TanStack Start + Hono on Railway Node; UI and primary API at port 3000
+- **Collector** (`apps/collector`): Node.js + PostgreSQL + Redis; DNS/mail collection at port 3001
 
-Both services require authentication for most endpoints.
+`apps/web` applies `requireAuthMiddleware` to `/api/*` except `/api/health` and `/api/auth/*`. Snapshot, finding, and delegation reads are not public.
 
 ---
 
@@ -21,37 +21,37 @@ Base URL: `http://localhost:3000/api`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/health` | No | Service health check |
+| GET | `/health` | No | Service health check; 503 if DB down |
 
 ### Domain Operations
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/domain/:domain/latest` | No | Get latest snapshot for a domain |
+| GET | `/domain/:domain/latest` | Yes | Get latest snapshot for a domain |
 | POST | `/collect/domain` | Yes | Trigger DNS collection for a domain |
 
 ### Snapshot Data
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/snapshot/:snapshotId/observations` | No | Get raw DNS observations |
-| GET | `/snapshot/:snapshotId/recordsets` | No | Get aggregated record sets |
-| GET | `/snapshot/:snapshotId/delegation` | No | Get delegation data |
-| GET | `/snapshot/:snapshotId/delegation/issues` | No | Get delegation issues |
-| GET | `/snapshot/:snapshotId/findings` | No | Get findings for a snapshot |
-| GET | `/snapshot/:snapshotId/findings/mail` | No | Get mail-specific findings |
-| GET | `/snapshot/:snapshotId/selectors` | No | Get discovered DKIM selectors |
-| GET | `/snapshot/:snapshotId/mail/check` | No | Get mail check results |
-| GET | `/domain/:domain/delegation/latest` | No | Get latest delegation for domain |
+| GET | `/snapshot/:snapshotId/observations` | Yes | Get raw DNS observations |
+| GET | `/snapshot/:snapshotId/recordsets` | Yes | Get aggregated record sets |
+| GET | `/snapshot/:snapshotId/delegation` | Yes | Get delegation data |
+| GET | `/snapshot/:snapshotId/delegation/issues` | Yes | Get delegation issues |
+| GET | `/snapshot/:snapshotId/findings` | Yes | Get findings for a snapshot |
+| GET | `/snapshot/:snapshotId/findings/mail` | Yes | Get mail-specific findings |
+| GET | `/snapshot/:snapshotId/selectors` | Yes | Get discovered DKIM selectors |
+| GET | `/snapshot/:snapshotId/mail/check` | Yes | Get mail check results |
+| GET | `/domain/:domain/delegation/latest` | Yes | Get latest delegation for domain |
 
 ### Snapshots Management (`/snapshots`)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/snapshots` | No | List all snapshots (paginated) |
-| GET | `/snapshots/:id` | No | Get snapshot by ID |
-| GET | `/snapshots/domain/:domain` | No | Get snapshots for a domain |
-| GET | `/snapshots/:id1/diff/:id2` | No | Compare two snapshots |
+| GET | `/snapshots` | Yes | List all snapshots (paginated) |
+| GET | `/snapshots/:id` | Yes | Get snapshot by ID |
+| GET | `/snapshots/domain/:domain` | Yes | Get snapshots for a domain |
+| GET | `/snapshots/:id1/diff/:id2` | Yes | Compare two snapshots |
 
 ### Portfolio APIs (`/portfolio`)
 
@@ -107,16 +107,16 @@ Base URL: `http://localhost:3000/api`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/findings/:snapshotId` | No | Get findings (alias) |
-| GET | `/findings/:snapshotId/summary` | No | Get findings summary |
+| GET | `/findings/:snapshotId` | Yes | Get findings (alias) |
+| GET | `/findings/:snapshotId/summary` | Yes | Get findings summary |
 
 ### Ruleset Versions (`/ruleset-versions`)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/ruleset-versions` | No | List ruleset versions |
-| GET | `/ruleset-versions/current` | No | Get current ruleset version |
-| GET | `/ruleset-versions/:id` | No | Get specific version |
+| GET | `/ruleset-versions` | Yes | List ruleset versions |
+| GET | `/ruleset-versions/current` | Yes | Get current ruleset version |
+| GET | `/ruleset-versions/:id` | Yes | Get specific version |
 
 ### Shadow Comparison (`/shadow-comparison`)
 
@@ -130,15 +130,15 @@ Base URL: `http://localhost:3000/api`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/mail/templates` | No | List provider templates |
-| GET | `/mail/templates/:provider` | No | Get template for provider |
+| GET | `/mail/templates` | Yes | List provider templates |
+| GET | `/mail/templates/:provider` | Yes | Get template for provider |
 
 ### Legacy Tools
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/legacy/log` | Yes | Log legacy tool usage |
-| GET | `/legacy/config` | No | Get legacy config |
+| GET | `/legacy/config` | Yes | Get legacy config |
 | GET | `/legacy/dmarc/deeplink` | Yes | Generate DMARC deeplink |
 | GET | `/legacy/dkim/deeplink` | Yes | Generate DKIM deeplink |
 | POST | `/legacy/bulk-deeplinks` | Yes | Generate bulk deeplinks |

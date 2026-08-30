@@ -1,66 +1,70 @@
 # Railway Deployment Guide
 
-Deploy the DNS Ops collector + Postgres on Railway, web app on Cloudflare Pages.
+Deploy the DNS Ops web app, collector, Postgres, and Redis on Railway.
+
+Web is TanStack Start + Hono on Railway Node (`apps/web/app.config.ts` preset `node-server`, `apps/web/railway.toml`).
 
 ## Architecture
 
 ```
-User → Cloudflare Pages (apps/web)
+User → Railway (apps/web, Node)
             ↓ COLLECTOR_URL
-       Railway (apps/collector + Postgres)
+       Railway (apps/collector + Postgres + Redis)
 ```
 
 ## How Railway builds this repo
 
-Railway uses [Railpack](https://railpack.com) to auto-detect the monorepo:
-- Detects `bun.lock` → uses Bun as package manager
-- Reads `railway.toml` for build/start commands
-- Falls back to `railpack.json` if using Railpack directly
-- Handles workspace resolution automatically
+Each service uses its own Dockerfile:
 
-Both config files are provided. Railway uses whichever it detects first.
+- Web: `apps/web/Dockerfile.railway` + `apps/web/railway.toml`
+- Collector: `apps/collector/Dockerfile.railway` + `apps/collector/railway.toml`
 
 ## 1. Create Railway Project
 
 1. Go to [railway.app](https://railway.app) → New Project
 2. Choose "Deploy from GitHub repo" → select `dns-ops`
-3. Railway reads `railway.toml` and configures the build automatically
+3. Add **two** services from the same repo (web and collector), each with its Dockerfile path above
 
-## 2. Add Postgres
+## 2. Add Postgres and Redis
 
 1. In the Railway project dashboard → "New" → "Database" → "PostgreSQL"
-2. Railway creates the DB and exposes `DATABASE_URL` as a variable
-3. Link it to the collector service: Variables → Add Reference → `${{Postgres.DATABASE_URL}}`
+2. Link `DATABASE_URL` to both web and collector: Variables → Add Reference → `${{Postgres.DATABASE_URL}}`
+3. Add Redis and link `REDIS_URL` to the collector
 
 ## 3. Set Environment Variables
 
-In the collector service settings → Variables:
+Collector:
 
 | Variable | Value | Required |
 |----------|-------|----------|
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | ✅ Auto from Postgres plugin |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | ✅ |
+| `REDIS_URL` | `${{Redis.REDIS_URL}}` | ✅ for queue-backed jobs |
 | `NODE_ENV` | `production` | ✅ |
-| `PORT` | `3001` | ✅ (Railway maps to public URL) |
+| `PORT` | `3001` | ✅ |
 | `INTERNAL_SECRET` | Generate: `openssl rand -hex 16` | ✅ |
-| `REDIS_URL` | (skip — optional) | ❌ |
 | `ENABLE_ACTIVE_PROBES` | `false` | Default |
+
+Web:
+
+| Variable | Value | Required |
+|----------|-------|----------|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | ✅ |
+| `COLLECTOR_URL` | Collector public URL | ✅ |
+| `INTERNAL_SECRET` | Same value as collector | ✅ |
+| `NODE_ENV` | `production` | ✅ |
+| `BETTER_AUTH_SECRET` | `openssl rand -hex 16` | ✅ |
+| `WEB_DOMAIN` | Public web origin | ✅ |
 
 ## 4. Deploy
 
-Railway auto-deploys on push to master. The build:
+Railway auto-deploys on push to master.
 
-```
-bun install --frozen-lockfile
-bun run build --filter=@dns-ops/collector...
-```
-
-This installs all workspace deps and builds the collector + its package dependencies (contracts, db, logging, parsing, rules) via turbo.
-
-Start: `node apps/collector/dist/index.js`
+Web start: `node apps/web/.output/server/index.mjs`  
+Collector start: `node apps/collector/dist/index.js` (image `CMD`; `apps/collector/railway.toml` also sets a start command)
 
 ## 5. DB Schema (release runner)
 
-The web service `releaseCommand` runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer** (`_migrations_applied` ledger). App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
+The web service `releaseCommand` runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer**. App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
 
 After first deploy, schema should already be applied by release. To run the same runner out-of-band against a disposable/target DB:
 
@@ -74,58 +78,22 @@ DATABASE_URL="postgresql://..." node scripts/run-migrations.mjs
 
 Prefer forward SQL migrations under `packages/db/src/migrations` over `drizzle-kit push` for environments that must match production deploy semantics.
 
-## 6. Deploy Web App (Cloudflare Pages)
+## 6. Verify
 
 ```bash
-cd apps/web
-bun run build
-wrangler pages deploy dist
-```
-
-Set secrets in Cloudflare:
-
-```bash
-wrangler pages secret put COLLECTOR_URL    # → Railway collector public URL
-wrangler pages secret put INTERNAL_SECRET  # → same value as Railway
-wrangler pages secret put DATABASE_URL     # → Railway Postgres URL (or use Hyperdrive)
-```
-
-### Optional: Hyperdrive (recommended for production)
-
-Cloudflare Hyperdrive pools connections to Postgres:
-
-```bash
-npx wrangler hyperdrive create dns-ops-db \
-  --connection-string="postgresql://..."
-```
-
-Update `wrangler.jsonc` with the Hyperdrive binding ID. The app reads `HYPERDRIVE_URL` over `DATABASE_URL` automatically.
-
-## 7. Verify
-
-```bash
-WEB_URL=https://your-app.pages.dev \
+WEB_URL=https://your-web.up.railway.app \
 COLLECTOR_URL=https://your-collector.up.railway.app \
 bun run smoke-test
 ```
 
 Expected:
+
 ```
-✅ Web Health Check
+✅ Web Health Check          # GET /api/health — 503 if DB down
 ✅ Web Homepage
-✅ Collector /health
-✅ Collector /healthz
-✅ Collector /readyz
+✅ Collector /healthz        # liveness
+✅ Collector /readyz         # dependency-aware
 ```
-
-## Costs
-
-| Service | Plan | Monthly |
-|---------|------|---------|
-| Cloudflare Pages | Free | $0 |
-| Railway Hobby | $5 credit | ~$5 |
-| Railway Postgres | Included | $0 |
-| **Total** | | **~$5/mo** |
 
 ## Troubleshooting
 
@@ -135,6 +103,6 @@ Expected:
 
 **Schema not applied** — Confirm the web service release command ran `node scripts/run-migrations.mjs` successfully, or run it out-of-band with the target `DATABASE_URL`. Do not use `/api/migrate/reset` or `/rebuild` (they are unavailable).
 
-**Health check failing** — `/healthz` = liveness (process alive). `/readyz` = readiness (DB connected, may 503 if DB unreachable).
+**Health check failing** — Collector `/healthz` = liveness (process alive). Collector `/readyz` = readiness (DB/queues; 503 if dependencies are down). Web `/api/health` = 503 if DB is down.
 
-**Build fails** — Railway needs Node ≥20. The repo specifies `"engines": { "node": ">=20" }`. Railpack auto-selects Node 22.
+**Build fails** — Railway needs Node ≥20. The repo specifies `"engines": { "node": ">=20" }`.
