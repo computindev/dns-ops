@@ -80,6 +80,27 @@ function assertNoInternalLeak(body: ReadyzBody): void {
   expect(serialized).not.toMatch(/AggregateError/i);
 }
 
+describe('Collector onError body', () => {
+  it('returns a generic 500 and does not leak err.message', async () => {
+    const leakedDetail = 'internal-db-host-should-not-leak';
+    app.get('/__test/onerror-leak', () => {
+      throw new Error(leakedDetail);
+    });
+
+    const res = await app.request('/__test/onerror-leak', {
+      headers: { 'X-Request-ID': 'req-onerror-leak' },
+    });
+    expect(res.status).toBe(500);
+
+    const bodyText = await res.text();
+    expect(bodyText).not.toContain(leakedDetail);
+    const body = JSON.parse(bodyText) as { error: string; message?: string; requestId?: string };
+    expect(body.error).toBe('Internal Server Error');
+    expect(body.message).toBeUndefined();
+    expect(body.requestId).toBe('req-onerror-leak');
+  });
+});
+
 describe('Collector liveness (process-only)', () => {
   it('GET /healthz returns 200 without probing DB', async () => {
     const previous = process.env.DATABASE_URL;

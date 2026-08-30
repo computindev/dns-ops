@@ -1,8 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useId } from 'react';
+import { AuthPending } from '../components/AuthPending.js';
+import { requireAuthGuard } from '../lib/auth-guard.js';
 import '../styles/design-review.css';
 
 export const Route = createFileRoute('/design-review')({
+  beforeLoad: async () => {
+    await requireAuthGuard();
+  },
+  pendingComponent: AuthPending,
   component: DesignReview,
 });
 

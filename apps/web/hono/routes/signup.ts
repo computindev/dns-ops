@@ -46,6 +46,31 @@ function generateToken(): string {
   return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function isSecureRequest(c: {
+  req: { url: string; header(name: string): string | undefined };
+}): boolean {
+  const forwarded = c.req.header('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
+  if (forwarded === 'https') return true;
+  if (forwarded === 'http') return false;
+  try {
+    return new URL(c.req.url).protocol === 'https:';
+  } catch {
+    return true;
+  }
+}
+
+function sessionCookieHeader(token: string, maxAgeSeconds: number, secure: boolean): string {
+  const parts = [
+    `dns_ops_session=${token}`,
+    'Path=/',
+    `Max-Age=${maxAgeSeconds}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
 /**
  * Parse cookies from header
  */
@@ -110,10 +135,9 @@ authRoutes.post('/login', async (c) => {
     expiresAt,
   });
 
-  // Set session cookie
   c.header(
     'Set-Cookie',
-    `dns_ops_session=${token}; Path=/; Max-Age=${SESSION_EXPIRY_DAYS * 24 * 60 * 60}; HttpOnly; SameSite=Lax; Secure`
+    sessionCookieHeader(token, SESSION_EXPIRY_DAYS * 24 * 60 * 60, isSecureRequest(c))
   );
 
   return c.json({ success: true, email: user.email, tenant: email.split('@')[1] });
@@ -132,7 +156,7 @@ authRoutes.post('/logout', async (c) => {
     await getAuthDrizzle(db).delete(sessions).where(eq(sessions.token, token));
   }
 
-  c.header('Set-Cookie', 'dns_ops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure');
+  c.header('Set-Cookie', sessionCookieHeader('', 0, isSecureRequest(c)));
   return c.json({ success: true });
 });
 
