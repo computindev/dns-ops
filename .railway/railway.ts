@@ -21,6 +21,7 @@ export default defineRailway(() => {
     env: {
       API_KEY_SECRET: preserve(),
       DATABASE_URL: preserve(),
+      DB_TLS_REJECT_UNAUTHORIZED: "false",
       ENABLE_ACTIVE_PROBES: preserve(),
       INTERNAL_SECRET: preserve(),
       NODE_ENV: preserve(),
@@ -43,12 +44,13 @@ export default defineRailway(() => {
       API_KEY_SECRET: preserve(),
       COLLECTOR_URL: preserve(),
       DATABASE_URL: preserve(),
+      DB_TLS_REJECT_UNAUTHORIZED: "false",
       INTERNAL_SECRET: preserve(),
       NODE_ENV: preserve(),
     },
   });
 
-  return project("dns-ops-staging", {
+  return project("dns-ops", {
     resources: [collector, web, Postgres, Redis, redisVolume, postgresVolume],
   });
 });
