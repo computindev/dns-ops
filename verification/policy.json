@@ -1,0 +1,65 @@
+{
+  "version": "verification-policy/v0",
+  "app": "dns-ops",
+  "skill": ".agents/skills/verify-dns-ops",
+  "quick_paths": [
+    "**/*.md",
+    "docs/**",
+    ".github/**",
+    "LICENSE",
+    "**/*.txt",
+    ".gitignore",
+    ".agents/verify-kit/**",
+    ".agents/skills/*/references/**",
+    ".claude/**",
+    ".cursor/**",
+    ".pi/**",
+    "verification/**",
+    ".githooks/**"
+  ],
+  "digest_ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/.turbo/**",
+    "**/.next/**",
+    "**/.wrangler/**",
+    "**/.cache/**"
+  ],
+  "unmapped": "warn",
+  "scope": {
+    "mapped": "expand",
+    "unmapped": "warn"
+  },
+  "hook": {
+    "max_blocks": 5
+  },
+  "profiles": {
+    "quick": {
+      "accept": [],
+      "verifier": "none"
+    },
+    "changed": {
+      "accept": [
+        "passed",
+        "blocked",
+        "unreachable",
+        "not_applicable"
+      ],
+      "verifier": "builder"
+    },
+    "critical": {
+      "accept": [
+        "passed"
+      ],
+      "verifier": "fresh"
+    },
+    "release": {
+      "accept": [
+        "passed"
+      ],
+      "verifier": "fresh"
+    }
+  }
+}
