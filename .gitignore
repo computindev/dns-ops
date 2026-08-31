@@ -52,3 +52,9 @@ apps/web/.output/
 
 # CASS runtime state; project playbook remains tracked.
 .cass/blocked.log
+
+# verify-kit local state
+verification/runs/
+verification/pending.json
+verification/.hook-blocks
+verification/registry.json

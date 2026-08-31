@@ -1,0 +1,27 @@
+# <<app>> feature map
+
+One file per user-facing feature, from the user's point of view: what it is, how to reach it, how to drive it, what observable end state proves it works. These files teach how to *use* a feature, not how it is built; read the code for internals. This map is the maintained verification source for <<app>>: frontmatter (`id`, `surface`, `profile`, `paths`, `always_with`) is machine-read by `verify.mjs`.
+
+## Index
+
+| id | surface | profile | file |
+|---|---|---|---|
+| <<domain.capability>> | <<web>> | <<changed|critical>> | <<domain.capability>>.md |
+
+## Baseline preconditions (unless a feature file overrides them)
+
+- App running from the current checkout; `harness/doctor.sh` healthy; `/version` sha == HEAD.
+- Signed in as the verification user; tenant `verify-<run_id>`; no modal, toast or unsaved draft open.
+- <<FILL: provider sandboxes / fake adapters in use>>.
+
+## Driving conventions
+
+- Selectors: ARIA role/label → `data-action-id` → `data-state`. No class selectors, no coordinates (lint fails).
+- Never sleep; poll the semantic end state the feature file names.
+- Console errors and failed requests are captured for the whole drive.
+- <<FILL: repo-specific conventions, e.g. feature flags, streaming states>>.
+- Native dialogs, real OAuth, real payment pages are manual unless the harness supports them: report `unreachable`, never `passed`.
+
+## Proof and skip reporting
+
+The feature file defines the coverage set; driving one entry point when the file lists others is partial and must say so. Receipts are `passed` · `failed` · `blocked` · `unreachable` · `not_applicable`; the last three need a reason. There is no `skipped`.

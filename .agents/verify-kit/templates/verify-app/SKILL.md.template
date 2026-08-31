@@ -1,0 +1,73 @@
+---
+name: verify-<<app>>
+description: Drive the real <<app>> (<<surface>>) to prove behavior — launch it, run doctor, drive mapped features the way a user would, capture evidence into the run dir, write verify-kit receipts, clean up. Use for any task that changes user-facing behavior in this repo, before claiming a feature works, when reproducing a bug, when verification/pending.json lists features, and whenever someone says "verify", "prove it works", "reproduce", or names a feature id from features/README.md. Read features/README.md and the relevant feature file before driving anything.
+---
+
+# verify-<<app>>
+
+Read `features/README.md` first, then the feature file(s) the task names. The map says how to use a feature and what proves it; this file says how to run and drive the app.
+
+## Launch
+
+```bash
+<<FILL: exact command, e.g. pnpm --filter web dev --port 3000>>
+```
+
+Ready when: <<FILL: log line / `curl -fsS http://localhost:3000/healthz` answers 200 / prompt appears>>.
+Teardown: kill the pid you started (`kill $APP_PID`), never `pkill` by name.
+Isolation: <<FILL: ports/data dirs per instance; or "single instance only — refuse to double-drive">>.
+
+## Doctor
+
+```bash
+harness/doctor.sh
+```
+
+Read-only. Exit 0 = worth driving. Checks: process up, `/version` sha == `git rev-parse HEAD`, DB reachable, migrations applied, verification user present. Run it first whenever anything looks off; a failing doctor means `blocked`, not `failed`.
+
+## Drive
+
+Harness: `harness/web.mts` (Playwright) <<FILL: and/or harness/api.mts, harness/cli.sh>>.
+Identity: <<FILL: seeded verification user + how to log in without live OAuth>>.
+Tenant: create `verify-<run_id>` via <<FILL: real public API / seed script>>; everything the drive creates is tagged with it.
+Selectors: ARIA role/label → `data-action-id` → `data-state`. Class selectors and coordinates are lint errors.
+End states: poll the `data-state` / read-back the feature file names; never sleep.
+
+```bash
+VERIFY_RUN_DIR=<run dir> <<FILL: bun harness/web.mts <feature-id>  |  node --experimental-strip-types harness/web.mts <feature-id>>>
+```
+
+## Evidence
+
+Everything goes into `$VERIFY_RUN_DIR/`:
+- `*.png` screenshots of the action and the resulting state; `trace.zip`; `console.log`; `failed-requests.log`
+- `http/*.json` request/response pairs for API drives; `readback/*.json` for API/DB read-backs
+- generated files the feature produces (labels, exports) copied as-is
+- `cli-transcript.txt` for CLI drives
+
+Standards: real user path only (no test-only endpoints, no internal setters); verify side effects through an independent read path; mocks only where a production boundary already isolates the external system (<<FILL: which adapters/sandboxes>>); a dry-run is verified by observing what it skipped.
+
+## Receipts (verify-kit — keep verbatim; in pi the same steps are the tools verify_run_new / verify_receipt)
+
+```bash
+node .agents/verify-kit/verify.mjs run-new --label <feature-id>     # → run id + `export VERIFY_RUN_DIR=<abs path>` (run harness from the repo root)
+# … launch → doctor → drive → evidence → cleanup …
+node .agents/verify-kit/verify.mjs receipt --run <run id> --feature <feature-id> --status passed \
+  --notes-file $VERIFY_RUN_DIR/observations.md
+# not passed? be explicit, with a reason:
+node .agents/verify-kit/verify.mjs receipt --run <run id> --feature <feature-id> --status blocked --reason "<exact reason>"
+```
+
+Statuses: `passed` · `failed` · `blocked` · `unreachable` · `not_applicable`. No `skipped`. The receipt is bound to the exact code tree you verified (`code_digest`); you may verify before committing, but commit exactly that content — any later edit needs a new receipt.
+
+## Cleanup
+
+Kill what you started by pid/session. Delete the run's tenant/data via <<FILL: command>>. Remove scratch files you created. **Never delete `verification/runs/<run_id>/`** — evidence survives cleanup.
+
+## Helpers
+
+| helper | invocation | purpose |
+|---|---|---|
+| `harness/doctor.sh` | `harness/doctor.sh` | read-only health |
+| `harness/web.mts` | `VERIFY_RUN_DIR=… bun harness/web.mts <feature-id>` | Playwright driver + evidence capture |
+| <<FILL>> | | |

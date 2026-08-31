@@ -260,3 +260,11 @@ bun build
 Communicate blockers early. Propose solutions. Wait for confirmation.
 
 The quality of this codebase depends on every agent following this principle.
+
+## Verification (verify-kit)
+
+- Tests passing ≠ feature works ≠ independently verified ≠ safe to merge ≠ deployed and working. Each step needs its own evidence.
+- Every task that changes user-facing behavior names its affected feature ids and a *Done means* block (see `.agents/verify-kit/templates/task-done-means.md`). Start with `node .agents/verify-kit/verify.mjs start --features <ids>` (or `--auto`) and **read the affected feature files before implementing** — their Proof section is the acceptance criteria.
+- Prove behavior through the surface it changes, using `.agents/skills/verify-dns-ops/` (launch → doctor → drive → evidence → cleanup). A green test suite is not a proof.
+- Write a receipt per affected feature (`verify.mjs receipt …`). Statuses: passed · failed · blocked · unreachable · not_applicable. No `skipped`; non-passed needs a reason.
+- Profile `critical` (auth, money, permissions, tenant isolation, provider writes, irreversible changes) requires a fresh verifier at the exact commit. Selectors: ARIA role/label → `data-action-id` → `data-state`. Never edit the feature map to make a failing verification pass.

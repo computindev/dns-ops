@@ -1,0 +1,41 @@
+---
+id: <<domain.capability>>
+surface: <<web | api | cli | worker | pipeline>>
+profile: <<changed | critical>>
+paths:
+  - <<glob relative to repo root, e.g. apps/web/src/routes/orders/**>>
+always_with: []
+---
+# <<Feature title, as the user would say it>>
+
+<<One paragraph: what this is for the user and why it matters.>>
+
+## Sub-features
+
+- <<variant / option / secondary path the proof must cover>>
+
+## How to get to it (user POV)
+
+1. <<route or command>>
+2. <<control, with its accessible name and data-action-id>>
+
+## Driving it with <<harness>>
+
+```ts
+<<real calls with real selectors/commands from this repo>>
+```
+
+## Proof
+
+### Expected observations
+- <<data-state / rendered value / exit code / output file>>
+
+### Forbidden observations
+- <<no console errors / no request to production host / no second row>>
+
+### Read-back
+- <<GET endpoint / DB query / outbox event / file on disk that independently confirms the effect>>
+
+## Gotchas
+
+- <<timing, flags, entitlements, environment limits>>
