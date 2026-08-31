@@ -38,7 +38,7 @@ This document defines the runtime topology for the DNS Ops Workbench: where prod
 | Database Access | Direct PostgreSQL (`DATABASE_URL`) |
 | Start | `node apps/web/.output/server/index.mjs` |
 | Health | `GET /api/health` — 503 if DB down |
-| Schema | `node scripts/run-migrations.mjs` as Railway `releaseCommand` only |
+| Schema | `node scripts/run-migrations.mjs` as Railway `preDeploy` only |
 | Primary Role | Dashboard + API |
 | Write Scope | Operator-triggered collection requests, portfolio management |
 

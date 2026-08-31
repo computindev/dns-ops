@@ -103,7 +103,7 @@ cp .env.example .env
 
 ## Database
 
-Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`) only, invoked automatically as the web service Railway `releaseCommand`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) return 410 and direct operators back to this runner.
+Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`) only, invoked automatically as the web service Railway `preDeploy`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) return 410 and direct operators back to this runner.
 
 Local / disposable DB:
 

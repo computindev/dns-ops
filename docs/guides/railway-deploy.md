@@ -25,7 +25,7 @@ Each service uses its own Dockerfile:
 
 Never start collector with the web Nitro path.
 
-Web has a GitHub source. Collector does not; deploy collector with `railway up --service collector` after authorization.
+Neither web nor collector has a GitHub source in `.railway/railway.ts`. Auto-deploy on master is disabled until deliberately enabled. After authorization, deploy with `railway up --service web` / `railway up --service collector`.
 
 ## 1. Create Railway Project
 
@@ -71,7 +71,7 @@ Do not add `COLLECTOR_URL` to collector.
 
 Only after an authorized project, environment, and service are linked. Preview with `railway config plan`. Do not `railway config apply` or `railway up` unless authorized.
 
-Railway can auto-deploy web on push to master for that authorized target.
+Master auto-deploy is disabled until a GitHub source is deliberately added in IaC.
 
 Web start: `node apps/web/.output/server/index.mjs`  
 Collector start: `node apps/collector/dist/index.js`
