@@ -15,7 +15,15 @@ import {
   observationsToDigFormat,
   observationsToRecordSets,
 } from '@dns-ops/parsing';
-import { type KeyboardEvent, useId, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId, useMemo, useState } from 'react';
+import {
+  describeEstimate,
+  estimateLiveAt,
+  formatLiveAt,
+  indexObservationsById,
+  type TtlEstimate,
+  toDateTimeAttribute,
+} from '../lib/dns-ttl.js';
 
 interface DNSViewsProps {
   observations: Observation[];
@@ -163,6 +171,15 @@ function ViewModeSelector({
 function ParsedView({ observations }: { observations: Observation[] }) {
   const recordSets = observationsToRecordSets(observations);
   const grouped = groupRecordsByType(recordSets);
+  const observationIndex = useMemo(() => indexObservationsById(observations), [observations]);
+
+  // One shared ticker drives every row's countdown; each tick recomputes from
+  // Date.now() so long-lived tabs do not accumulate interval drift.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   if (recordSets.length === 0) {
     return (
@@ -185,6 +202,9 @@ function ParsedView({ observations }: { observations: Observation[] }) {
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
+              <caption className="sr-only">
+                {type} DNS records with remaining TTL and estimated cache expiry
+              </caption>
               <thead className="bg-gray-50">
                 <tr>
                   <th
@@ -198,6 +218,18 @@ function ParsedView({ observations }: { observations: Observation[] }) {
                     className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
                   >
                     TTL
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
+                  >
+                    Remaining TTL
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
+                  >
+                    Estimated live at
                   </th>
                   <th
                     scope="col"
@@ -226,6 +258,7 @@ function ParsedView({ observations }: { observations: Observation[] }) {
                     <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
                       {record.ttl !== null && record.ttl !== undefined ? `${record.ttl}s` : '—'}
                     </td>
+                    <TtlEstimateCells estimate={estimateLiveAt(record, observationIndex, now)} />
                     <td className="px-4 py-2 text-sm">
                       <div className="space-y-1">
                         {record.values.map((value) => {
@@ -271,6 +304,43 @@ function ParsedView({ observations }: { observations: Observation[] }) {
 }
 
 // ==================== RAW VIEW ====================
+
+/**
+ * Remaining TTL + estimated live-at cells for one parsed row.
+ *
+ * "Estimated live at" is the expiry of the latest observed public-recursive
+ * cache entry — not Internet-wide propagation. Missing, invalid, future-dated
+ * or expired evidence renders a visible UNKNOWN for both cells.
+ */
+function TtlEstimateCells({ estimate }: { estimate: TtlEstimate }) {
+  if (estimate.state === 'live') {
+    return (
+      <>
+        <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
+          <span title={describeEstimate(estimate)}>
+            {estimate.remainingSeconds}s<span className="sr-only"> remaining</span>
+          </span>
+        </td>
+        <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
+          <time dateTime={toDateTimeAttribute(estimate.deadline)}>
+            {formatLiveAt(estimate.deadline)}
+          </time>
+        </td>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <td className="px-4 py-2 text-sm text-gray-400" data-state="unknown">
+        <span title={describeEstimate(estimate)}>UNKNOWN</span>
+      </td>
+      <td className="px-4 py-2 text-sm text-gray-400" data-state="unknown">
+        <span title={describeEstimate(estimate)}>UNKNOWN</span>
+      </td>
+    </>
+  );
+}
 
 function RawView({ observations }: { observations: Observation[] }) {
   return (

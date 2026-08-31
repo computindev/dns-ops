@@ -252,3 +252,175 @@ test.describe('Domain 360 Accessibility', () => {
     }
   });
 });
+
+/**
+ * Tests for the Parsed-view remaining-TTL countdown and estimated live-at
+ * (issue #55). Estimates come only from matching successful public-recursive
+ * answers; the fake clock proves ticking, the exact-zero boundary, the stale
+ * transition, and visible UNKNOWN for unusable evidence.
+ */
+const TTL_DOMAIN = 'ttl-countdown.example.com';
+const TTL_BASE_TIME = '2024-06-01T12:00:00.000Z';
+
+interface TtlObservationFixture {
+  id: string;
+  vantageType: 'public-recursive' | 'authoritative';
+  status: string;
+  ttl: number;
+}
+
+function ttlObservation(fixture: TtlObservationFixture): Record<string, unknown> {
+  return {
+    id: fixture.id,
+    snapshotId: 'snap-ttl',
+    queryName: TTL_DOMAIN,
+    queryType: 'A',
+    vantageType: fixture.vantageType,
+    vantageIdentifier: fixture.vantageType === 'public-recursive' ? '8.8.8.8' : 'ns1.example.com',
+    status: fixture.status,
+    queriedAt: TTL_BASE_TIME,
+    responseTimeMs: 42,
+    responseCode: 0,
+    flags: null,
+    answerSection: [{ name: TTL_DOMAIN, type: 'A', ttl: fixture.ttl, data: '203.0.113.10' }],
+    authoritySection: null,
+    additionalSection: null,
+    errorMessage: null,
+    errorDetails: null,
+    rawResponse: null,
+  };
+}
+
+async function mockTtlSnapshot(
+  page: import('@playwright/test').Page,
+  observations: Record<string, unknown>[]
+): Promise<void> {
+  // The domain page also calls auth/me and other DB-backed endpoints;
+  // without a local DB those return HTML errors and __root's raw res.json()
+  // crashes the route, so mock the session too.
+  await page.route('**/api/auth/me', (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        email: 'e2e@example.com',
+        tenant: 'dns-ops-e2e',
+      }),
+    });
+  });
+  await page.route(`**/api/domain/${TTL_DOMAIN}/latest`, (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'snap-ttl',
+        domainId: 'dom-ttl',
+        zoneManagement: 'unmanaged',
+        resultState: 'complete',
+        createdAt: TTL_BASE_TIME,
+        queriedNames: [TTL_DOMAIN],
+        queriedTypes: ['A'],
+        vantages: ['8.8.8.8'],
+      }),
+    });
+  });
+  await page.route('**/api/snapshot/snap-ttl/observations', (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(observations),
+    });
+  });
+}
+
+/**
+ * Deterministic fake clock: a paused clock blocks client hydration, so time is
+ * instead held fixed with setFixedTime before load — Date.now() is stable
+ * (deterministic countdowns) while timers keep running. Advancing the
+ * countdown is done by re-setting the fixed time; the one-second interval
+ * picks the new value up on its next real tick.
+ */
+async function openParsedDnsView(page: import('@playwright/test').Page): Promise<void> {
+  await page.goto(`/domain/${TTL_DOMAIN}`);
+  await waitForDomainPageReady(page);
+  await page.getByRole('tab', { name: /^DNS$/ }).click();
+  await expect(page.getByRole('columnheader', { name: 'Remaining TTL' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Estimated live at' })).toBeVisible();
+}
+
+test.describe('DNS Parsed TTL countdown', () => {
+  test('ticks remaining TTL and renders a machine-readable estimated live-at', async ({ page }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(page, [
+      ttlObservation({
+        id: 'obs-ttl-1',
+        vantageType: 'public-recursive',
+        status: 'success',
+        ttl: 300,
+      }),
+    ]);
+
+    await openParsedDnsView(page);
+
+    // 300 s TTL observed exactly at the paused base time.
+    await expect(page.getByRole('cell', { name: '300s remaining' })).toBeVisible();
+    // The sr-only caption names the table.
+    await expect(page.getByRole('table', { name: /A DNS records/i })).toBeVisible();
+
+    // Machine-readable expiry: queriedAt + 300 s.
+    await expect(page.locator('table time')).toHaveAttribute(
+      'datetime',
+      '2024-06-01T12:05:00.000Z'
+    );
+
+    // One shared one-second timer drives the countdown.
+    await page.clock.setFixedTime('2024-06-01T12:00:01.000Z');
+    await expect(page.getByRole('cell', { name: '299s remaining' })).toBeVisible();
+  });
+
+  test('shows a valid 0 exactly at the deadline and UNKNOWN after it', async ({ page }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(page, [
+      ttlObservation({
+        id: 'obs-ttl-1',
+        vantageType: 'public-recursive',
+        status: 'success',
+        ttl: 60,
+      }),
+    ]);
+
+    await openParsedDnsView(page);
+
+    // Advance to the exact deadline (queriedAt + 60 s): remaining is a valid 0.
+    await page.clock.setFixedTime('2024-06-01T12:01:00.000Z');
+    await expect(page.getByRole('cell', { name: '0s remaining' })).toBeVisible();
+
+    // One second past the deadline both new fields render a visible UNKNOWN.
+    await page.clock.setFixedTime('2024-06-01T12:01:01.000Z');
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
+    await expect(page.getByTitle(/expired/i)).toHaveCount(2);
+  });
+
+  test('renders UNKNOWN when no valid public-recursive evidence exists', async ({ page }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(page, [
+      ttlObservation({
+        id: 'obs-auth-1',
+        vantageType: 'authoritative',
+        status: 'success',
+        ttl: 300,
+      }),
+    ]);
+
+    await openParsedDnsView(page);
+
+    // Authoritative TTL is not cache lifetime: both new fields are UNKNOWN.
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
+    await expect(page.getByTitle(/no valid public-recursive evidence/i)).toHaveCount(2);
+    await expect(page.locator('table time')).toHaveCount(0);
+  });
+});

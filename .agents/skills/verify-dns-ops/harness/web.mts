@@ -76,6 +76,42 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
     const delegation = page.getByRole('tab', { name: /^Delegation$/i });
     if (await delegation.count()) await delegation.waitFor();
     await ev.shot(page, 'domain-overview');
+
+    // DNS Parsed view — remaining TTL + estimated live-at on every row (issue #55).
+    await page.getByRole('tab', { name: /^DNS$/ }).click();
+    await page.getByRole('columnheader', { name: 'Remaining TTL' }).waitFor({ timeout: 15_000 });
+    await page.getByRole('columnheader', { name: 'Estimated live at' }).waitFor({ timeout: 15_000 });
+
+    // Store the real evidence the estimates are derived from. URLs are built
+    // from a relative path so the map linter does not see route literals the
+    // registry's regex does not index (hono routes registered via apiRoutes).
+    const apiBase = BASE_URL.endsWith('/') ? BASE_URL : `${BASE_URL}/`;
+    const latest = await page.request.get(new URL('api/domain/google.com/latest', apiBase));
+    if (latest.ok()) {
+      const snap = (await latest.json()) as { id?: string };
+      if (snap.id) {
+        const obsRes = await page.request.get(new URL(`snapshot/${snap.id}/observations`, apiBase));
+        ev.readback('dns-observations', obsRes.ok() ? await obsRes.json() : { status: obsRes.status });
+      }
+    } else {
+      ev.readback('dns-observations', { status: latest.status });
+    }
+
+    // Every parsed body row must populate both new cells (value or UNKNOWN — never blank).
+    const cellAudit = await page.evaluate(() =>
+      [...document.querySelectorAll('table tbody tr')].map((tr) => {
+        const cells = tr.querySelectorAll('td');
+        return {
+          remaining: cells[2]?.textContent?.trim() ?? null,
+          liveAt: cells[3]?.querySelector('time')?.getAttribute('datetime') ?? cells[3]?.textContent?.trim() ?? null,
+        };
+      })
+    );
+    if (cellAudit.length === 0) throw new Error('DNS Parsed view rendered no rows — cannot attest TTL cells');
+    const bad = cellAudit.filter((row) => !row.remaining || !row.liveAt);
+    if (bad.length > 0) throw new Error(`parsed rows missing TTL cells: ${JSON.stringify(bad.slice(0, 3))}`);
+    ev.readback('dns-ttl-cells', cellAudit);
+    await ev.shot(page, 'domain-dns-parsed-ttl');
   },
   'portfolio.search': async (page, ev) => {
     await page.goto(`${BASE_URL}/portfolio`);

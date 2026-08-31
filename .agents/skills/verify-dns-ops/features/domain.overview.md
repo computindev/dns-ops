@@ -6,6 +6,10 @@ paths:
   - apps/web/app/routes/index.tsx
   - apps/web/app/routes/domain/$domain.tsx
   - apps/web/app/components/DomainInput.tsx
+  - apps/web/app/components/DNSViews.tsx
+  - apps/web/app/lib/dns-ttl.ts
+  - apps/web/app/lib/dns-ttl.test.ts
+  - apps/web/e2e/domain-states.spec.ts
 always_with: []
 ---
 # Open Domain 360
@@ -17,6 +21,7 @@ An operator types a domain on the home page and opens Domain 360 (overview / DNS
 - Home textbox **Domain name** and button **Analyze**.
 - Navigation to `/domain/{domain}` with a heading containing that domain.
 - Tabs **Overview**, **DNS**, **Mail**, **History**. **Delegation** only when that tab is enabled.
+- DNS tab, Parsed view: every record row shows **Remaining TTL** (live countdown from the latest matching successful `public-recursive` answer; exact deadline is a valid `0`) and **Estimated live at** (machine-readable `<time datetime>`, the observed recursive-cache expiry). Missing, invalid, future-dated, or expired evidence renders a visible `UNKNOWN` in both cells.
 
 ## How to get to it (user POV)
 
@@ -40,15 +45,21 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 ### Expected observations
 - URL matches `/domain/google.com`.
 - Tabs Overview, DNS, Mail, and History are visible. Delegation is visible only when the product shows that tab.
+- DNS Parsed view renders `Remaining TTL` and `Estimated live at` column headers; every body row's two new cells are populated (`N s remaining` + `<time datetime>`, or `UNKNOWN` ×2) — never blank.
 
 ### Forbidden observations
 - Staying on `/` after Analyze with a valid domain.
 - Driving with CSS class selectors.
+- Deriving the estimate from the averaged record TTL instead of matching recursive answers; blank TTL cells.
 
 ### Read-back
 - The Domain 360 heading shows the submitted domain. Snapshot/findings JSON is optional; empty snapshot is allowed.
+- Harness stores the observations JSON (`dns-observations`) and a per-row audit of the two TTL cells (`dns-ttl-cells`).
 
 ## Gotchas
 
 - Home `beforeLoad` requires auth (`requireAuthGuard`). Unauthenticated visits bounce; that is `blocked` until login or e2e headers.
 - Live collection needs collector + `COLLECTOR_URL`. Overview chrome can still render without a snapshot.
+- A paused Playwright clock blocks client hydration; e2e uses `setFixedTime` (frozen `Date.now()`, running timers) instead.
+- Without a reachable DB the domain page's `__root` auth/me fetch crashes on HTML error bodies; e2e must mock `/api/auth/me`.
+- No persisted snapshot with recursive evidence → receipt is `blocked`, not `passed`.
