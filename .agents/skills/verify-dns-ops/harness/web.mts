@@ -61,22 +61,33 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
   'auth.login': async (page, ev) => {
     await login(page);
     await ev.shot(page, 'signed-in-home');
-    const me = await (await page.request.get(BASE_URL + '/api/auth/me')).json();
-    await ev.readback('me', me);
+    const meRes = await page.request.get(BASE_URL + '/api/auth/me');
+    if (meRes.status() !== 200) throw new Error(`/api/auth/me expected 200, got ${meRes.status()}`);
+    await ev.readback('me', await meRes.json());
   },
   'domain.overview': async (page, ev) => {
     await page.goto(`${BASE_URL}/`);
     await page.getByRole('textbox', { name: /domain name/i }).fill('google.com');
     await page.getByRole('button', { name: /analyze/i }).click();
     await page.getByRole('heading', { name: /google\.com/i }).waitFor({ timeout: 15_000 });
-    await page.getByRole('tab', { name: /overview/i }).waitFor();
+    for (const name of ['Overview', 'DNS', 'Mail', 'History']) {
+      await page.getByRole('tab', { name: new RegExp(`^${name}$`, 'i') }).waitFor();
+    }
+    const delegation = page.getByRole('tab', { name: /^Delegation$/i });
+    if (await delegation.count()) await delegation.waitFor();
     await ev.shot(page, 'domain-overview');
   },
   'portfolio.search': async (page, ev) => {
     await page.goto(`${BASE_URL}/portfolio`);
     await page.getByRole('heading', { name: /portfolio workflows/i }).waitFor({ timeout: 15_000 });
     await page.getByRole('heading', { name: /portfolio search/i }).waitFor();
+    const pending = page.waitForResponse((r) => r.url().includes('/api/portfolio/search') && r.request().method() === 'POST', { timeout: 15_000 });
     await page.getByLabel('Query').fill('example.com');
+    const res = await pending;
+    if (res.status() !== 200) throw new Error(`POST /api/portfolio/search expected 200, got ${res.status()}`);
+    const json = await res.json();
+    if (!json || !Array.isArray(json.domains)) throw new Error('portfolio search JSON missing domains[]');
+    await ev.readback('portfolio-search', json);
     await ev.shot(page, 'portfolio-search');
   },
 };

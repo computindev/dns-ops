@@ -16,7 +16,7 @@ An operator types a domain on the home page and opens Domain 360 (overview / DNS
 
 - Home textbox **Domain name** and button **Analyze**.
 - Navigation to `/domain/{domain}` with a heading containing that domain.
-- Tabs **Overview**, **DNS**, **Mail**, **Delegation**, **History**.
+- Tabs **Overview**, **DNS**, **Mail**, **History**. **Delegation** only when that tab is enabled.
 
 ## How to get to it (user POV)
 
@@ -39,7 +39,7 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 
 ### Expected observations
 - URL matches `/domain/google.com`.
-- Tabs Overview, DNS, Mail, Delegation, History are visible.
+- Tabs Overview, DNS, Mail, and History are visible. Delegation is visible only when the product shows that tab.
 
 ### Forbidden observations
 - Staying on `/` after Analyze with a valid domain.

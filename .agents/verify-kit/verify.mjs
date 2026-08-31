@@ -295,8 +295,10 @@ function cmdStart(f) {
     chosen = ids.map((id) => feats.find((x) => x.id === id) || { id, profile: f.profile || 'changed', unmapped: true });
     for (const c of chosen) if (c.unmapped) warn(`feature "${c.id}" is not in the map; add a feature file before relying on it`);
   }
-  const profile = f.profile || maxProfile(chosen.map((c) => c.profile));
-  writeJson(PENDING_PATH, { task: f.task || '', profile, features: chosen.map((c) => ({ id: c.id, profile: c.profile || profile })), created_at: nowIso(), base, paused: null });
+  const requested = f.profile || null;
+  const features = chosen.map((c) => ({ id: c.id, profile: maxProfile([c.profile || 'changed', requested].filter(Boolean)) }));
+  const profile = maxProfile(features.map((c) => c.profile));
+  writeJson(PENDING_PATH, { task: f.task || '', profile, features, created_at: nowIso(), base, paused: null });
   try { fs.unlinkSync(COUNTER_PATH); } catch {}
   out(`pending: ${chosen.map((c) => `${c.id}(${c.profile || profile})`).join(', ')} — task profile: ${profile}`);
   for (const c of chosen) if (c.file) out(`  read first: ${c.file}  (its Proof section is the acceptance criteria)`);
@@ -314,7 +316,7 @@ function cmdArm(f) {
     if (p.features.some((x) => x.id === id)) continue;
     const fe = feats.find((x) => x.id === id);
     if (!fe) { warn(`feature "${id}" is not in the map; ignored`); continue; }
-    p.features.push({ id, profile: fe.profile }); added.push(fe);
+    p.features.push({ id, profile: maxProfile([fe.profile, p.profile]) }); added.push(fe);
   }
   p.profile = maxProfile(p.features.map((x) => x.profile));
   if (f.task && !p.task) p.task = f.task;
@@ -375,7 +377,7 @@ function checkArtifact(abs, rel) {
   if (ext === 'zip') {
     if (!(head[0] === 0x50 && head[1] === 0x4b) || size < 512) return { kind: 'zip', ok: false, strong: true, note: 'not a zip' };
     if (name.includes('trace')) { const buf = fs.readFileSync(abs); const hasTrace = buf.includes('.trace') || buf.includes('trace.network'); return hasTrace ? { kind: 'trace', ok: true, strong: true, note: 'playwright trace' } : { kind: 'trace', ok: false, strong: true, note: 'zip without trace entries' }; }
-    return { kind: 'zip', ok: true, strong: true, note: '' };
+    return { kind: 'zip', ok: true, strong: false, note: 'zip is not a trace' };
   }
   if (ext === 'webm' || ext === 'mp4') {
     const ok = ext === 'webm' ? head.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) : head.subarray(4, 8).toString() === 'ftyp';
@@ -389,7 +391,11 @@ function checkArtifact(abs, rel) {
   if (/^cli-.*\.txt$/.test(name)) { const t = fs.readFileSync(abs, 'utf8'); return /exit_code:\s*\d+/.test(t) ? { kind: 'transcript', ok: true, strong: true, note: '' } : { kind: 'transcript', ok: false, strong: true, note: 'transcript without exit_code (use harness/cli.sh)' }; }
   if (name === 'env.txt') return { kind: 'env', ok: true, strong: false, note: '' };
   if (size === 0) return { kind: ext || 'file', ok: false, strong: false, note: 'empty file' };
-  return { kind: ext || 'file', ok: true, strong: !isText, note: '' };
+  return { kind: ext || 'file', ok: true, strong: false, note: ext ? `unrecognized .${ext}` : 'unrecognized file' };
+}
+function scanSecrets(text) {
+  for (const [re, what] of SECRET_PATTERNS) if (re.test(text)) return what;
+  return null;
 }
 function cmdReceipt(f) {
   const runId = need(f, 'run'); const featureId = need(f, 'feature'); const status = need(f, 'status');
@@ -398,6 +404,9 @@ function cmdReceipt(f) {
   if (status !== 'passed' && !reason.trim()) die('--reason is required when status is not "passed" (no silent skips)');
   const verifier = f.verifier || 'builder';
   if (!['builder', 'fresh'].includes(verifier)) die('--verifier must be builder or fresh');
+  if (verifier === 'fresh' && process.env.VERIFY_FRESH !== '1' && !fs.existsSync(path.join(ROOT, '.verify-fresh-worktree'))) {
+    die('--verifier fresh requires VERIFY_FRESH=1 or a .verify-fresh-worktree marker (builder cannot self-attest)');
+  }
   const runDir = path.join(RUNS_DIR, runId);
   if (!fs.existsSync(runDir)) die(`run dir not found: ${path.relative(ROOT, runDir)} (create it with run-new)`);
   const policy = loadPolicy();
@@ -411,7 +420,8 @@ function cmdReceipt(f) {
   const strong = artifacts.filter((a) => a.strong);
   if (status === 'passed' && !strong.length) die(`"passed" needs evidence from the surface: ${path.relative(ROOT, runDir)} has no screenshot, trace, video, http/readback dump or CLI transcript — only ${artifacts.map((a) => path.basename(a.path)).join(', ') || 'env.txt'}.`);
   const notes = f['notes-file'] ? fs.readFileSync(String(f['notes-file']), 'utf8').trim() : '';
-  if (status === 'passed' && !notes) warn('no --notes-file: the Observations / Forbidden / Read-back sections are empty. Fill them — a receipt without observations is a claim.');
+  if (notes) { const leak = scanSecrets(notes); if (leak) die(`--notes-file contains what looks like a ${leak} — redact before embedding in a receipt`); }
+  if (status === 'passed' && !notes) die('passed receipts require --notes-file with Observations / Forbidden / Read-back');
   const sha = headSha(); const dirty = isDirty();
   const fm = ['---', 'receipt: verification-receipt/v0', `run_id: ${runId}`, `feature_id: ${featureId}`, `profile: ${profile}`, `surface: ${surface}`,
     `sha: ${sha}`, `code_digest: ${codeDigest(workingTree() || 'HEAD', policy)}`, `dirty: ${dirty}`, `untracked: ${untrackedCount()}`,
@@ -481,7 +491,7 @@ function cmdCheckHook() {
   out(JSON.stringify({ systemMessage: r.message }));
   process.exit(0);
 }
-function gate({ title, files, digest, policy, strict, extra = [] }) {
+function gate({ title, files, digest, policy, strict, extra = [], receipts = loadReceipts() }) {
   const feats = loadFeatures(policy);
   const l = [`## ${title}`, '', ...extra];
   files = files.filter((x) => !matchAny(x, policy.digest_ignore));
@@ -493,7 +503,7 @@ function gate({ title, files, digest, policy, strict, extra = [] }) {
   const profile = affected.length ? maxProfile(affected.map((a) => a.profile)) : 'quick';
   l.push(`Profile: **${profile}** · affected features: ${affected.length} · quick-path files: ${quick.length} · unmapped files: ${unmapped.length} · code_digest \`${digest.slice(0, 12)}\``, '');
   let fail = false;
-  if (affected.length) { const results = evaluate({ feats: affected, receipts: loadReceipts(), policy, digest, strict }); l.push(...renderTable(results), ''); if (results.some((r) => !r.ok)) fail = true; }
+  if (affected.length) { const results = evaluate({ feats: affected, receipts, policy, digest, strict }); l.push(...renderTable(results), ''); if (results.some((r) => !r.ok)) fail = true; }
   const isProof = (x) => /\.agents\/skills\/verify-[^/]+\/(features\/[^/]+\.md|harness\/.+)$/.test(x);
   const proofEdits = files.filter(isProof);
   const unmappedProduct = unmapped.filter((x) => !isProof(x));
@@ -533,7 +543,8 @@ function cmdCheckCommit(f) {
     note = `Mode: working tree (${staged.length} staged, ${unstaged.length} unstaged, ${untracked.length} untracked) — evaluated as if everything were committed`;
   } else { files = staged; tree = indexTree(); note = `Mode: staged (${files.length} file(s))`; }
   if (!files.length || !tree) process.exit(0);
-  const { lines, fail } = gate({ title: 'verify-kit commit gate', files, digest: codeDigest(tree, policy), policy, strict: false, extra: [note, ''] });
+  const receipts = mode === 'staged' ? loadReceipts().filter((r) => staged.includes(r.file)) : loadReceipts();
+  const { lines, fail } = gate({ title: 'verify-kit commit gate', files, digest: codeDigest(tree, policy), policy, strict: false, extra: [note, ''], receipts });
   if (fail) lines.push('**Commit refused.** Verify exactly this content (receipt code_digest must equal the tree being committed), commit exactly what you verified (no stray edits or untracked scratch files), or `git commit --no-verify` and let CI say no.');
   else lines.push('**OK** — staged tree matches its receipts.');
   return finish(lines, fail ? 1 : 0);
@@ -606,7 +617,7 @@ function cmdLintMap(f) {
   const l = []; let errors = 0, warns = 0;
   const feats = loadFeatures(policy);
   const tracked = new Set((git(['ls-files', '--cached', '--others', '--exclude-standard'], { allowFail: true }) || '').split('\n').filter(Boolean));
-  for (const fe of feats) for (const g of fe.paths) if (![...tracked].some((p) => globToRegex(g).test(p))) { warns++; l.push(`warn  ${fe.file}: paths glob "${g}" matches no file (moved module? dead glob)`); }
+  for (const fe of feats) for (const g of fe.paths) if (![...tracked].some((p) => globToRegex(g).test(p))) { errors++; l.push(`error ${fe.file}: paths glob "${g}" matches no file (moved module? dead glob)`); }
   const refs = mapReferences(policy);
   const used = { actions: new Set(), states: new Set() };
   for (const r of refs) {

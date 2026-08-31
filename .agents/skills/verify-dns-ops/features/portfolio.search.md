@@ -1,10 +1,11 @@
 ---
 id: portfolio.search
 surface: web
-profile: changed
+profile: critical
 paths:
   - apps/web/app/routes/portfolio.tsx
   - apps/web/app/components/PortfolioSearchPanel.tsx
+  - apps/web/hono/routes/portfolio.ts
 always_with: []
 ---
 # Search the portfolio

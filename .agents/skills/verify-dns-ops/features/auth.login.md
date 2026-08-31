@@ -5,6 +5,9 @@ profile: critical
 paths:
   - apps/web/app/routes/login.tsx
   - apps/web/hono/routes/signup.ts
+  - apps/web/app/api.ts
+  - apps/web/hono/middleware/auth.ts
+  - apps/web/app/lib/auth-guard.ts
 always_with: []
 ---
 # Sign in

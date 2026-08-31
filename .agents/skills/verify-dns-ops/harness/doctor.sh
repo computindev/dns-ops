@@ -14,11 +14,18 @@ web_health() {
 collector_live() {
   curl -fsS --max-time 5 "$COLLECTOR_URL/healthz" | grep -q '"status":"ok"'
 }
+collector_ready() {
+  local body http
+  body=$(curl -sS --max-time 5 -w '\n%{http_code}' "$COLLECTOR_URL/readyz") || return 1
+  http=$(printf '%s\n' "$body" | tail -n 1)
+  [ "$http" = "200" ] || [ "$http" = "503" ]
+}
 check "bun present" bun --version
 check "node present" node --version
 check "web /api/health 200 healthy" web_health
 if [ -n "$COLLECTOR_URL" ]; then
   check "collector /healthz ok" collector_live
+  check "collector /readyz 200 or 503" collector_ready
 fi
 echo "doctor: $ok ok, $bad failed"
 [ "$bad" -eq 0 ]

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const BASE_URL = process.env.API_URL ?? process.env.APP_URL ?? 'http://localhost:3000';
+const COLLECTOR_URL = process.env.COLLECTOR_URL ?? 'http://localhost:3001';
 const RUN_DIR = process.env.VERIFY_RUN_DIR ?? (() => { console.error('VERIFY_RUN_DIR not set'); process.exit(2); })();
 const TOKEN = process.env.VERIFY_TOKEN ?? '';
 const DEV_TENANT = process.env.E2E_DEV_TENANT ?? '';
@@ -47,6 +48,18 @@ const drives: Record<string, () => Promise<void>> = {
     if (first.status === 503 && body?.status !== 'degraded') throw new Error(`503 without status=degraded`);
     const again = await readback('web-health', '/api/health');
     if (again.status !== first.status) throw new Error(`read-back status ${again.status} != ${first.status}`);
+    const live = await fetch(`${COLLECTOR_URL}/healthz`);
+    const liveText = await live.text();
+    let liveJson: { status?: string } | null = null; try { liveJson = JSON.parse(liveText); } catch {}
+    fs.mkdirSync(path.join(RUN_DIR, 'http'), { recursive: true });
+    fs.writeFileSync(path.join(RUN_DIR, 'http', `${String(++n).padStart(2, '0')}-collector-healthz.json`), JSON.stringify(redact({ request: { method: 'GET', url: '/healthz' }, response: { status: live.status, body: liveJson ?? liveText } }), null, 2));
+    if (live.status !== 200 || liveJson?.status !== 'ok') throw new Error(`collector /healthz expected 200 ok, got ${live.status} ${liveText.slice(0, 80)}`);
+    const ready = await fetch(`${COLLECTOR_URL}/readyz`);
+    const readyText = await ready.text();
+    let readyJson: { status?: string } | null = null; try { readyJson = JSON.parse(readyText); } catch {}
+    fs.writeFileSync(path.join(RUN_DIR, 'http', `${String(++n).padStart(2, '0')}-collector-readyz.json`), JSON.stringify(redact({ request: { method: 'GET', url: '/readyz' }, response: { status: ready.status, body: readyJson ?? readyText } }), null, 2));
+    if (![200, 503].includes(ready.status)) throw new Error(`collector /readyz expected 200 or 503, got ${ready.status}`);
+    if (ready.status === 200 && readyJson?.status !== 'ready') throw new Error(`collector /readyz 200 without status=ready`);
   },
 };
 
