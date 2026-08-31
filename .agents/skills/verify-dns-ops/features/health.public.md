@@ -5,6 +5,7 @@ profile: changed
 paths:
   - apps/web/hono/routes/api.ts
   - apps/collector/src/index.ts
+  - .railway/railway.ts
 always_with: []
 ---
 # Public health

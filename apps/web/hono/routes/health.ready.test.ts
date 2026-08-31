@@ -105,6 +105,8 @@ describe('GET /api/health honest readiness (RT-3, no Docker)', () => {
 
   it('returns 503 when db context is missing', async () => {
     delete process.env.DATABASE_URL;
+    delete process.env.GIT_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     const app = createHealthApp(undefined);
     const res = await app.request('/api/health');
 
