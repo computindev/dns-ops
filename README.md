@@ -6,7 +6,7 @@ DNS + mail operations platform with deterministic rules engine, guidance-only DN
 
 Split runtime. Railway Node is the configured web deployment target, not a currently linked live DNS Ops project.
 
-- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `apps/web/railway.toml` after an authorized project/environment/service is identified.
+- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `.railway/railway.ts` after an authorized project/environment/service is identified.
 - **`apps/collector`** — Node.js + PostgreSQL + Redis for DNS collection, probes, and background jobs
 - **`packages/db`** — PostgreSQL/Drizzle schema + repositories
 - **`packages/rules`** — Deterministic rules engine (DNS + mail rules, simulation engine)
