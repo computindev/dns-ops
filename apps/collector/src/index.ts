@@ -80,12 +80,18 @@ app.use(
   }) as unknown as MiddlewareHandler
 );
 
+function publicRevision(): { revision?: string } {
+  const revision = process.env.GIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
+  return typeof revision === 'string' && revision.trim() ? { revision: revision.trim() } : {};
+}
+
 // Liveness: process-only. Never probe dependencies here.
 app.get('/healthz', (c) => {
   return c.json({
     status: 'ok',
     service: 'dns-ops-collector',
     timestamp: new Date().toISOString(),
+    ...publicRevision(),
   });
 });
 
@@ -94,6 +100,7 @@ app.get('/health', (c) => {
     status: 'ok',
     service: 'dns-ops-collector',
     timestamp: new Date().toISOString(),
+    ...publicRevision(),
   });
 });
 
@@ -103,6 +110,7 @@ app.get('/api/health', (c) => {
     status: 'ok',
     service: 'dns-ops-collector',
     timestamp: new Date().toISOString(),
+    ...publicRevision(),
   });
 });
 
@@ -160,6 +168,7 @@ app.get('/readyz', async (c) => {
       status: allHealthy ? 'ready' : 'not_ready',
       service: 'dns-ops-collector',
       timestamp: new Date().toISOString(),
+      ...publicRevision(),
       checks,
     },
     allHealthy ? 200 : 503

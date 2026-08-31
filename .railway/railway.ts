@@ -1,4 +1,4 @@
-import { defineRailway, postgres, preserve, project, redis, service, volume } from "railway/iac";
+import { defineRailway, github, postgres, preserve, project, redis, service, volume } from "railway/iac";
 
 export default defineRailway(() => {
   const Postgres = postgres("Postgres", { region: "us-east4-eqdc4a" });
@@ -10,6 +10,7 @@ export default defineRailway(() => {
   const redisVolume = volume("redis-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "us-east4-eqdc4a", sizeMB: 50000 });
   const postgresVolume = volume("postgres-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "us-east4-eqdc4a", sizeMB: 50000 });
   const collector = service("collector", {
+    source: github("computindev/dns-ops", { branch: "master" }),
     replicas: { "us-east4-eqdc4a": 1 },
     build: {
       builder: "DOCKERFILE",
@@ -31,6 +32,7 @@ export default defineRailway(() => {
     },
   });
   const web = service("web", {
+    source: github("computindev/dns-ops", { branch: "master" }),
     replicas: { "us-east4-eqdc4a": 1 },
     build: {
       builder: "DOCKERFILE",
