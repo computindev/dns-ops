@@ -4,7 +4,7 @@
   "zone": "asorin.ai",
   "zoneId": "7391960081e72b26c9c5066133013ab2",
   "provider": "cloudflare",
-  "providerCredentialFingerprint": "sha256:17fe70271d1013db5ef7fffa31f6ea68e98a2a0040300a3acb3ee96e4b9bfd8f",
+  "providerCredentialFingerprint": "sha256:1006bbfa4775b56061786d3e953418aee06a142336f3f51408ce45d5663df019",
   "testAssets": {
     "webHost": "asorin.ai",
     "wwwHost": "www.asorin.ai",
