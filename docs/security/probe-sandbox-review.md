@@ -180,26 +180,49 @@ trusted-tenant deployments.
 
 ## Allowlist Derivation Strategy
 
+### Authorization source (Issue #67)
+
+Probe routes derive every allowlist entry — and every probe target — from
+**fresh persisted DNS evidence only**: the tenant-owned domain → latest
+complete snapshot → consistent record set → immutable source observations
+chain created by the collector. Caller-supplied DNS-shaped payloads
+(`txtRecords`, `mxRecords`, `dnsResults`) are rejected with `403` and never
+mixed with trusted evidence.
+
+Every request revalidates the persisted chain and fails closed unless:
+
+- the domain is registered for the requesting tenant;
+- the latest snapshot is `complete`;
+- the exact MX / `_mta-sts` TXT record set is consistent and has source
+  observations;
+- each observation is a successful `NOERROR` query from a trusted collector
+  vantage (missing, `mock`, and `probe` provenance is rejected, and
+  authoritative answers must carry the AA flag);
+- every relevant answer is still fresh, where freshness is
+  `queriedAt + min(answer TTL, 5 minutes)` — zero TTL, future-dated, and
+  boundary-expired evidence all fail;
+- an optional SMTP hostname exactly matches a persisted MX target, and only
+  port 25 is permitted.
+
 ### Derivation rules
 
 | Source | Entry type | Port | TTL |
 |--------|-----------|------|-----|
-| DNS MX record answer | `mx` | 25 | 5 min |
-| MTA-STS DNS TXT record | `mta-sts` | 443 | 5 min |
-| Manual (`addCustomEntry`) | `custom` | Any | 5 min |
+| Persisted DNS MX record answer | `mx` | 25 | 5 min |
+| Persisted MTA-STS DNS TXT record | `mta-sts` | 443 | 5 min |
 
 All entries carry a `derivedFrom` audit trail (domain, query type, raw answer
-data, requestedBy) for incident investigation.
+data) for incident investigation. The routes no longer create `custom`
+entries; `addCustomEntry` remains available to in-process callers but is not
+used by any HTTP route.
 
-### Why MX-only?
+### Why persisted MX only?
 
 MX records represent the operator's declared mail infrastructure. They are
 authoritative DNS responses that the operator controls. Allowing arbitrary
-hostnames would require trusting user-supplied input directly.
-
-Custom entries exist for programmatic use (e.g., probe API), but are still
-logged with a `requestedBy` field and subject to the same SSRF check at
-probe time.
+hostnames would require trusting user-supplied input directly, which is
+exactly what the pre-Issue-#67 routes did (caller `mxRecords`/`dnsResults`
+and a fabricated `vantageIdentifier: "mock"` result).
 
 ### Tenant isolation
 

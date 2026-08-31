@@ -1,8 +1,15 @@
 /**
- * Probe Routes - Bead 10
+ * Probe Routes - Bead 10 / Issue #67
  *
  * API endpoints for triggering non-DNS probes.
  * All probes require allowlist validation and SSRF protection.
+ *
+ * Authorization (Issue #67): every route derives probe targets exclusively
+ * from fresh persisted DNS evidence — the tenant-owned domain → latest
+ * complete snapshot → consistent record set → source observation chain —
+ * and revalidates that evidence on every request. Caller-supplied DNS
+ * arrays (txtRecords / mxRecords / dnsResults) are rejected, never mixed
+ * with trusted evidence.
  *
  * ## Usage Model (dns-ops-1j4.13.5)
  *
@@ -23,17 +30,21 @@
  * - Consider a separate "advanced diagnostics" permission
  */
 
+import { normalizeDNSDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { getEnvConfig } from '../config/env.js';
-import type { DNSQueryResult } from '../dns/types.js';
 import type { AllowlistEntry } from '../probes/allowlist.js';
 import {
   fetchMTASTSPolicy,
   probeAllowlistManager,
   probeMXHosts,
   probeSMTPStarttls,
-  validateMTASTSTxtRecord,
 } from '../probes/index.js';
+import {
+  type EvidenceFailure,
+  loadPersistedMtaStsEvidence,
+  loadPersistedMxEvidence,
+} from '../probes/persisted-dns-authorization.js';
 import { getProbeSemaphore, initProbeSemaphore } from '../probes/semaphore.js';
 import type { SMTPProbeResult } from '../probes/smtp-starttls.js';
 import type { Env } from '../types.js';
@@ -85,41 +96,83 @@ probeRoutes.use('/smtp-starttls', async (c, next) => {
   return next();
 });
 
+/** Fail closed when the request context has no database adapter bound. */
+function requireDb(c: { get: (key: 'db') => Env['Variables']['db'] }) {
+  const db = c.get('db');
+  if (!db) {
+    return {
+      response: {
+        status: 503 as const,
+        body: {
+          error: 'Database unavailable',
+          reason: 'database-unavailable',
+        },
+      },
+      db: undefined,
+    };
+  }
+  return { response: undefined, db };
+}
+
+function failureResponse(failure: EvidenceFailure) {
+  return { error: failure.error, reason: failure.reason };
+}
+
+/**
+ * Caller-supplied DNS-shaped arrays are rejected outright (Issue #67):
+ * they are not proven registered-domain evidence.
+ */
+function hasCallerSuppliedDnsEvidence(body: {
+  txtRecords?: unknown;
+  mxRecords?: unknown;
+  dnsResults?: unknown;
+}): boolean {
+  return (
+    body.txtRecords !== undefined || body.mxRecords !== undefined || body.dnsResults !== undefined
+  );
+}
+
 /**
  * POST /api/probe/mta-sts
- * Fetch MTA-STS policy for a domain
+ * Fetch MTA-STS policy for a domain (persisted evidence only)
  */
 probeRoutes.post('/mta-sts', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { domain, txtRecords } = body;
   const tenantId = c.get('tenantId');
 
-  if (!domain) {
-    return c.json({ error: 'Domain is required' }, 400);
+  if (!domain || typeof domain !== 'string') {
+    return c.json({ error: 'Domain is required', reason: 'missing-domain' }, 400);
   }
-
-  // Validate MTA-STS TXT record first
-  const txtValidation = await validateMTASTSTxtRecord(domain, txtRecords || []);
-
-  if (!txtValidation.valid) {
+  if (hasCallerSuppliedDnsEvidence({ txtRecords })) {
     return c.json(
       {
-        error: 'MTA-STS TXT record validation failed',
-        details: txtValidation.error,
+        error: 'Caller-supplied DNS records are not accepted',
+        reason: 'caller-supplied-dns-evidence',
       },
-      400
+      403
     );
   }
 
-  // Add to tenant-scoped allowlist (MTA-STS endpoint is derived from DNS)
+  const { response, db } = requireDb(c);
+  if (response) return c.json(response.body, response.status);
+
+  // Revalidate persisted evidence on every request, even if an in-memory
+  // allowlist entry already exists.
+  const evidence = await loadPersistedMtaStsEvidence(db, { domain, tenantId });
+  if (!evidence.ok) {
+    return c.json(failureResponse(evidence), evidence.status);
+  }
+
+  // Allowlist entries are derived only from the persisted evidence.
   probeAllowlistManager
     .getTenantAllowlist(tenantId)
-    .addCustomEntry(`mta-sts.${domain}`, 443, 'probe-api', `MTA-STS policy fetch for ${domain}`);
+    .generateFromDnsResults(evidence.domain, evidence.dnsResults);
 
   // Fetch policy — run under global semaphore to enforce PROBE_CONCURRENCY
   const config = getEnvConfig();
   const result = await getProbeSemaphore().run(() =>
-    fetchMTASTSPolicy(domain, tenantId, {
+    fetchMTASTSPolicy(evidence.domain, tenantId, {
       timeoutMs: config.probes.timeoutMs,
       checkAllowlist: true,
     })
@@ -127,51 +180,86 @@ probeRoutes.post('/mta-sts', async (c) => {
 
   return c.json({
     ...result,
-    domain,
-    txtRecordId: txtValidation.id,
+    domain: evidence.domain,
+    txtRecordId: evidence.txtRecordId,
   });
 });
 
 /**
  * POST /api/probe/smtp-starttls
- * Probe SMTP server for STARTTLS support
+ * Probe SMTP server for STARTTLS support (persisted MX evidence only)
+ *
+ * Body: { domain, hostname?, port? }
+ * - `domain` must be a tenant-owned registered domain with fresh persisted MX evidence.
+ * - Optional `hostname` must exactly match a persisted MX target (normalized).
+ * - Only port 25 is permitted.
+ * - Without `hostname`, every persisted MX target is probed.
  */
 probeRoutes.post('/smtp-starttls', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { hostname, port, mxRecords } = body;
+  const { domain, hostname, port, mxRecords } = body;
   const tenantId = c.get('tenantId');
 
-  // Option 1: Single host probe
-  if (hostname) {
-    // Add to tenant-scoped allowlist if MX records provided
-    if (mxRecords && Array.isArray(mxRecords)) {
-      const mockResults: DNSQueryResult[] = [
+  if (hasCallerSuppliedDnsEvidence({ mxRecords })) {
+    return c.json(
+      {
+        error: 'Caller-supplied DNS records are not accepted',
+        reason: 'caller-supplied-dns-evidence',
+      },
+      403
+    );
+  }
+  if (!domain || typeof domain !== 'string') {
+    return c.json({ error: 'Domain is required', reason: 'missing-domain' }, 400);
+  }
+  if (port !== undefined && port !== 25) {
+    return c.json(
+      { error: 'Only port 25 is permitted for SMTP probes', reason: 'port-not-permitted' },
+      403
+    );
+  }
+
+  const { response, db } = requireDb(c);
+  if (response) return c.json(response.body, response.status);
+
+  // Revalidate persisted evidence on every request, even if an in-memory
+  // allowlist entry already exists.
+  const evidence = await loadPersistedMxEvidence(db, { domain, tenantId });
+  if (!evidence.ok) {
+    return c.json(failureResponse(evidence), evidence.status);
+  }
+
+  const config = getEnvConfig();
+
+  // Single-host probe: the requested hostname must exactly match a
+  // persisted (normalized) MX target.
+  if (hostname !== undefined) {
+    if (typeof hostname !== 'string') {
+      return c.json({ error: 'Hostname is required', reason: 'missing-hostname' }, 400);
+    }
+    const normalized = normalizeDNSDomain(hostname);
+    const target = evidence.hosts.find((h) => h.hostname === normalized);
+    if (!target) {
+      return c.json(
         {
-          query: { name: hostname, type: 'MX' },
-          vantage: { type: 'public-recursive', identifier: 'mock' },
-          success: true,
-          answers: mxRecords.map((mx: string) => ({
-            name: hostname,
-            type: 'MX',
-            ttl: 300,
-            data: mx,
-          })),
-          authority: [],
-          additional: [],
-          responseTime: 0,
+          error: 'Hostname does not match persisted MX evidence',
+          reason: 'hostname-not-in-evidence',
         },
-      ];
-      probeAllowlistManager
-        .getTenantAllowlist(tenantId)
-        .generateFromDnsResults(hostname, mockResults);
+        403
+      );
     }
 
+    // Allowlist entries are derived only from the persisted evidence, and
+    // only once the request is fully authorized.
+    probeAllowlistManager
+      .getTenantAllowlist(tenantId)
+      .generateFromDnsResults(evidence.domain, evidence.dnsResults);
+
     // Run under global semaphore to enforce PROBE_CONCURRENCY
-    const smtpConfig = getEnvConfig();
     const result = await getProbeSemaphore().run(() =>
-      probeSMTPStarttls(hostname, tenantId, {
-        port: port || 25,
-        timeoutMs: smtpConfig.probes.timeoutMs,
+      probeSMTPStarttls(target.hostname, tenantId, {
+        port: 25,
+        timeoutMs: config.probes.timeoutMs,
         checkAllowlist: true,
       })
     );
@@ -179,82 +267,66 @@ probeRoutes.post('/smtp-starttls', async (c) => {
     return c.json(result);
   }
 
-  // Option 2: Batch probe from MX records
-  if (mxRecords && Array.isArray(mxRecords) && mxRecords.length > 0) {
-    // Parse MX records and add to tenant-scoped allowlist
-    const hosts = mxRecords.map((record: string) => {
-      const parts = record.trim().split(/\s+/);
-      return {
-        hostname: parts.length > 1 ? parts[1].replace(/\.$/, '') : record,
-        priority: parts.length > 0 ? parseInt(parts[0], 10) : 0,
-      };
-    });
+  // Batch probe of every persisted MX target
+  probeAllowlistManager
+    .getTenantAllowlist(tenantId)
+    .generateFromDnsResults(evidence.domain, evidence.dnsResults);
 
-    // Generate tenant-scoped allowlist
-    const mockResults: DNSQueryResult[] = [
-      {
-        query: { name: 'probe', type: 'MX' },
-        vantage: { type: 'public-recursive', identifier: 'mock' },
-        success: true,
-        answers: hosts.map((h) => ({
-          name: 'probe',
-          type: 'MX',
-          ttl: 300,
-          data: `${h.priority} ${h.hostname}.`,
-        })),
-        authority: [],
-        additional: [],
-        responseTime: 0,
-      },
-    ];
-    probeAllowlistManager.getTenantAllowlist(tenantId).generateFromDnsResults('probe', mockResults);
+  const results = await probeMXHosts(evidence.hosts, tenantId, {
+    timeoutMs: config.probes.timeoutMs,
+    concurrency: config.probes.concurrency,
+  });
 
-    // Use configured timeout and concurrency (not hardcoded values)
-    const batchConfig = getEnvConfig();
-    const results = await probeMXHosts(hosts, tenantId, {
-      timeoutMs: batchConfig.probes.timeoutMs,
-      concurrency: batchConfig.probes.concurrency,
-    });
-
-    return c.json({
-      hosts: results,
-      summary: {
-        total: results.length,
-        successful: results.filter((r: SMTPProbeResult) => r.success).length,
-        supportsStarttls: results.filter((r: SMTPProbeResult) => r.supportsStarttls).length,
-      },
-    });
-  }
-
-  return c.json(
-    {
-      error: 'Either hostname or mxRecords is required',
+  return c.json({
+    hosts: results,
+    summary: {
+      total: results.length,
+      successful: results.filter((r: SMTPProbeResult) => r.success).length,
+      supportsStarttls: results.filter((r: SMTPProbeResult) => r.supportsStarttls).length,
     },
-    400
-  );
+  });
 });
 
 /**
  * POST /api/probe/allowlist/generate
- * Generate tenant-scoped allowlist from DNS results
+ * Generate tenant-scoped allowlist entries from persisted DNS evidence only
  */
 probeRoutes.post('/allowlist/generate', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { domain, dnsResults } = body;
   const tenantId = c.get('tenantId');
 
-  if (!domain || !dnsResults || !Array.isArray(dnsResults)) {
+  if (!domain || typeof domain !== 'string') {
+    return c.json({ error: 'Domain is required', reason: 'missing-domain' }, 400);
+  }
+  if (hasCallerSuppliedDnsEvidence({ dnsResults })) {
     return c.json(
       {
-        error: 'Domain and dnsResults (array) are required',
+        error: 'Caller-supplied DNS records are not accepted',
+        reason: 'caller-supplied-dns-evidence',
       },
-      400
+      403
     );
   }
 
-  const entries = probeAllowlistManager
-    .getTenantAllowlist(tenantId)
-    .generateFromDnsResults(domain, dnsResults);
+  const { response, db } = requireDb(c);
+  if (response) return c.json(response.body, response.status);
+
+  const mx = await loadPersistedMxEvidence(db, { domain, tenantId });
+  const mtaSts = await loadPersistedMtaStsEvidence(db, { domain, tenantId });
+  if (!mx.ok && !mtaSts.ok) {
+    const failure = (mx.ok ? mtaSts : mx) as EvidenceFailure;
+    return c.json(failureResponse(failure), failure.status);
+  }
+
+  const allowlist = probeAllowlistManager.getTenantAllowlist(tenantId);
+  const entries: AllowlistEntry[] = [];
+  if (mx.ok) {
+    entries.push(...allowlist.generateFromDnsResults(mx.domain, mx.dnsResults));
+  }
+  if (mtaSts.ok) {
+    entries.push(...allowlist.generateFromDnsResults(mtaSts.domain, mtaSts.dnsResults));
+  }
 
   return c.json({
     domain,
