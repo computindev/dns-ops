@@ -38,7 +38,7 @@ This document defines the runtime topology for the DNS Ops Workbench: where prod
 | Database Access | Direct PostgreSQL (`DATABASE_URL`) |
 | Start | `node apps/web/.output/server/index.mjs` |
 | Health | `GET /api/health` — 503 if DB down |
-| Schema | `node scripts/run-migrations.mjs` as Railway `releaseCommand` only |
+| Schema | `node scripts/run-migrations.mjs` as Railway `preDeploy` only |
 | Primary Role | Dashboard + API |
 | Write Scope | Operator-triggered collection requests, portfolio management |
 
@@ -90,9 +90,9 @@ Node.js Container → Redis (queue-backed jobs)
 
 ## Railway Configuration
 
-Web (`apps/web/railway.toml`): Dockerfile `apps/web/Dockerfile.railway`, `releaseCommand = node scripts/run-migrations.mjs`, `startCommand = node apps/web/.output/server/index.mjs`, `healthcheckPath = /api/health`.
+Web (`.railway/railway.ts`): Dockerfile `apps/web/Dockerfile.railway`, `preDeploy = node scripts/run-migrations.mjs`, `start = node apps/web/.output/server/index.mjs`, `healthcheck = /api/health`.
 
-Collector (`apps/collector/railway.toml`): Dockerfile `apps/collector/Dockerfile.railway`, `healthcheckPath = /readyz`.
+Collector (`.railway/railway.ts`): Dockerfile `apps/collector/Dockerfile.railway`, `healthcheck = /readyz`.
 
 HTTP `POST /api/migrate/reset` and `POST /api/migrate/rebuild` return 410.
 

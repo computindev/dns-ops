@@ -6,7 +6,7 @@ DNS + mail operations platform with deterministic rules engine, guidance-only DN
 
 Split runtime. Railway Node is the configured web deployment target, not a currently linked live DNS Ops project.
 
-- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `apps/web/railway.toml` after an authorized project/environment/service is identified.
+- **`apps/web`** — TanStack Start + Hono configured for Railway Node (UI + API). Vinxi preset `node-server` in `apps/web/app.config.ts`; deploy via `.railway/railway.ts` after an authorized project/environment/service is identified.
 - **`apps/collector`** — Node.js + PostgreSQL + Redis for DNS collection, probes, and background jobs
 - **`packages/db`** — PostgreSQL/Drizzle schema + repositories
 - **`packages/rules`** — Deterministic rules engine (DNS + mail rules, simulation engine)
@@ -103,7 +103,7 @@ cp .env.example .env
 
 ## Database
 
-Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`) only, invoked automatically as the web service Railway `releaseCommand`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) return 410 and direct operators back to this runner.
+Schema ownership is the **release migration runner** (`scripts/run-migrations.mjs`) only, invoked automatically as the web service Railway `preDeploy`. Request-path traffic never applies DDL. Destructive HTTP recovery routes (`POST /api/migrate/reset`, `POST /api/migrate/rebuild`) return 410 and direct operators back to this runner.
 
 Local / disposable DB:
 
