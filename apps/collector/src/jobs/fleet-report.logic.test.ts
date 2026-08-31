@@ -28,16 +28,18 @@ function createMockFinding(overrides: Partial<Finding> = {}): Finding {
 
 describe('Fleet Report Logic - Bead 18', () => {
   describe('findingsToCheckResults', () => {
-    it('should return pass when no findings for check type', () => {
+    it('should return unknown when no findings for check type', () => {
+      // Absence of findings is not proof of health: it must surface as
+      // UNKNOWN, never PASS.
       const findings: Finding[] = [];
       const results = findingsToCheckResults(findings, ['spf']);
 
       expect(results).toHaveLength(1);
       expect(results[0]).toMatchObject({
         check: 'spf',
-        status: 'pass',
+        status: 'unknown',
         severity: 'ok',
-        message: 'No SPF issues detected',
+        message: 'No SPF evidence persisted for this snapshot',
       });
     });
 
@@ -204,10 +206,10 @@ describe('Fleet Report Logic - Bead 18', () => {
 
       const results = findingsToCheckResults(findings, ['unknown-check-type']);
 
-      // Should return a pass result since no findings match
+      // No rule category matches, so there is no affirmative evidence for it
       expect(results).toHaveLength(1);
       expect(results[0].check).toBe('unknown-check-type');
-      expect(results[0].status).toBe('pass');
+      expect(results[0].status).toBe('unknown');
     });
   });
 
@@ -232,9 +234,9 @@ describe('Fleet Report Logic - Bead 18', () => {
       expect(mapSeverityToStatus('info')).toBe('pass');
     });
 
-    it('should default unknown severities to pass', () => {
-      expect(mapSeverityToStatus('unknown')).toBe('pass');
-      expect(mapSeverityToStatus('')).toBe('pass');
+    it('should default unknown severities to unknown, never pass', () => {
+      expect(mapSeverityToStatus('unknown')).toBe('unknown');
+      expect(mapSeverityToStatus('')).toBe('unknown');
     });
   });
 
@@ -328,6 +330,7 @@ describe('Fleet Report Logic - Bead 18', () => {
         fail: 1,
         warning: 0,
         missing: 0,
+        unknown: 0,
       });
 
       expect(summary.dmarcStats).toMatchObject({
@@ -335,7 +338,30 @@ describe('Fleet Report Logic - Bead 18', () => {
         fail: 1,
         warning: 0,
         missing: 0,
+        unknown: 0,
       });
+    });
+
+    it('should count unknown checks as unknown, never as pass', () => {
+      const results: FleetReportResult[] = [
+        {
+          domain: 'a.com',
+          snapshotId: 's1',
+          collectedAt: new Date(),
+          rulesetVersion: '1.0',
+          findingsCount: 0,
+          checks: [
+            { check: 'spf', status: 'unknown', severity: 'ok', message: 'No evidence' },
+            { check: 'dmarc', status: 'pass', severity: 'ok', message: 'OK' },
+          ],
+          issues: [],
+        },
+      ];
+
+      const summary = generateSummary(results, ['spf', 'dmarc']);
+
+      expect(summary.spfStats).toMatchObject({ pass: 0, unknown: 1 });
+      expect(summary.dmarcStats).toMatchObject({ pass: 1, unknown: 0 });
     });
 
     it('should calculate issue severity breakdown', () => {
@@ -372,8 +398,20 @@ describe('Fleet Report Logic - Bead 18', () => {
 
       expect(summary.totalDomains).toBe(0);
       expect(summary.domainsWithIssues).toBe(0);
-      expect(summary.spfStats).toMatchObject({ pass: 0, fail: 0, warning: 0, missing: 0 });
-      expect(summary.dmarcStats).toMatchObject({ pass: 0, fail: 0, warning: 0, missing: 0 });
+      expect(summary.spfStats).toMatchObject({
+        pass: 0,
+        fail: 0,
+        warning: 0,
+        missing: 0,
+        unknown: 0,
+      });
+      expect(summary.dmarcStats).toMatchObject({
+        pass: 0,
+        fail: 0,
+        warning: 0,
+        missing: 0,
+        unknown: 0,
+      });
       expect(summary.issueSeverity).toMatchObject({ critical: 0, high: 0, medium: 0, low: 0 });
     });
 

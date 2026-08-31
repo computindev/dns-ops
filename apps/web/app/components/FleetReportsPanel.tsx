@@ -16,7 +16,7 @@ interface ReportTemplate {
 
 interface CheckResult {
   check: string;
-  status: 'pass' | 'fail' | 'warning' | 'missing';
+  status: 'pass' | 'fail' | 'warning' | 'missing' | 'unknown';
   severity: 'ok' | 'low' | 'medium' | 'high' | 'critical';
   message: string;
   details?: Record<string, unknown>;
@@ -384,6 +384,18 @@ example.org, example.net"
   );
 }
 
+// Export for testing — UNKNOWN must never render with clean/success styling.
+export function statusBadge(status: CheckResult['status']): { style: string; icon: string } {
+  const badges = {
+    pass: { style: 'ds-badge--success', icon: '✓' },
+    fail: { style: 'ds-badge--danger', icon: '✗' },
+    warning: { style: 'ds-badge--warning', icon: '!' },
+    missing: { style: 'ds-badge--unknown', icon: '?' },
+    unknown: { style: 'ds-badge--unknown', icon: '?' },
+  };
+  return badges[status];
+}
+
 // =============================================================================
 // Helper Components
 // =============================================================================
@@ -456,19 +468,10 @@ function DomainResultCard({ result }: { result: FleetReportResult }) {
 }
 
 function StatusBadge({ status }: { status: CheckResult['status'] }) {
-  const styles = {
-    pass: 'ds-badge--success',
-    fail: 'ds-badge--danger',
-    warning: 'ds-badge--warning',
-    missing: 'ds-badge--unknown',
-  };
-
-  const icons = {
-    pass: '✓',
-    fail: '✗',
-    warning: '!',
-    missing: '?',
-  };
-
-  return <span className={`ds-badge ${styles[status]}`}>{icons[status]}</span>;
+  const badge = statusBadge(status);
+  return (
+    <span className={`ds-badge ${badge.style}`} title={status}>
+      {badge.icon}
+    </span>
+  );
 }
