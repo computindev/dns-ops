@@ -28,6 +28,7 @@ type HealthBody = {
   service: string;
   timestamp: string;
   warning?: string;
+  revision?: string;
 };
 
 function createHealthApp(db: Env['Variables']['db'] | undefined) {
@@ -104,6 +105,8 @@ describe('GET /api/health honest readiness (RT-3, no Docker)', () => {
 
   it('returns 503 when db context is missing', async () => {
     delete process.env.DATABASE_URL;
+    delete process.env.GIT_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     const app = createHealthApp(undefined);
     const res = await app.request('/api/health');
 
@@ -113,6 +116,18 @@ describe('GET /api/health honest readiness (RT-3, no Docker)', () => {
     expect(body.service).toBe('dns-ops-web');
     expect(body.timestamp).toBeTruthy();
     expect(body.warning).toMatch(/Database connection not available/i);
+    expect(body).not.toHaveProperty('revision');
+    assertNoInternalLeak(body);
+  });
+
+  it('includes revision when GIT_SHA is set', async () => {
+    delete process.env.DATABASE_URL;
+    process.env.GIT_SHA = 'abc123deadbeef';
+    const app = createHealthApp(undefined);
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as HealthBody;
+    expect(body.revision).toBe('abc123deadbeef');
     assertNoInternalLeak(body);
   });
 

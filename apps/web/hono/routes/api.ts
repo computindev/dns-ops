@@ -80,11 +80,15 @@ async function resolveAccessibleSnapshot(
 // Railway readiness endpoint: 200 only after a real DB query succeeds.
 apiRoutes.get('/health', async (c) => {
   const db = c.get('db');
+  const revision = process.env.GIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
+  const publicRevision =
+    typeof revision === 'string' && revision.trim() ? { revision: revision.trim() } : {};
   const degradedBody = {
     status: 'degraded' as const,
     service: 'dns-ops-web',
     timestamp: new Date().toISOString(),
     warning: 'Database connection not available - API functionality limited',
+    ...publicRevision,
   };
 
   // Adapter presence alone is a false-green; require a configured URL and a
@@ -103,6 +107,7 @@ apiRoutes.get('/health', async (c) => {
         status: 'healthy' as const,
         service: 'dns-ops-web',
         timestamp: new Date().toISOString(),
+        ...publicRevision,
       },
       200
     );

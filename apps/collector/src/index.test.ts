@@ -104,7 +104,11 @@ describe('Collector onError body', () => {
 describe('Collector liveness (process-only)', () => {
   it('GET /healthz returns 200 without probing DB', async () => {
     const previous = process.env.DATABASE_URL;
+    const prevSha = process.env.GIT_SHA;
+    const prevRailway = process.env.RAILWAY_GIT_COMMIT_SHA;
     delete process.env.DATABASE_URL;
+    delete process.env.GIT_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     resetSharedDbAdapterForTests();
 
     const res = await app.request('/healthz');
@@ -112,9 +116,25 @@ describe('Collector liveness (process-only)', () => {
     const body = (await res.json()) as { status: string; service: string };
     expect(body.status).toBe('ok');
     expect(body.service).toBe('dns-ops-collector');
+    expect(body).not.toHaveProperty('revision');
 
     if (previous === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previous;
+    if (prevSha === undefined) delete process.env.GIT_SHA;
+    else process.env.GIT_SHA = prevSha;
+    if (prevRailway === undefined) delete process.env.RAILWAY_GIT_COMMIT_SHA;
+    else process.env.RAILWAY_GIT_COMMIT_SHA = prevRailway;
+  });
+
+  it('GET /healthz includes revision when GIT_SHA is set', async () => {
+    const previous = process.env.GIT_SHA;
+    process.env.GIT_SHA = 'abc123deadbeef';
+    const res = await app.request('/healthz');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { revision?: string };
+    expect(body.revision).toBe('abc123deadbeef');
+    if (previous === undefined) delete process.env.GIT_SHA;
+    else process.env.GIT_SHA = previous;
   });
 
   it('GET /health returns 200 without probing DB', async () => {

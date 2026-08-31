@@ -5,6 +5,7 @@ profile: changed
 paths:
   - apps/web/hono/routes/api.ts
   - apps/collector/src/index.ts
+  - .railway/railway.ts
 always_with: []
 ---
 # Public health
@@ -13,7 +14,7 @@ Operators and Railway need an unauthenticated answer that the web process can ta
 
 ## Sub-features
 
-- Web `GET /api/health` — 200 `{"status":"healthy","service":"dns-ops-web"}` when the DB ping succeeds; 503 `{"status":"degraded"}` when it does not.
+- Web `GET /api/health` — 200 `{"status":"healthy","service":"dns-ops-web"}` when the DB ping succeeds; 503 `{"status":"degraded"}` when it does not. Optional `revision` is `GIT_SHA` or `RAILWAY_GIT_COMMIT_SHA` when set.
 - Collector `GET /healthz` — liveness, process only.
 - Collector `GET /readyz` — dependency-aware; 503 when DB/queues are not ready.
 
@@ -41,6 +42,7 @@ await call('web-health', 'GET', '/api/health');
 
 ### Read-back
 - A second GET to the same path returns the same `status` class (healthy vs degraded) without auth headers.
+- When `GIT_SHA` or `RAILWAY_GIT_COMMIT_SHA` is set, `revision` equals that value on web and collector. A passed receipt for a git tree requires live `revision` to match that tree and Railway `commitHash` (or `revision`) on both services.
 
 ## Gotchas
 

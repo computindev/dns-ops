@@ -1281,6 +1281,7 @@ export interface HealthResponse {
   status: 'healthy' | 'degraded' | 'unhealthy';
   service: string;
   timestamp: string;
+  revision?: string;
 }
 
 /**

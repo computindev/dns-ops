@@ -1,5 +1,6 @@
 // harness/api.mts — HTTP driver with exchange capture and read-back.
 // Run: VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/api.mts <feature-id>
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -43,23 +44,28 @@ const drives: Record<string, () => Promise<void>> = {
   'health.public': async () => {
     const first = await call('web-health', 'GET', '/api/health');
     if (![200, 503].includes(first.status)) throw new Error(`expected 200 or 503, got ${first.status}`);
-    const body = first.json as { status?: string; service?: string };
+    const expectRev = (process.env.GIT_SHA || process.env.EXPECT_REVISION || execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).trim();
+    if (!expectRev) throw new Error('could not determine expected revision');
+    const body = first.json as { status?: string; service?: string; revision?: string };
     if (first.status === 200 && body?.status !== 'healthy') throw new Error(`200 without status=healthy`);
     if (first.status === 503 && body?.status !== 'degraded') throw new Error(`503 without status=degraded`);
+    if (body?.revision !== expectRev) throw new Error(`web revision ${body?.revision ?? '(none)'} != ${expectRev}`);
     const again = await readback('web-health', '/api/health');
     if (again.status !== first.status) throw new Error(`read-back status ${again.status} != ${first.status}`);
     const live = await fetch(`${COLLECTOR_URL}/healthz`);
     const liveText = await live.text();
-    let liveJson: { status?: string } | null = null; try { liveJson = JSON.parse(liveText); } catch {}
+    let liveJson: { status?: string; revision?: string } | null = null; try { liveJson = JSON.parse(liveText); } catch {}
     fs.mkdirSync(path.join(RUN_DIR, 'http'), { recursive: true });
     fs.writeFileSync(path.join(RUN_DIR, 'http', `${String(++n).padStart(2, '0')}-collector-healthz.json`), JSON.stringify(redact({ request: { method: 'GET', url: '/healthz' }, response: { status: live.status, body: liveJson ?? liveText } }), null, 2));
     if (live.status !== 200 || liveJson?.status !== 'ok') throw new Error(`collector /healthz expected 200 ok, got ${live.status} ${liveText.slice(0, 80)}`);
+    if (liveJson?.revision !== expectRev) throw new Error(`collector /healthz revision ${liveJson?.revision ?? '(none)'} != ${expectRev}`);
     const ready = await fetch(`${COLLECTOR_URL}/readyz`);
     const readyText = await ready.text();
-    let readyJson: { status?: string } | null = null; try { readyJson = JSON.parse(readyText); } catch {}
+    let readyJson: { status?: string; revision?: string } | null = null; try { readyJson = JSON.parse(readyText); } catch {}
     fs.writeFileSync(path.join(RUN_DIR, 'http', `${String(++n).padStart(2, '0')}-collector-readyz.json`), JSON.stringify(redact({ request: { method: 'GET', url: '/readyz' }, response: { status: ready.status, body: readyJson ?? readyText } }), null, 2));
     if (![200, 503].includes(ready.status)) throw new Error(`collector /readyz expected 200 or 503, got ${ready.status}`);
     if (ready.status === 200 && readyJson?.status !== 'ready') throw new Error(`collector /readyz 200 without status=ready`);
+    if (readyJson?.revision !== expectRev) throw new Error(`collector /readyz revision ${readyJson?.revision ?? '(none)'} != ${expectRev}`);
   },
 };
 
