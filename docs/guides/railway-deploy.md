@@ -1,8 +1,8 @@
 # Railway Deployment Guide
 
-Railway Node is the **configured deployment target** for the DNS Ops web app, collector, Postgres, and Redis. It is not a currently linked live DNS Ops deploy.
+Live Railway project is **`dns-ops`**, environment **`production`**, with web, collector, Postgres, and Redis.
 
-Do not run deploy or migration commands until an authorized Railway project, environment, and service are identified. Never use `dnsops-live-fixtures` as the app target.
+Do not create a second app project. Never use `dnsops-live-fixtures` as the app target.
 
 Web is TanStack Start + Hono configured for Railway Node (`apps/web/app.config.ts` preset `node-server`). Project infrastructure lives in `.railway/railway.ts`.
 
@@ -27,12 +27,11 @@ Never start collector with the web Nitro path.
 
 Neither web nor collector has a GitHub source in `.railway/railway.ts`. Auto-deploy on master is disabled until deliberately enabled. After authorization, deploy with `railway up --service web` / `railway up --service collector`.
 
-## 1. Create Railway Project
+## 1. Existing Railway project
 
-1. Go to [railway.app](https://railway.app) → New Project
-2. Choose "Deploy from GitHub repo" → select `dns-ops`
-3. Add **two** services from the same repo (web and collector), each with its Dockerfile path above
-4. Import or author the same settings in `.railway/railway.ts` (`railway config pull`, then `railway config plan`)
+Link the CLI to project `dns-ops`, environment `production`. Do not run `railway init` or duplicate Postgres/Redis.
+
+Preview drift with `railway config plan`. Do not `railway config apply` unless authorized.
 
 ## 2. Add Postgres and Redis
 
@@ -51,6 +50,7 @@ Collector:
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | ✅ |
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` | ✅ for queue-backed jobs |
 | `NODE_ENV` | `production` | ✅ |
+| `DB_TLS_REJECT_UNAUTHORIZED` | `false` | ✅ Railway Postgres self-signed cert |
 | `PORT` | `3001` | ✅ |
 | `INTERNAL_SECRET` | Generate: `openssl rand -hex 16` | ✅ |
 | `WORKER_ENABLED` | `true` | ✅ starts workers/schedules |
@@ -64,12 +64,13 @@ Web:
 | `COLLECTOR_URL` | Collector public URL | ✅ |
 | `INTERNAL_SECRET` | Same value as collector | ✅ |
 | `NODE_ENV` | `production` | ✅ |
+| `DB_TLS_REJECT_UNAUTHORIZED` | `false` | ✅ Railway Postgres self-signed cert |
 
 Do not add `COLLECTOR_URL` to collector.
 
 ## 4. Deploy
 
-Only after an authorized project, environment, and service are linked. Preview with `railway config plan`. Do not `railway config apply` or `railway up` unless authorized.
+Preview with `railway config plan` against `dns-ops` / `production`. Do not `railway config apply` or `railway up` unless authorized.
 
 Master auto-deploy is disabled until a GitHub source is deliberately added in IaC.
 
@@ -120,6 +121,6 @@ Expected:
 
 **Schema not applied** — Confirm the web service pre-deploy command ran `node scripts/run-migrations.mjs` successfully, or run it out-of-band with the target `DATABASE_URL`. Do not use `/api/migrate/reset` or `/rebuild` (they are unavailable).
 
-**Health check failing** — Collector `/healthz` = liveness (process alive). Collector `/readyz` = readiness (DB/queues; 503 if dependencies are down). Web `/api/health` = 503 if DB is down. Railway rollout uses `/readyz` for collector.
+**Health check failing** — Collector `/healthz` = liveness (process alive). Collector `/readyz` = readiness (DB/queues; 503 if dependencies are down). Web `/api/health` = 503 if DB is down. Railway rollout uses `/readyz` for collector. If logs show `self-signed certificate in certificate chain`, keep `DB_TLS_REJECT_UNAUTHORIZED=false` on web and collector (not `NODE_TLS_REJECT_UNAUTHORIZED`). Web public domain must target port 8080; collector 3001.
 
 **Build fails** — Railway needs Node ≥20. The repo specifies `"engines": { "node": ">=20" }`.

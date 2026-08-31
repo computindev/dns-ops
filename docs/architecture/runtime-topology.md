@@ -47,7 +47,7 @@ This document defines the runtime topology for the DNS Ops Workbench: where prod
 Railway Node (apps/web) → PostgreSQL
 ```
 
-Railway Node is the configured deployment target, not a currently linked live DNS Ops project. Edge-worker bindings are not in use.
+Live Railway project is `dns-ops`, environment `production`. Edge-worker bindings are not in use.
 
 ### Collector (apps/collector)
 
