@@ -4,7 +4,7 @@ Railway Node is the **configured deployment target** for the DNS Ops web app, co
 
 Do not run deploy or migration commands until an authorized Railway project, environment, and service are identified. Never use `dnsops-live-fixtures` as the app target.
 
-Web is TanStack Start + Hono configured for Railway Node (`apps/web/app.config.ts` preset `node-server`, `apps/web/railway.toml`).
+Web is TanStack Start + Hono configured for Railway Node (`apps/web/app.config.ts` preset `node-server`). Project infrastructure lives in `.railway/railway.ts`.
 
 ## Architecture
 
@@ -16,22 +16,31 @@ User → Railway (apps/web, Node)
 
 ## How Railway builds this repo
 
+Infrastructure as Code in `.railway/railway.ts` is the sole Railway config. Do not add `railway.json` or `railway.toml`; those conflict with IaC.
+
 Each service uses its own Dockerfile:
 
-- Web: `apps/web/Dockerfile.railway` + `apps/web/railway.toml`
-- Collector: `apps/collector/Dockerfile.railway` + `apps/collector/railway.toml`
+- Web: `apps/web/Dockerfile.railway` — start `node apps/web/.output/server/index.mjs`
+- Collector: `apps/collector/Dockerfile.railway` — start `node apps/collector/dist/index.js`
+
+Never start collector with the web Nitro path.
+
+Web has a GitHub source. Collector does not; deploy collector with `railway up --service collector` after authorization.
 
 ## 1. Create Railway Project
 
 1. Go to [railway.app](https://railway.app) → New Project
 2. Choose "Deploy from GitHub repo" → select `dns-ops`
 3. Add **two** services from the same repo (web and collector), each with its Dockerfile path above
+4. Import or author the same settings in `.railway/railway.ts` (`railway config pull`, then `railway config plan`)
 
 ## 2. Add Postgres and Redis
 
 1. In the Railway project dashboard → "New" → "Database" → "PostgreSQL"
 2. Link `DATABASE_URL` to both web and collector: Variables → Add Reference → `${{Postgres.DATABASE_URL}}`
 3. Add Redis and link `REDIS_URL` to the collector
+
+Keep existing variable values as `preserve()` in IaC. Do not write secrets or generated domains into source.
 
 ## 3. Set Environment Variables
 
@@ -56,18 +65,25 @@ Web:
 | `INTERNAL_SECRET` | Same value as collector | ✅ |
 | `NODE_ENV` | `production` | ✅ |
 
+Do not add `COLLECTOR_URL` to collector.
+
 ## 4. Deploy
 
-Only after an authorized project, environment, and service are linked. Railway can auto-deploy on push to master for that authorized target.
+Only after an authorized project, environment, and service are linked. Preview with `railway config plan`. Do not `railway config apply` or `railway up` unless authorized.
+
+Railway can auto-deploy web on push to master for that authorized target.
 
 Web start: `node apps/web/.output/server/index.mjs`  
-Collector start: `node apps/collector/dist/index.js` (image `CMD`; `apps/collector/railway.toml` also sets a start command)
+Collector start: `node apps/collector/dist/index.js`
+
+Web health: `/api/health` (timeout 60s)  
+Collector health: `/readyz` (timeout 60s; dependency-aware)
 
 ## 5. DB Schema (release runner)
 
-The web service `releaseCommand` runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer**. App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
+The web service `preDeploy` command runs `node scripts/run-migrations.mjs` on every deploy. That runner is the **sole automatic schema writer**. App request routes do not migrate, and `POST /api/migrate/reset` / `POST /api/migrate/rebuild` return 410 directing operators here.
 
-After first deploy, schema should already be applied by release. To run the same runner out-of-band, first confirm the authorized Railway project, environment, and service. Never point this at `dnsops-live-fixtures`.
+After first deploy, schema should already be applied by pre-deploy. To run the same runner out-of-band, first confirm the authorized Railway project, environment, and service. Never point this at `dnsops-live-fixtures`.
 
 ```bash
 # Using Railway CLI (authorized web service context only)
@@ -98,12 +114,12 @@ Expected:
 
 ## Troubleshooting
 
-**Collector won't start** — Check `DATABASE_URL` is set. Collector validates env at startup and fails with clear messages.
+**Collector won't start** — Check `DATABASE_URL` is set. Collector validates env at startup and fails with clear messages. Confirm the start command is `node apps/collector/dist/index.js`, not the web Nitro server.
 
 **Web can't reach collector** — Verify `COLLECTOR_URL` matches Railway's public URL. Verify `INTERNAL_SECRET` matches between both services.
 
-**Schema not applied** — Confirm the web service release command ran `node scripts/run-migrations.mjs` successfully, or run it out-of-band with the target `DATABASE_URL`. Do not use `/api/migrate/reset` or `/rebuild` (they are unavailable).
+**Schema not applied** — Confirm the web service pre-deploy command ran `node scripts/run-migrations.mjs` successfully, or run it out-of-band with the target `DATABASE_URL`. Do not use `/api/migrate/reset` or `/rebuild` (they are unavailable).
 
-**Health check failing** — Collector `/healthz` = liveness (process alive). Collector `/readyz` = readiness (DB/queues; 503 if dependencies are down). Web `/api/health` = 503 if DB is down.
+**Health check failing** — Collector `/healthz` = liveness (process alive). Collector `/readyz` = readiness (DB/queues; 503 if dependencies are down). Web `/api/health` = 503 if DB is down. Railway rollout uses `/readyz` for collector.
 
 **Build fails** — Railway needs Node ≥20. The repo specifies `"engines": { "node": ">=20" }`.
