@@ -113,6 +113,68 @@ describe('Probe Observation Persistence E2E', () => {
       });
     });
 
+    it('should derive persisted trust from certificate verdicts, not the caller-asserted tlsTrusted bit (issue #74)', () => {
+      const base: SMTPProbeResult = {
+        success: true,
+        hostname: 'forged.example.com',
+        port: 25,
+        supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: true, // forged: contradicted by the certificate verdicts
+        tlsVersion: 'TLSv1.3',
+        tlsCipher: 'AES256-GCM-SHA384',
+        smtpBanner: '220 forged.example.com ESMTP',
+        responseTimeMs: 120,
+      };
+
+      const variants = [
+        {
+          label: 'chain not authorized',
+          certificate: {
+            subject: 'forged.example.com',
+            issuer: 'Self-Signed',
+            validFrom: '2026-01-01',
+            validTo: '2027-01-01',
+            fingerprint: '11:11',
+            chainAuthorized: false,
+            hostnameAuthorized: true,
+            authorizationError: 'self-signed certificate',
+          },
+        },
+        {
+          label: 'hostname not authorized',
+          certificate: {
+            subject: 'other.example.com',
+            issuer: 'Test CA',
+            validFrom: '2026-01-01',
+            validTo: '2027-01-01',
+            fingerprint: '22:22',
+            chainAuthorized: true,
+            hostnameAuthorized: false,
+            authorizationError: "Hostname/IP doesn't match certificate's altnames",
+          },
+        },
+      ];
+
+      for (const variant of variants) {
+        const observation = smtpResultToObservation('snap-forged', {
+          ...base,
+          certificate: variant.certificate,
+        });
+
+        expect(observation.success).toBe(false);
+        expect(observation.status).not.toBe('success');
+        expect(observation.probeData?.tlsTrusted).toBe(false);
+        // Contradictory certificate evidence is still persisted as diagnostics.
+        expect(observation.probeData?.certificate).toEqual(variant.certificate);
+      }
+
+      // tlsTrusted asserted without any certificate evidence also fails closed.
+      const noCert = smtpResultToObservation('snap-forged', { ...base });
+      expect(noCert.success).toBe(false);
+      expect(noCert.probeData?.tlsTrusted).toBe(false);
+    });
+
     it('should map SMTP result with timeout error to timeout status', () => {
       const result: SMTPProbeResult = {
         success: false,

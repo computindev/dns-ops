@@ -14,6 +14,48 @@ import {
   type SMTPProbeData,
 } from '../schema/index.js';
 
+/**
+ * Effective success under the SMTP trust contract (issue #74).
+ *
+ * Non-SMTP probes keep their persisted success bit. An SMTP STARTTLS probe
+ * is successful only when the row itself succeeded and the persisted probe
+ * data proves every trust condition: STARTTLS advertised, TLS negotiated,
+ * `tlsTrusted === true`, and both certificate chain and hostname
+ * authorization explicitly `true`. Absent or contradictory trust fields fail
+ * closed (legacy and forged rows read as unsuccessful).
+ */
+function isEffectivelySuccessful(probe: ProbeObservation): boolean {
+  if (probe.probeType !== 'smtp_starttls') return probe.success === true;
+  const probeData = probe.probeData as SMTPProbeData | null;
+  return (
+    probe.success === true &&
+    probeData?.supportsStarttls === true &&
+    probeData.tlsNegotiated === true &&
+    probeData.tlsTrusted === true &&
+    probeData.certificate?.chainAuthorized === true &&
+    probeData.certificate.hostnameAuthorized === true
+  );
+}
+
+/**
+ * Read-time normalizer for probe rows (issue #74).
+ *
+ * Returns an SMTP row that lacks effective success as a read-only copy with
+ * `success: false` and a raw `success` status exposed as `error`, matching
+ * how untrusted TLS is persisted today. Diagnostics (probeData, certificate,
+ * error text, timing, hostname, IDs) are preserved and the adapter-returned
+ * row is never mutated. Non-SMTP rows are returned unchanged.
+ */
+function asReadRow(probe: ProbeObservation): ProbeObservation {
+  if (isEffectivelySuccessful(probe)) return probe;
+  if (probe.probeType !== 'smtp_starttls') return probe;
+  return {
+    ...probe,
+    success: false,
+    status: probe.status === 'success' ? 'error' : probe.status,
+  };
+}
+
 export class ProbeObservationRepository {
   constructor(private db: IDatabaseAdapter) {}
 
@@ -33,8 +75,9 @@ export class ProbeObservationRepository {
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    // Sort by hostname and probe type
-    return results.sort((a, b) => {
+    // Sort by hostname and probe type, then fail closed untrusted SMTP reads.
+    // map() copies first so the adapter-returned array is left untouched.
+    return results.map(asReadRow).sort((a, b) => {
       const hostnameCompare = a.hostname.localeCompare(b.hostname);
       if (hostnameCompare !== 0) return hostnameCompare;
       return a.probeType.localeCompare(b.probeType);
@@ -71,19 +114,16 @@ export class ProbeObservationRepository {
   /**
    * Find successful SMTP STARTTLS probes for a snapshot
    *
-   * Requires explicit TLS trust in the persisted probe data (issue #74):
-   * legacy rows without `tlsTrusted === true` fail closed and are excluded.
+   * Fail closed under the SMTP trust contract (issue #74): legacy or forged
+   * rows without explicit TLS trust proof — `tlsTrusted === true` plus both
+   * certificate chain and hostname authorization — are excluded.
    */
   async findSuccessfulSmtpProbes(snapshotId: string): Promise<ProbeObservation[]> {
     const results = await this.db.selectWhere(
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    return results.filter((p) => {
-      if (p.probeType !== 'smtp_starttls' || !p.success) return false;
-      const probeData = p.probeData as SMTPProbeData | null;
-      return probeData?.tlsTrusted === true;
-    });
+    return results.filter((p) => p.probeType === 'smtp_starttls' && isEffectivelySuccessful(p));
   }
 
   /**
@@ -145,7 +185,8 @@ export class ProbeObservationRepository {
     const counts = { success: 0, timeout: 0, refused: 0, error: 0, other: 0 };
 
     for (const probe of all) {
-      switch (probe.status) {
+      // Count effective status: untrusted SMTP success reads as error (issue #74)
+      switch (asReadRow(probe).status) {
         case 'success':
           counts.success++;
           break;
@@ -190,7 +231,8 @@ export class ProbeObservationRepository {
     for (const probe of all) {
       byType[probe.probeType] = (byType[probe.probeType] || 0) + 1;
 
-      if (probe.success) {
+      // Effective success: untrusted SMTP success counts as failed (issue #74)
+      if (isEffectivelySuccessful(probe)) {
         successful++;
       } else {
         failed++;
