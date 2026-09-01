@@ -5,6 +5,7 @@
  * Performs limited SMTP handshake to detect TLS support.
  */
 
+import * as dns from 'node:dns';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
 import { probeAllowlistManager } from './allowlist.js';
@@ -97,6 +98,34 @@ function sendCommand(socket: net.Socket, command: string): void {
 }
 
 /**
+ * Resolve a probe hostname through the SSRF guard and return the checked IP
+ * to pin the connection to (Issue #67 review, P1).
+ *
+ * Fail closed: unlike resolveAndCheck() (which tolerates DNS failure for
+ * HTTP fetches), any resolution failure blocks the probe — connecting by
+ * hostname afterwards would let Node re-resolve it and re-open the TOCTOU
+ * gap.
+ */
+async function resolveCheckedTarget(
+  hostname: string
+): Promise<{ ok: true; ip: string } | { ok: false; error: string }> {
+  try {
+    const { address } = await dns.promises.lookup(hostname);
+    const check = checkSSRF(address);
+    if (!check.allowed) {
+      return {
+        ok: false,
+        error: `SSRF blocked: ${hostname} resolves to ${address} (${check.reason})`,
+      };
+    }
+    return { ok: true, ip: address };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `DNS resolution failed for ${hostname}: ${message}` };
+  }
+}
+
+/**
  * Probe SMTP server for STARTTLS capability
  *
  * @param hostname - Target SMTP server hostname
@@ -148,17 +177,33 @@ export async function probeSMTPStarttls(
       };
     }
 
+    // SSRF check — resolve the hostname, check the resolved address, and
+    // pin the connection to the checked IP so Node never re-resolves it at
+    // connect time (closes the DNS rebinding TOCTOU gap).
+    const resolved = await resolveCheckedTarget(hostname);
+    if (!resolved.ok) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: resolved.error,
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
+
     // Create socket connection
     const socket = new net.Socket();
 
     // Set timeout
     socket.setTimeout(timeoutMs);
 
-    // Connect
+    // Connect to the pinned, checked IP (SNI/cert checks still use the
+    // original hostname in the TLS upgrade below).
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', resolve);
       socket.once('error', reject);
-      socket.connect(port, hostname);
+      socket.connect(port, resolved.ip);
     });
 
     // Read banner

@@ -138,13 +138,15 @@ function hasCallerSuppliedDnsEvidence(body: {
  */
 probeRoutes.post('/mta-sts', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { domain, txtRecords } = body;
+  const { domain } = body;
   const tenantId = c.get('tenantId');
 
   if (!domain || typeof domain !== 'string') {
     return c.json({ error: 'Domain is required', reason: 'missing-domain' }, 400);
   }
-  if (hasCallerSuppliedDnsEvidence({ txtRecords })) {
+  // The whole body is checked: any DNS-shaped field is rejected, not only
+  // the one this route consumes.
+  if (hasCallerSuppliedDnsEvidence(body)) {
     return c.json(
       {
         error: 'Caller-supplied DNS records are not accepted',
@@ -197,10 +199,12 @@ probeRoutes.post('/mta-sts', async (c) => {
  */
 probeRoutes.post('/smtp-starttls', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { domain, hostname, port, mxRecords } = body;
+  const { domain, hostname, port } = body;
   const tenantId = c.get('tenantId');
 
-  if (hasCallerSuppliedDnsEvidence({ mxRecords })) {
+  // The whole body is checked: any DNS-shaped field is rejected, not only
+  // the one this route consumes.
+  if (hasCallerSuppliedDnsEvidence(body)) {
     return c.json(
       {
         error: 'Caller-supplied DNS records are not accepted',
@@ -293,13 +297,15 @@ probeRoutes.post('/smtp-starttls', async (c) => {
  */
 probeRoutes.post('/allowlist/generate', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { domain, dnsResults } = body;
+  const { domain } = body;
   const tenantId = c.get('tenantId');
 
   if (!domain || typeof domain !== 'string') {
     return c.json({ error: 'Domain is required', reason: 'missing-domain' }, 400);
   }
-  if (hasCallerSuppliedDnsEvidence({ dnsResults })) {
+  // The whole body is checked: any DNS-shaped field is rejected, not only
+  // the one this route consumes.
+  if (hasCallerSuppliedDnsEvidence(body)) {
     return c.json(
       {
         error: 'Caller-supplied DNS records are not accepted',

@@ -353,6 +353,33 @@ describe('Issue #67: probe authorization requires persisted DNS evidence', () =>
       expect(json.reason).toBe('caller-supplied-dns-evidence');
       expect(tenantAllowlistCount()).toBe(0);
     });
+
+    it.each([
+      ['/mta-sts', { domain: 'example.com', mxRecords: ['10 mail.example.com.'] }],
+      ['/mta-sts', { domain: 'example.com', dnsResults: [] }],
+      [
+        '/smtp-starttls',
+        {
+          domain: 'example.com',
+          hostname: 'mail.example.com',
+          txtRecords: ['v=STSv1; id=20260831'],
+        },
+      ],
+      ['/smtp-starttls', { domain: 'example.com', dnsResults: [] }],
+      ['/allowlist/generate', { domain: 'example.com', txtRecords: ['v=STSv1; id=20260831'] }],
+      ['/allowlist/generate', { domain: 'example.com', mxRecords: ['10 mail.example.com.'] }],
+    ])('rejects DNS-shaped fields irrelevant to the route %s (cross-field rejection)', async (path, body) => {
+      const app = createApp(createMockDb(evidenceState()));
+      const res = await post(app, path, body);
+
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.reason).toBe('caller-supplied-dns-evidence');
+      expect(mockedFetchMTASTSPolicy).not.toHaveBeenCalled();
+      expect(mockedProbeSMTPStarttls).not.toHaveBeenCalled();
+      expect(mockedProbeMXHosts).not.toHaveBeenCalled();
+      expect(tenantAllowlistCount()).toBe(0);
+    });
   });
 
   describe('fresh persisted evidence authorizes (no network)', () => {
@@ -407,6 +434,28 @@ describe('Issue #67: probe authorization requires persisted DNS evidence', () =>
       );
       const json = await res.json();
       expect(json.summary.total).toBe(1);
+    });
+
+    it('/smtp-starttls allowlists mixed-case persisted MX data canonically', async () => {
+      const state = evidenceState({
+        mxAnswerSection: [
+          { name: 'example.com', type: 'MX', ttl: 3600, data: '10 MAIL.EXAMPLE.COM.' },
+        ],
+      });
+      const app = createMockApp(state);
+      const res = await post(app, '/smtp-starttls', { domain: 'example.com' });
+
+      expect(res.status).toBe(200);
+      expect(mockedProbeMXHosts).toHaveBeenCalledWith(
+        [{ hostname: 'mail.example.com', priority: 10 }],
+        TENANT_A,
+        expect.anything()
+      );
+      // The allowlist entry derived from the raw mixed-case answer must
+      // match the normalized probe target.
+      expect(
+        probeAllowlistManager.getTenantAllowlist(TENANT_A).isAllowed('mail.example.com', 25)
+      ).toBe(true);
     });
 
     it('/allowlist/generate derives entries from persisted evidence only', async () => {

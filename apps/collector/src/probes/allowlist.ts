@@ -62,6 +62,17 @@ export interface TenantScopedAllowlist {
 }
 
 /**
+ * Canonical hostname form for allowlist keying: DNS names are
+ * case-insensitive (RFC 1035 §2.3.3) and may carry a trailing root dot.
+ * Persisted MX targets arrive normalized lowercase, while raw MX answer
+ * data may be mixed-case — both entries and lookups are canonicalized so
+ * mixed-case answers authorize normalized probe targets.
+ */
+function canonicalHostname(hostname: string): string {
+  return hostname.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/**
  * Create a tenant-scoped allowlist instance
  */
 export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
@@ -95,7 +106,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
           for (const answer of dnsResult.answers) {
             const parts = answer.data.trim().split(/\s+/);
             if (parts.length >= 2) {
-              const hostname = parts[1].replace(/\.$/, '');
+              const hostname = canonicalHostname(parts[1]);
               const entry: AllowlistEntry = {
                 tenantId,
                 type: 'mx',
@@ -120,7 +131,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
           const entry: AllowlistEntry = {
             tenantId,
             type: 'mta-sts',
-            hostname: `mta-sts.${domain}`,
+            hostname: canonicalHostname(`mta-sts.${domain}`),
             port: 443,
             derivedFrom: {
               domain,
@@ -150,7 +161,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
       const entry: AllowlistEntry = {
         tenantId,
         type: 'custom',
-        hostname,
+        hostname: canonicalHostname(hostname),
         port,
         derivedFrom: {
           domain: 'custom',
@@ -168,13 +179,14 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
     isAllowed(hostname: string, port?: number): boolean {
       cleanup();
 
-      const entryKey = port ? `${hostname}:${port}` : hostname;
+      const host = canonicalHostname(hostname);
+      const entryKey = port ? `${host}:${port}` : host;
       if (entries.has(entryKey)) {
         return true;
       }
 
       for (const entry of entries.values()) {
-        if (entry.hostname === hostname) {
+        if (entry.hostname === host) {
           if (port === undefined || entry.port === undefined || entry.port === port) {
             return true;
           }
@@ -187,7 +199,8 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
     getEntry(hostname: string, port?: number): AllowlistEntry | undefined {
       cleanup();
 
-      const entryKey = port ? `${hostname}:${port}` : hostname;
+      const host = canonicalHostname(hostname);
+      const entryKey = port ? `${host}:${port}` : host;
       return entries.get(entryKey);
     },
 
@@ -279,7 +292,7 @@ export class ProbeAllowlist {
         for (const answer of result.answers) {
           const parts = answer.data.trim().split(/\s+/);
           if (parts.length >= 2) {
-            const hostname = parts[1].replace(/\.$/, '');
+            const hostname = canonicalHostname(parts[1]);
             const entry: AllowlistEntry = {
               tenantId: 'default', // Legacy entries are tenant-scoped
               type: 'mx',
@@ -303,7 +316,7 @@ export class ProbeAllowlist {
         const entry: AllowlistEntry = {
           tenantId: 'default',
           type: 'mta-sts',
-          hostname: `mta-sts.${domain}`,
+          hostname: canonicalHostname(`mta-sts.${domain}`),
           port: 443,
           derivedFrom: {
             domain,
@@ -333,7 +346,7 @@ export class ProbeAllowlist {
     const entry: AllowlistEntry = {
       tenantId: 'default',
       type: 'custom',
-      hostname,
+      hostname: canonicalHostname(hostname),
       port,
       derivedFrom: {
         domain: 'custom',
@@ -351,13 +364,14 @@ export class ProbeAllowlist {
   isAllowed(hostname: string, port?: number): boolean {
     this.cleanup();
 
-    const key = port ? `${hostname}:${port}` : hostname;
+    const host = canonicalHostname(hostname);
+    const key = port ? `${host}:${port}` : host;
     if (this.entries.has(key)) {
       return true;
     }
 
     for (const entry of this.entries.values()) {
-      if (entry.hostname === hostname) {
+      if (entry.hostname === host) {
         if (port === undefined || entry.port === undefined || entry.port === port) {
           return true;
         }
@@ -370,7 +384,8 @@ export class ProbeAllowlist {
   getEntry(hostname: string, port?: number): AllowlistEntry | undefined {
     this.cleanup();
 
-    const key = port ? `${hostname}:${port}` : hostname;
+    const host = canonicalHostname(hostname);
+    const key = port ? `${host}:${port}` : host;
     return this.entries.get(key);
   }
 

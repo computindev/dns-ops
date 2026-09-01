@@ -138,43 +138,27 @@ domain's MX record).
 
 ### Residual exposure
 
-- **SMTP probe (`smtp-starttls.ts`):** Uses raw `net.connect(port, hostname)`.
-  Node.js resolves the hostname internally; there is no hook to check the
-  resolved IP before connecting.
+- **SMTP probe (`smtp-starttls.ts`): FIXED (Issue #67 review, P1). The
+  probe resolves the hostname itself (`dns.promises.lookup`), runs the
+  resolved address through `checkSSRF`, and connects to the checked IP
+  literal — `net.connect` never re-resolves the hostname, and DNS
+  resolution failures (e.g. `ENOTFOUND`) fail closed instead of falling
+  back to hostname-based connect.
 
-- **MTA-STS probe (`mta-sts.ts`):** Uses `fetch()`. Same limitation.
+- **MTA-STS probe (`mta-sts.ts`):** Uses `fetch()`, which re-resolves the
+  hostname internally. `resolveAndCheck()` validates the resolved IP before
+  the fetch, but a sub-millisecond TTL switch between the check and the
+  fetch's own resolution remains theoretically possible (the two-step check
+  is the industry-standard mitigation for HTTP-based SSRF).
 
-### Future hardening path
+### Hardening note
 
-Pass a custom `lookup` function to `net.connect` / `tls.connect` that:
-1. Resolves the hostname via DNS.
-2. Passes the resolved IP through `checkSSRF`.
-3. Rejects with `EACCES` if blocked.
-
-Example (Node.js `net.connect` option):
-```typescript
-import { lookup } from 'node:dns/promises';
-import { checkSSRF } from './ssrf-guard.js';
-
-const safeLookup = async (
-  hostname: string,
-  opts: dns.LookupOptions,
-  cb: (err: Error | null, address: string, family: number) => void
-) => {
-  const result = await lookup(hostname, opts);
-  const check = checkSSRF(result.address);
-  if (!check.allowed) {
-    cb(new Error(`SSRF blocked resolved IP ${result.address}: ${check.reason}`), '', 0);
-    return;
-  }
-  cb(null, result.address, result.family);
-};
-```
-
-**Recommendation:** Implement `safeLookup` before enabling the probe flag in
-environments where probe targets may be controlled by untrusted parties.
-Until then, the MX-only allowlist provides sufficient isolation for
-trusted-tenant deployments.
+The earlier "future hardening path" (a custom `lookup` for
+`net.connect`/`tls.connect`) has been implemented for the SMTP probe as
+checked-IP pinning instead: the probe resolves once, checks the address,
+and connects to the IP literal directly. Lookup-function pinning is not
+available to HTTP-fetch probes (`mta-sts.ts`), which keep the
+`resolveAndCheck()` pre-resolution mitigation and its documented residual.
 
 ---
 
