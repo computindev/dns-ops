@@ -15,6 +15,7 @@
 import {
   type ApiPrincipal,
   authenticateApiKey,
+  compareSecret,
   getTenantUUID,
   isLegacyApiKeyAuthEnabled,
   parseApiPrincipals,
@@ -44,9 +45,9 @@ function getRuntimeSecret(name: 'INTERNAL_SECRET' | 'API_KEY_SECRET'): string | 
  * For secure web → collector communication.
  * Requires INTERNAL_SECRET env var to be set.
  */
-function extractInternalSecret(
+async function extractInternalSecret(
   c: Parameters<Parameters<typeof createMiddleware<Env>>[0]>[0]
-): AuthContext | null {
+): Promise<AuthContext | null> {
   const internalSecret = c.req.header('X-Internal-Secret');
   const expectedSecret = getRuntimeSecret('INTERNAL_SECRET');
 
@@ -54,7 +55,7 @@ function extractInternalSecret(
     return null;
   }
 
-  if (internalSecret !== expectedSecret) {
+  if (!(await compareSecret(internalSecret, expectedSecret))) {
     logger.warn('Invalid internal secret attempt', { method: c.req.method, path: c.req.path });
     return null;
   }
@@ -82,8 +83,9 @@ function extractInternalSecret(
  *
  * Bare opaque tokens authenticate against API_PRINCIPALS_JSON (SHA-256 hash
  * match); tenant/actor come from the stored principal only (#66). The legacy
- * tenantId:actorId:secret format is gated behind ENABLE_LEGACY_API_KEY_AUTH
- * (literal "true", default off everywhere) for one release.
+ * tenantId:actorId:secret format requires exactly three colon-separated fields
+ * and is gated behind ENABLE_LEGACY_API_KEY_AUTH (literal "true", default off
+ * everywhere) for one release.
  */
 async function extractApiKey(
   c: Parameters<Parameters<typeof createMiddleware<Env>>[0]>[0]
@@ -159,7 +161,8 @@ function extractDevBypass(
  * Note: tenantId is normalized to UUID format for database compatibility.
  */
 export const serviceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  const authContext = extractInternalSecret(c) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
+  const authContext =
+    (await extractInternalSecret(c)) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
 
   if (authContext) {
     // Normalize tenantId to UUID format for database compatibility
@@ -177,7 +180,8 @@ export const serviceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
  * Note: tenantId is normalized to UUID format for database compatibility.
  */
 export const requireServiceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  const authContext = extractInternalSecret(c) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
+  const authContext =
+    (await extractInternalSecret(c)) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
 
   if (!authContext) {
     return c.json(
@@ -205,7 +209,7 @@ export const requireServiceAuthMiddleware = createMiddleware<Env>(async (c, next
  */
 export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
   // Check for internal secret first
-  const internalAuth = extractInternalSecret(c);
+  const internalAuth = await extractInternalSecret(c);
   if (internalAuth?.isInternal) {
     // Normalize tenantId to UUID format
     const tenantUUID = await getTenantUUID(internalAuth.tenantId);

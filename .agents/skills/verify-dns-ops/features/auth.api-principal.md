@@ -7,6 +7,9 @@ paths:
   - packages/contracts/src/api-principal.test.ts
   - apps/web/hono/middleware/auth.ts
   - apps/web/hono/middleware/auth.test.ts
+  - apps/web/hono/middleware/authorization.ts
+  - apps/web/hono/middleware/authorization.test.ts
+  - apps/web/hono/middleware/cf-access-rejection.test.ts
   - apps/web/hono/routes/auth-e2e.test.ts
   - apps/web/hono/routes/findings.ts
   - apps/web/hono/routes/findings.runtime.test.ts
@@ -35,8 +38,9 @@ identity come only from the matched stored principal, never from the request.
 - `X-Tenant-Id`/`X-Actor-Id` headers cannot override the principal identity on
   the API-key path.
 - Unknown or disabled token → 401.
-- `ENABLE_LEGACY_API_KEY_AUTH=true` accepts the legacy format (one release
-  only; see docs/security/api-principal-migration.md).
+- `ENABLE_LEGACY_API_KEY_AUTH=true` accepts exactly three colon-separated legacy
+  fields (one release only; extra or missing fields are rejected; see
+  docs/security/api-principal-migration.md).
 - Malformed `API_PRINCIPALS_JSON` fails closed: 401, no legacy fallback.
 
 ## Drive

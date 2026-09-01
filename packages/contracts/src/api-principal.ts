@@ -83,6 +83,22 @@ function fixedWorkEqualHex(left: string, right: string): boolean {
 }
 
 /**
+ * Compare non-empty secrets through SHA-256 digests and a bounded, fixed-work
+ * hex comparison. Missing or empty values never authenticate.
+ */
+export async function compareSecret(
+  supplied: string | undefined,
+  expected: string | undefined
+): Promise<boolean> {
+  if (!supplied || !expected) return false;
+  const [suppliedHash, expectedHash] = await Promise.all([
+    hashApiToken(supplied),
+    hashApiToken(expected),
+  ]);
+  return fixedWorkEqualHex(suppliedHash, expectedHash);
+}
+
+/**
  * Parse API_PRINCIPALS_JSON. Returns [] when unset. Throws on malformed
  * configuration so callers fail closed — never fall back to legacy on error.
  */
@@ -145,8 +161,9 @@ export function parseApiPrincipals(secret: string | undefined): ApiPrincipal[] {
  * Authenticate an `X-API-Key` header value against the stored principals.
  *
  * - Bare opaque token (no ':'): hash → match enabled principal → stored identity.
- * - `tenantId:actorId:secret`: legacy path, only when `legacy.enabled` is true
- *   (literal flag) and the shared secret matches. Never reached otherwise.
+ * - `tenantId:actorId:secret`: exactly three colon-separated fields; legacy
+ *   path only when `legacy.enabled` is true (literal flag) and the shared
+ *   secret matches. Never reached otherwise.
  *
  * Returns null for unknown/disabled tokens, malformed credentials, or when the
  * legacy gate is off.
@@ -171,7 +188,7 @@ export async function authenticateApiKey(
   if (!legacy.enabled) return null;
 
   const parts = apiKey.split(':');
-  if (parts.length < 3) return null;
+  if (parts.length !== 3) return null;
   const [tenantId, actorId, secret] = parts;
   if (!legacy.secret) return null;
   // Compare digests, not raw secrets, so the comparison is bounded/fixed-work.

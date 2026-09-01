@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type ApiPrincipal,
   authenticateApiKey,
+  compareSecret,
   hashApiToken,
   isLegacyApiKeyAuthEnabled,
   parseApiPrincipals,
@@ -55,6 +56,23 @@ describe('hashApiToken', () => {
   it('hashes deterministically and distinctly', async () => {
     expect(await hashApiToken(TOKEN)).toBe(await hashApiToken(TOKEN));
     expect(await hashApiToken(TOKEN)).not.toBe(await hashApiToken(OTHER_TOKEN));
+  });
+});
+
+describe('compareSecret', () => {
+  it('accepts matching non-empty secrets', async () => {
+    expect(await compareSecret('shared-secret', 'shared-secret')).toBe(true);
+  });
+
+  it('rejects mismatched secrets', async () => {
+    expect(await compareSecret('shared-secret', 'wrong-secret')).toBe(false);
+  });
+
+  it('rejects empty or missing secrets', async () => {
+    expect(await compareSecret('', 'shared-secret')).toBe(false);
+    expect(await compareSecret('shared-secret', '')).toBe(false);
+    expect(await compareSecret(undefined, 'shared-secret')).toBe(false);
+    expect(await compareSecret('shared-secret', undefined)).toBe(false);
   });
 });
 
@@ -219,6 +237,16 @@ describe('authenticateApiKey', () => {
         enabled: true,
         secret: undefined,
       })
+    ).toBeNull();
+  });
+
+  it('rejects legacy credentials with trailing fields', async () => {
+    expect(
+      await authenticateApiKey(
+        'legacy-tenant:legacy-actor:legacy-shared-secret-123:ignored',
+        principals(),
+        legacyOn()
+      )
     ).toBeNull();
   });
 

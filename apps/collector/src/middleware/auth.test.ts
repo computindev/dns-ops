@@ -10,7 +10,11 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../types.js';
-import { requireServiceAuthMiddleware, serviceAuthMiddleware } from './auth.js';
+import {
+  internalOnlyMiddleware,
+  requireServiceAuthMiddleware,
+  serviceAuthMiddleware,
+} from './auth.js';
 
 const ORIGINAL_ENV = process.env;
 
@@ -200,6 +204,18 @@ describe('Service Auth Middleware — API key principal authentication (#66)', (
     expect(res.status).toBe(401);
   });
 
+  it('rejects legacy credentials with trailing fields', async () => {
+    process.env.ENABLE_LEGACY_API_KEY_AUTH = 'true';
+
+    const res = await app.request('/test', {
+      headers: {
+        'X-API-Key': 'legacy-tenant:legacy-actor:test-api-secret:ignored',
+      },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
   it('populates context without rejecting on the non-require middleware', async () => {
     const soft = new Hono<Env>();
     soft.use('*', serviceAuthMiddleware);
@@ -214,5 +230,68 @@ describe('Service Auth Middleware — API key principal authentication (#66)', (
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.tenantId).toBe(PRINCIPAL_TENANT_UUID);
+  });
+
+  describe('internal secret authentication', () => {
+    const internalHeaders = {
+      'X-Tenant-Id': PRINCIPAL_TENANT_UUID,
+      'X-Actor-Id': 'collector-internal-actor',
+    };
+
+    it('accepts a matching internal secret', async () => {
+      process.env.INTERNAL_SECRET = 'collector-internal-secret';
+      app.get('/internal', requireServiceAuthMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          ...internalHeaders,
+          'X-Internal-Secret': 'collector-internal-secret',
+        },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('rejects a mismatched internal secret', async () => {
+      process.env.INTERNAL_SECRET = 'collector-internal-secret';
+      app.get('/internal', requireServiceAuthMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          ...internalHeaders,
+          'X-Internal-Secret': 'wrong-internal-secret',
+        },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects an empty internal secret', async () => {
+      process.env.INTERNAL_SECRET = '';
+      app.get('/internal', requireServiceAuthMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          ...internalHeaders,
+          'X-Internal-Secret': 'collector-internal-secret',
+        },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('preserves async internal-only middleware behavior', async () => {
+      process.env.INTERNAL_SECRET = 'collector-internal-secret';
+      app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          ...internalHeaders,
+          'X-Internal-Secret': 'collector-internal-secret',
+        },
+      });
+
+      expect(res.status).toBe(200);
+    });
   });
 });

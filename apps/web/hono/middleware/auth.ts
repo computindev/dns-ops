@@ -7,6 +7,7 @@
 import {
   type ApiPrincipal,
   authenticateApiKey,
+  compareSecret,
   getTenantUUID,
   isLegacyApiKeyAuthEnabled,
   parseApiPrincipals,
@@ -205,7 +206,7 @@ export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
   const internalSecret = c.req.header('X-Internal-Secret');
   const expectedSecret = getRuntimeSecret(c, 'INTERNAL_SECRET');
 
-  if (expectedSecret && internalSecret === expectedSecret) {
+  if (await compareSecret(internalSecret, expectedSecret)) {
     const systemTenantUUID = await getTenantUUID('system');
     c.set('tenantId', systemTenantUUID);
     c.set('actorId', 'internal-service');

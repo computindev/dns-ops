@@ -422,6 +422,20 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(403);
     });
 
+    it('should reject requests with an empty internal secret', async () => {
+      process.env.INTERNAL_SECRET = '';
+
+      app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/internal', {
+        headers: {
+          'X-Internal-Secret': 'internal-secret-123',
+        },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
     it('rejects allowlisted Cloudflare Access identity on internal routes (TB-1)', async () => {
       process.env.ADMIN_EMAILS = 'user@internal.com';
       app.get('/internal', internalOnlyMiddleware, (c) => c.json({ ok: true }));
@@ -517,6 +531,19 @@ describe('Auth Middleware', () => {
       const res = await app.request('/protected', {
         headers: {
           'X-API-Key': 'my-tenant:my-actor:wrong',
+        },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects legacy credentials with trailing fields', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': 'my-tenant:my-actor:secret:ignored',
         },
       });
 

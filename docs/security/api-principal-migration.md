@@ -52,10 +52,11 @@ Tokens must be at least 32 characters of `[A-Za-z0-9_-]`.
 
 ## Legacy compatibility — one release, default off
 
-The old `tenantId:actorId:secret` format keeps working **only** when
-`ENABLE_LEGACY_API_KEY_AUTH` is the literal string `true`. Unset, `false`, or
-any other value keeps legacy auth off **in every environment, including
-production**. `API_KEY_SECRET` is consulted only inside that gated branch.
+The old `tenantId:actorId:secret` format keeps working **only** when it has
+exactly three colon-separated fields and `ENABLE_LEGACY_API_KEY_AUTH` is the
+literal string `true`. Unset, `false`, or any other value keeps legacy auth off
+**in every environment, including production**. `API_KEY_SECRET` is consulted
+only inside that gated branch; extra or missing fields are rejected.
 
 **Removal trigger:** legacy parsing (`authenticateApiKey`'s colon-format branch
 and `ENABLE_LEGACY_API_KEY_AUTH`) must be deleted in the next release after

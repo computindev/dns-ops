@@ -18,6 +18,7 @@
     "test:verify-kit": "node --test .agents/verify-kit/working-tree.test.mjs",
     "test:controlled-live-harness": "bun run --filter @dns-ops/contracts build && node --test scripts/controlled-live-harness.test.mjs scripts/mcp-evidence-preflight.test.mjs scripts/railway-verification-secret-provisioner.test.mjs",
     "test:migrations": "node --test scripts/run-migrations.test.mjs",
+    "verify:collector-start": "node scripts/verify-collector-start.mjs",
     "test:live-dns": "bun run --filter @dns-ops/collector test:live-dns",
     "smoke-test": "npx tsx scripts/deploy/smoke-test.ts",
     "start": "node apps/web/.output/server/index.mjs"

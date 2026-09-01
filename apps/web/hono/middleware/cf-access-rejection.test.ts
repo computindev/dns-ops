@@ -25,9 +25,13 @@ import type { Env } from '../types.js';
 type JsonBody = Record<string, unknown>;
 
 // Deterministic tenant UUID so domain-based CF identities do not require a DB.
-vi.mock('@dns-ops/contracts', () => ({
-  getTenantUUID: vi.fn().mockImplementation(async (id: string) => `uuid-for-${id}`),
-}));
+vi.mock('@dns-ops/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dns-ops/contracts')>();
+  return {
+    ...actual,
+    getTenantUUID: vi.fn().mockImplementation(async (id: string) => `uuid-for-${id}`),
+  };
+});
 
 import { internalOnlyMiddleware, requireAuthMiddleware } from './auth.js';
 import { requireAdminAccess } from './authorization.js';

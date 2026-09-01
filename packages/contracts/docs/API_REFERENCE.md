@@ -203,8 +203,10 @@ All protected endpoints require one of:
   `API_PRINCIPALS_JSON`; tenant/actor come from the stored principal (#66)
 - Session cookie (web UI)
 
-The legacy `tenantId:actorId:secret` `X-API-Key` format is accepted only when
-`ENABLE_LEGACY_API_KEY_AUTH=true` (literal, one release, default off) — see
+The legacy `tenantId:actorId:secret` `X-API-Key` format must contain exactly
+three colon-separated fields and is accepted only when
+`ENABLE_LEGACY_API_KEY_AUTH=true` (literal, one release, default off). Extra or
+missing fields are rejected — see
 `docs/security/api-principal-migration.md`.
 
 In development mode, `X-Dev-Tenant` and `X-Dev-Actor` headers can bypass auth.
