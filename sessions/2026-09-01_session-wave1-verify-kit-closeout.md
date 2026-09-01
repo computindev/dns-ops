@@ -147,11 +147,12 @@
   - staged, strict CI, and post-merge verify-kit gates passed;
   - all installed Claude/Cursor skill symlink targets resolved;
   - UBS returned exit 3 because the docs/config-only diff contained no supported source-language files; this was not counted as a pass.
-- PR #76 exact-head GitHub checks:
-  - `Build & Test`: success (4m01s);
-  - `verify-kit`: success (7s);
+- PR #76 exact-head GitHub checks ([PR](https://github.com/computindev/dns-ops/pull/76), [checks](https://github.com/computindev/dns-ops/pull/76/checks)):
+  - [`Build & Test`](https://github.com/computindev/dns-ops/actions/runs/33523677746/job/99908955714): success (4m01s);
+  - [`verify-kit`](https://github.com/computindev/dns-ops/actions/runs/33523677746/job/99908955974): success (7s);
   - `[code]smith`: skipped;
   - GitHub reviews: 0; `reviewDecision`: empty.
+  - Preserved closeout query: `gh pr view 76 --repo computindev/dns-ops --json state,headRefOid,mergeCommit,reviewDecision,reviews,statusCheckRollup` → `state=MERGED`, `headRefOid=5c36ffd…`, `mergeCommit=3f8cb1d…`, `reviews=0`, `reviewDecision=""`, checks `Build & Test=SUCCESS`, `verify-kit=SUCCESS`, `[code]smith=SKIPPED`.
 - Not tested in this closeout:
   - deployment of `3f8cb1d`;
   - Railway live health/readiness at that SHA;
