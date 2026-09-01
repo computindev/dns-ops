@@ -76,14 +76,6 @@ export declare function getEnvConfig(processEnv?: Record<string, string | undefi
     };
 };
 /**
- * Read and validate the DNS query concurrency bound from the environment.
- *
- * Falls back to DEFAULT_DNS_QUERY_CONCURRENCY (5) when unset or invalid so the
- * collector never runs unbounded DNS fan-out. DNSCollector accepts an explicit
- * override for tests; production reads this.
- */
-export declare function getDnsQueryConcurrency(processEnv?: Record<string, string | undefined>): number;
-/**
  * Environment variable names for documentation/tooling
  */
 export declare const ENV_VAR_NAMES: string[];

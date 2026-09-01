@@ -8,6 +8,8 @@ paths:
   - apps/web/hono/middleware/auth.ts
   - apps/web/hono/middleware/auth.test.ts
   - apps/web/hono/routes/auth-e2e.test.ts
+  - apps/web/hono/routes/findings.ts
+  - apps/web/hono/routes/findings.runtime.test.ts
   - apps/collector/src/middleware/auth.ts
   - apps/collector/src/middleware/auth.test.ts
   - apps/collector/src/jobs/shared-reports.test.ts

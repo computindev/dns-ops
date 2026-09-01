@@ -510,21 +510,22 @@ async function storeMailEvidence(repo, snapshotId, domain, result) {
         scoreBreakdown.mx = 15;
         score += 15;
     }
-    // SPF recursive evaluation is intentionally incomplete in Phase 0–1, so
-    // presence can receive partial credit but never a full-validity score.
-    if (result.spf.present) {
+    // SPF: 20 points
+    if (result.spf.present && result.spf.valid) {
+        scoreBreakdown.spf = 20;
+        score += 20;
+    }
+    else if (result.spf.present) {
         scoreBreakdown.spf = 10;
         score += 10;
     }
-    // DMARC: score only the RFC 9989 effective policy, never an inherited
-    // record's raw p tag when sp/np applicability is unresolved.
-    const effectiveDmarcPolicy = result.dmarc.dmarcDiscovery?.effectivePolicy;
+    // DMARC: 25 points (full for reject, less for quarantine/none)
     if (result.dmarc.present && result.dmarc.valid) {
-        if (effectiveDmarcPolicy === 'reject') {
+        if (dmarcPolicy === 'reject') {
             scoreBreakdown.dmarc = 25;
             score += 25;
         }
-        else if (effectiveDmarcPolicy === 'quarantine') {
+        else if (dmarcPolicy === 'quarantine') {
             scoreBreakdown.dmarc = 20;
             score += 20;
         }

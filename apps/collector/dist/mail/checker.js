@@ -33,9 +33,8 @@
  * @see collect-mail.ts for the authoritative collection endpoint
  * @see MailEvidenceRepository for persisted evidence storage
  */
-import { assessFirstLevelSpf, parseDMARC, parseSPF, } from '@dns-ops/parsing';
-import { applyDmarcAuthorDomainExistence, discoverDmarcPolicy } from './dmarc-discovery.js';
-import { resolveDomainExists, resolveMX, resolveTXT } from './dns.js';
+import { parseDMARC, parseSPF } from '@dns-ops/parsing';
+import { resolveMX, resolveTXT } from './dns.js';
 // Provider selector mapping with confidence scores
 export const PROVIDER_SELECTORS = {
     google: { selector: 'google', confidence: 0.95 },
@@ -74,59 +73,34 @@ export async function performMailCheck(domain, options) {
 /**
  * Check DMARC record
  */
-async function resolveDmarcTxt(name) {
+export async function checkDMARC(domain) {
     try {
-        return await resolveTXT(name);
+        const records = await resolveTXT(`_dmarc.${domain}`);
+        const dmarcRecord = records.find((r) => r.includes('v=DMARC1'));
+        if (!dmarcRecord) {
+            return {
+                present: false,
+                valid: false,
+                errors: ['No DMARC record found'],
+            };
+        }
+        const parsed = parseDMARC(dmarcRecord);
+        return {
+            present: true,
+            valid: parsed !== null,
+            record: dmarcRecord,
+            parsed: parsed || undefined,
+            errors: parsed ? undefined : ['Failed to parse DMARC record'],
+        };
     }
     catch (error) {
-        const code = typeof error === 'object' && error !== null && 'code' in error
-            ? String(error.code)
-            : undefined;
-        if (code === 'ENODATA' || code === 'ENOTFOUND')
-            return [];
-        throw error;
-    }
-}
-export async function checkDMARC(domain) {
-    // Start discovery first so the existing parallel mail-check query ordering is
-    // preserved; domain existence is separate evidence and is not part of the
-    // RFC 9989 eight-query DMARC Tree Walk budget.
-    const discoveryPromise = discoverDmarcPolicy(domain, resolveDmarcTxt);
-    const existencePromise = resolveDomainExists(domain).catch(() => undefined);
-    const [discovery, authorDomainExists] = await Promise.all([discoveryPromise, existencePromise]);
-    const dmarcDiscovery = applyDmarcAuthorDomainExistence(discovery, authorDomainExists);
-    if (dmarcDiscovery.status === 'UNKNOWN') {
+        const message = error instanceof Error ? error.message : String(error);
         return {
             present: false,
             valid: false,
-            dmarcDiscovery,
-            errors: [dmarcDiscovery.error ?? 'DMARC policy discovery is incomplete'],
+            errors: [`DNS error: ${message}`],
         };
     }
-    if (dmarcDiscovery.status === 'NOT_FOUND' || !dmarcDiscovery.record) {
-        return {
-            present: false,
-            valid: false,
-            dmarcDiscovery,
-            errors: ['No applicable DMARC policy record found'],
-        };
-    }
-    const parsed = parseDMARC(dmarcDiscovery.record);
-    const policyDetermined = dmarcDiscovery.policyApplication === 'DETERMINED';
-    return {
-        present: true,
-        valid: parsed !== null && policyDetermined,
-        record: dmarcDiscovery.record,
-        parsed: parsed || undefined,
-        dmarcDiscovery,
-        errors: parsed && policyDetermined
-            ? undefined
-            : [
-                parsed
-                    ? 'Applicable DMARC policy requires domain-existence evidence'
-                    : 'Failed to parse applicable DMARC policy record',
-            ],
-    };
 }
 /**
  * Check DKIM record with selector discovery
@@ -225,14 +199,12 @@ export async function checkSPF(domain) {
             };
         }
         const parsed = parseSPF(spfRecord);
-        const spfAssessment = parsed ? assessFirstLevelSpf(parsed) : undefined;
         return {
             present: true,
-            valid: spfAssessment?.status === 'DIRECT_SYNTAX_VALID',
+            valid: parsed !== null,
             record: spfRecord,
             parsed: parsed || undefined,
-            spfAssessment,
-            errors: parsed ? undefined : ['Failed to parse directly published SPF record'],
+            errors: parsed ? undefined : ['Failed to parse SPF record'],
         };
     }
     catch (error) {

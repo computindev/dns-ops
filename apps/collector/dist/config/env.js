@@ -4,7 +4,6 @@
  * Fail-fast validation for required runtime configuration.
  * The collector requires DATABASE_URL since it always uses PostgreSQL.
  */
-import { parseApiPrincipals } from '@dns-ops/contracts';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 const logger = getCollectorLogger();
 const ENV_VARS = [
@@ -56,36 +55,13 @@ const ENV_VARS = [
     {
         name: 'API_KEY_SECRET',
         required: false,
-        description: 'Legacy shared secret for tenantId:actorId:secret API keys; only consulted when ENABLE_LEGACY_API_KEY_AUTH=true',
+        description: 'Secret for external API key validation',
         validate: (v) => {
             if (v.length < 16) {
                 return 'Must be at least 16 characters for security';
             }
             return null;
         },
-    },
-    {
-        name: 'API_PRINCIPALS_JSON',
-        required: false,
-        description: 'JSON array of API principals (principalId, tokenSha256, tenantId UUID, actorId, enabled); hashes only, never raw tokens (#66)',
-        validate: (v) => {
-            try {
-                parseApiPrincipals(v);
-                return null;
-            }
-            catch {
-                return 'Must be a JSON array of API principals with 64-hex SHA-256 token hashes and canonical tenant UUIDs';
-            }
-        },
-    },
-    {
-        name: 'ENABLE_LEGACY_API_KEY_AUTH',
-        required: false,
-        description: 'One-release compatibility gate for legacy tenantId:actorId:secret API keys. Default off in every environment; literal "true" enables it (#66)',
-        validate: (v) => {
-            return v === 'true' || v === 'false' ? null : 'Must be exactly "true" or "false"';
-        },
-        default: 'false',
     },
     {
         name: 'COLLECTOR_URL',
@@ -149,19 +125,6 @@ const ENV_VARS = [
             const n = parseInt(v, 10);
             if (Number.isNaN(n) || n < 1 || n > 20) {
                 return 'Must be between 1 and 20';
-            }
-            return null;
-        },
-        default: '5',
-    },
-    {
-        name: 'DNS_QUERY_CONCURRENCY',
-        required: false,
-        description: 'Maximum concurrent DNS queries per collection (default: 5)',
-        validate: (v) => {
-            const n = parseInt(v, 10);
-            if (Number.isNaN(n) || n < 1 || n > 50) {
-                return 'Must be between 1 and 50';
             }
             return null;
         },
@@ -316,26 +279,6 @@ export function getEnvConfig(processEnv = process.env) {
             concurrency: processEnv.PROBE_CONCURRENCY ? parseInt(processEnv.PROBE_CONCURRENCY, 10) : 5,
         },
     };
-}
-/**
- * Default DNS query concurrency bound used when DNS_QUERY_CONCURRENCY is unset.
- */
-const DEFAULT_DNS_QUERY_CONCURRENCY = 5;
-/**
- * Read and validate the DNS query concurrency bound from the environment.
- *
- * Falls back to DEFAULT_DNS_QUERY_CONCURRENCY (5) when unset or invalid so the
- * collector never runs unbounded DNS fan-out. DNSCollector accepts an explicit
- * override for tests; production reads this.
- */
-export function getDnsQueryConcurrency(processEnv = process.env) {
-    const raw = processEnv.DNS_QUERY_CONCURRENCY;
-    if (raw === undefined || raw === '')
-        return DEFAULT_DNS_QUERY_CONCURRENCY;
-    const n = parseInt(raw, 10);
-    if (Number.isNaN(n) || n < 1)
-        return DEFAULT_DNS_QUERY_CONCURRENCY;
-    return n;
 }
 /**
  * Environment variable names for documentation/tooling

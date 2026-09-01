@@ -58,25 +58,11 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
                 monitoringLogger.error(`Domain not found for monitored domain: ${monitored.domainId}`);
                 continue;
             }
-            if (!monitored.tenantId || domain.tenantId !== monitored.tenantId) {
-                monitoringLogger.error(`Monitored domain tenant ownership mismatch: ${monitored.id}`);
-                continue;
-            }
-            const internalSecret = process.env.INTERNAL_SECRET;
-            if (!internalSecret) {
-                monitoringLogger.error('Monitoring collection is blocked: INTERNAL_SECRET is not configured');
-                continue;
-            }
-            // Trigger collection through the same authenticated service boundary as the web app.
+            // Trigger collection via collector service
             const collectorUrl = process.env.COLLECTOR_URL || 'http://localhost:3001';
             const response = await fetch(`${collectorUrl}/api/collect/domain`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Internal-Secret': internalSecret,
-                    'X-Tenant-Id': monitored.tenantId,
-                    'X-Actor-Id': 'monitoring-scheduler',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     domain: domain.name,
                     triggeredBy: 'monitoring-scheduler',

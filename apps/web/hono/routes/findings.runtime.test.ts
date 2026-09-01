@@ -346,6 +346,42 @@ describe('findingsRoutes runtime', () => {
       expect(json.persisted).toBe(true);
       expect(json.rulesetVersion).toBe('1.2.0');
     });
+
+    it('persists ruleset version createdBy from auth context, not X-Actor-Id header', async () => {
+      const state = makeState();
+      const app = createApp(state, true); // Auth context sets actorId = 'actor-1'
+
+      const response = await app.request('/api/snapshot/snap-1/findings', {
+        headers: { 'X-Actor-Id': 'spoofed-actor' },
+      });
+
+      expect(response.status).toBe(200);
+      expect(state.rulesetVersions).toHaveLength(1);
+      expect(state.rulesetVersions[0].createdBy).toBe('actor-1');
+    });
+  });
+
+  describe('POST /snapshot/:snapshotId/evaluate', () => {
+    it('persists ruleset version createdBy from auth context, not X-Actor-Id header', async () => {
+      const state = makeState();
+      const app = createApp(state, true); // Auth context sets actorId = 'actor-1'
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ persisted: true }), { status: 200 }));
+
+      try {
+        const response = await app.request('/api/snapshot/snap-1/evaluate', {
+          method: 'POST',
+          headers: { 'X-Actor-Id': 'spoofed-actor' },
+        });
+
+        expect(response.status).toBe(200);
+        expect(state.rulesetVersions).toHaveLength(1);
+        expect(state.rulesetVersions[0].createdBy).toBe('actor-1');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
   });
 
   describe('GET /snapshot/:snapshotId/findings/summary', () => {
@@ -768,6 +804,19 @@ describe('findingsRoutes runtime', () => {
       };
       expect(json.rulesetVersion).toBe('1.2.0');
       expect(typeof json.completionPercent).toBe('number');
+    });
+
+    it('creates ruleset version with auth-context actor, ignoring X-Actor-Id header', async () => {
+      const state = makeState();
+      const app = createApp(state, true); // Auth context sets actorId = 'actor-1'
+
+      const response = await app.request('/api/findings/backfill/status', {
+        headers: { 'X-Actor-Id': 'spoofed-actor' },
+      });
+
+      expect(response.status).toBe(200);
+      expect(state.rulesetVersions).toHaveLength(1);
+      expect(state.rulesetVersions[0].createdBy).toBe('actor-1');
     });
   });
 
