@@ -25,7 +25,11 @@ import {
   SnapshotRepository,
   SuggestionRepository,
 } from '@dns-ops/db';
-import { observationsToRecordSets } from '@dns-ops/parsing';
+import {
+  MAX_DNS_CNAME_HOPS,
+  observationsToRecordSets,
+  tryNormalizeDNSOwner,
+} from '@dns-ops/parsing';
 import {
   authoritativeFailureRule,
   authoritativeMismatchRule,
@@ -154,7 +158,8 @@ export class DNSCollector {
     db: IDatabaseAdapter,
     options?: { resolver?: ResolverLike; queryConcurrency?: number }
   ) {
-    this.config = config;
+    const normalizedDomain = tryNormalizeDNSOwner(config.domain)?.normalized;
+    this.config = normalizedDomain ? { ...config, domain: normalizedDomain } : config;
     this.resolver = options?.resolver ?? new DNSResolver();
     this.semaphore = new Semaphore(options?.queryConcurrency ?? getDnsQueryConcurrency());
     this.domainRepo = new DomainRepository(db);
@@ -205,8 +210,16 @@ export class DNSCollector {
       }
     }
 
+    // Collect bounded MTA-STS CNAME hops and terminal TXT evidence from the
+    // recursive vantage. External canonical owners are not served by the
+    // managed zone's authoritative nameservers, so follow-up queries remain
+    // recursive while the initial alias is still collected at every enabled
+    // vantage above.
+    const initialResults = [...recursiveResults, ...authoritativeResults];
+    const cnameResults = await this.collectMtaStsCnameChain(initialResults, errors);
+
     // Combine all results
-    const allResults = [...recursiveResults, ...authoritativeResults];
+    const allResults = [...initialResults, ...cnameResults];
 
     // Collect delegation data if enabled (Bead 12)
     let delegationData = null;
@@ -246,7 +259,6 @@ export class DNSCollector {
   private async generateQueries(): Promise<DNSQuery[]> {
     const queries: DNSQuery[] = [];
     const {
-      domain,
       zoneManagement,
       recordTypes,
       queryNames,
@@ -254,12 +266,15 @@ export class DNSCollector {
       dkimSelectors,
       managedDkimSelectors,
     } = this.config;
+    const domain = tryNormalizeDNSOwner(this.config.domain)?.normalized ?? this.config.domain;
 
     if (queryNames) {
       // Use explicit query names (targeted inspection)
       for (const name of queryNames) {
+        const normalizedName = tryNormalizeDNSOwner(name)?.normalized;
+        if (!normalizedName) continue;
         for (const type of recordTypes) {
-          queries.push({ name, type });
+          queries.push({ name: normalizedName, type });
         }
       }
     } else if (zoneManagement === 'unmanaged') {
@@ -331,6 +346,64 @@ export class DNSCollector {
     });
 
     return mailResult.queries;
+  }
+
+  /**
+   * Follow persisted MTA-STS CNAME evidence far enough to collect each hop
+   * and the terminal TXT owner. The bound keeps a malicious or malformed DNS
+   * chain from expanding the collection indefinitely.
+   */
+  private async collectMtaStsCnameChain(
+    initialResults: TimedDNSQueryResult[],
+    errors: CollectionError[]
+  ): Promise<TimedDNSQueryResult[]> {
+    if (this.config.includeMailRecords === false) return [];
+
+    const initialOwner = tryNormalizeDNSOwner(`_mta-sts.${this.config.domain}`)?.normalized;
+    if (!initialOwner) return [];
+    const queriedNames = new Set([initialOwner]);
+    let pending = new Set(this.extractMtaStsCnameTargets(initialResults, new Set([initialOwner])));
+    const collected: TimedDNSQueryResult[] = [];
+    const recursiveVantage: VantageInfo = {
+      type: 'public-recursive',
+      identifier: '8.8.8.8',
+      region: 'us-central',
+    };
+
+    for (let hop = 1; hop <= MAX_DNS_CNAME_HOPS && pending.size > 0; hop++) {
+      const owners = [...pending].filter((owner) => !queriedNames.has(owner));
+      if (owners.length === 0) break;
+      for (const owner of owners) queriedNames.add(owner);
+
+      const queries = owners.flatMap((name) => [
+        { name, type: 'CNAME' },
+        { name, type: 'TXT' },
+      ]);
+      const results = await this.collectFromVantage(queries, recursiveVantage, errors);
+      collected.push(...results);
+      pending = new Set(this.extractMtaStsCnameTargets(results, new Set(owners)));
+    }
+
+    return collected;
+  }
+
+  private extractMtaStsCnameTargets(
+    results: DNSQueryResult[],
+    ownerNames: ReadonlySet<string>
+  ): string[] {
+    const targets: string[] = [];
+    for (const result of results) {
+      if (result.query.type !== 'CNAME' || !result.success) continue;
+      const queryName = tryNormalizeDNSOwner(result.query.name)?.normalized;
+      if (!queryName || !ownerNames.has(queryName)) continue;
+      for (const answer of result.answers) {
+        const answerName = tryNormalizeDNSOwner(answer.name)?.normalized;
+        if (answer.type !== 'CNAME' || answerName !== queryName) continue;
+        const target = tryNormalizeDNSOwner(answer.data)?.normalized;
+        if (target) targets.push(target);
+      }
+    }
+    return [...new Set(targets)];
   }
 
   /**
@@ -464,7 +537,8 @@ export class DNSCollector {
     snapshotId: string;
     resultState: 'complete' | 'partial' | 'failed';
   }> {
-    const { tenantId, domain, zoneManagement, triggeredBy } = this.config;
+    const { tenantId, zoneManagement, triggeredBy } = this.config;
+    const domain = tryNormalizeDNSOwner(this.config.domain)?.normalized ?? this.config.domain;
     // Find or create domain within the current tenant scope.
     // The same normalized domain may legitimately exist in multiple tenant portfolios.
     let domainRecord = await this.domainRepo.findByNameForTenant(domain, tenantId);

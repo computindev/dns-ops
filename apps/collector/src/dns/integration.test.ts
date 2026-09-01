@@ -13,6 +13,7 @@
 
 import type { IDatabaseAdapter } from '@dns-ops/db';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { loadPersistedMtaStsEvidence } from '../probes/persisted-dns-authorization.js';
 import { DNSCollector, type ResolverLike } from './collector.js';
 import { DNSResolver } from './resolver.js';
 import type { CollectionConfig, DNSQueryResult, VantageInfo } from './types.js';
@@ -226,11 +227,44 @@ function createInMemoryDb() {
     return tables.get(name) ?? [];
   }
 
-  function getConditionParam(condition: unknown): unknown {
-    const sql = condition as {
-      queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+  function getConditionPairs(condition: unknown): Array<[string, unknown]> {
+    const pairs: Array<[string, unknown]> = [];
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      const record = value as {
+        queryChunks?: unknown[];
+        constructor?: { name?: string };
+        name?: string;
+        value?: unknown;
+      };
+      const chunks = record.queryChunks ?? [];
+      const column = chunks.find((chunk): chunk is { name: string } =>
+        Boolean(
+          chunk &&
+            typeof chunk === 'object' &&
+            typeof (chunk as { name?: unknown }).name === 'string' &&
+            (chunk as { constructor?: { name?: string } }).constructor?.name !== 'Param'
+        )
+      );
+      const param = chunks.find((chunk): chunk is { value: unknown } =>
+        Boolean(
+          chunk &&
+            typeof chunk === 'object' &&
+            (chunk as { constructor?: { name?: string } }).constructor?.name === 'Param'
+        )
+      );
+      if (column && param) pairs.push([column.name, param.value]);
+      for (const chunk of chunks) visit(chunk);
     };
-    return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+    visit(condition);
+    return pairs;
+  }
+
+  function matches(row: Row, condition: unknown): boolean {
+    return getConditionPairs(condition).every(([column, value]) => {
+      const key = column.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      return row[key] === value;
+    });
   }
 
   const db: IDatabaseAdapter = {
@@ -238,13 +272,11 @@ function createInMemoryDb() {
     select: vi.fn(async (table: unknown) => [...rows(getTable(table))]),
     selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
       const name = getTable(table);
-      const param = getConditionParam(condition);
-      return rows(name).filter((r) => Object.values(r).some((v) => v === param));
+      return rows(name).filter((row) => matches(row, condition));
     }),
     selectOne: vi.fn(async (table: unknown, condition: unknown) => {
       const name = getTable(table);
-      const param = getConditionParam(condition);
-      return rows(name).find((r) => Object.values(r).some((v) => v === param));
+      return rows(name).find((row) => matches(row, condition));
     }),
     insert: vi.fn(async (table: unknown, values: Record<string, unknown>) => {
       const name = getTable(table);
@@ -272,8 +304,7 @@ function createInMemoryDb() {
     }),
     update: vi.fn(async (table: unknown, values: Record<string, unknown>, condition: unknown) => {
       const name = getTable(table);
-      const param = getConditionParam(condition);
-      const target = rows(name).find((r) => Object.values(r).some((v) => v === param));
+      const target = rows(name).find((row) => matches(row, condition));
       if (target) Object.assign(target, values);
       return target ? [target] : [];
     }),
@@ -637,6 +668,85 @@ describe('DNS Collector Integration', () => {
       const values = aRecordSet.values as string[];
       expect(values).toBeDefined();
       expect(values.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('should canonicalize mixed-case underscore CNAME hops and authorize terminal TXT', async () => {
+    const { db, rows } = createInMemoryDb();
+    const initialOwner = '_mta-sts.example.com';
+    const observedTarget = '_Policy._MTA-STS.Example.NET.';
+    const terminalOwner = '_policy._mta-sts.example.net';
+    const txtRecord = 'v=STSv1; id=20260901';
+    const queryResults = new Map<string, DNSQueryResult>([
+      [
+        `${initialOwner}:CNAME`,
+        buildSuccessResult(initialOwner, 'CNAME', [
+          makeAnswer('_MTA-STS.Example.COM.', 'CNAME', observedTarget, 120),
+        ]),
+      ],
+      [
+        `${terminalOwner}:TXT`,
+        buildSuccessResult(terminalOwner, 'TXT', [
+          makeAnswer('_POLICY._MTA-STS.EXAMPLE.NET.', 'TXT', txtRecord, 300),
+        ]),
+      ],
+    ]);
+
+    const collector = createCollectorWithMockedResolver(
+      {
+        tenantId: 'tenant-cname',
+        domain: 'Example.COM.',
+        zoneManagement: 'unknown',
+        recordTypes: ['TXT'],
+        triggeredBy: 'test',
+        includeMailRecords: true,
+      },
+      db,
+      queryResults
+    );
+    const collection = await collector.collect();
+
+    expect(collection.resultState).toBe('complete');
+    const observations = rows('observations');
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ queryName: initialOwner, queryType: 'CNAME' }),
+        expect.objectContaining({ queryName: terminalOwner, queryType: 'TXT' }),
+      ])
+    );
+    const recordSets = rows('record_sets');
+    expect(recordSets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: initialOwner,
+          type: 'CNAME',
+          values: [terminalOwner],
+        }),
+        expect.objectContaining({
+          name: terminalOwner,
+          type: 'CNAME',
+          values: [],
+        }),
+        expect.objectContaining({
+          name: terminalOwner,
+          type: 'TXT',
+          values: [txtRecord],
+        }),
+      ])
+    );
+
+    const evidence = await loadPersistedMtaStsEvidence(db, {
+      domain: 'EXAMPLE.COM.',
+      tenantId: 'tenant-cname',
+    });
+    expect(evidence).toMatchObject({ ok: true, txtRecord, txtRecordId: '20260901' });
+    if (evidence.ok) {
+      expect(evidence.dnsResults).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ query: { name: initialOwner, type: 'CNAME' } }),
+          expect.objectContaining({ query: { name: terminalOwner, type: 'TXT' } }),
+        ])
+      );
     }
   });
 

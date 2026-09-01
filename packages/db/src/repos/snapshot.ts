@@ -6,7 +6,7 @@
  */
 
 import type { EvaluationCoverage } from '@dns-ops/contracts';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import { type NewSnapshot, type Snapshot, snapshots } from '../schema/index.js';
 
@@ -35,11 +35,11 @@ export class SnapshotRepository {
    * Get the most recent snapshot for a domain
    */
   async findLatestByDomain(domainId: string): Promise<Snapshot | undefined> {
-    const results = await this.db.selectWhere(snapshots, eq(snapshots.domainId, domainId));
-    // Sort by createdAt desc and return first
-    return results.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    )[0];
+    return this.db.selectOne(
+      snapshots,
+      eq(snapshots.domainId, domainId),
+      desc(snapshots.createdAt)
+    );
   }
 
   /**

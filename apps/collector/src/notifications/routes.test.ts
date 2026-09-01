@@ -2,13 +2,21 @@
  * Notification Routes Tests - PR-08.1
  */
 
+import { promises as dnsPromises } from 'node:dns';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types.js';
 import { notificationRoutes } from './routes.js';
+import { installWebhookTransportMock } from './webhook.test-support.js';
 
+vi.mock('node:dns', () => ({
+  promises: { lookup: vi.fn() },
+}));
+
+const mockLookup = dnsPromises.lookup as ReturnType<typeof vi.fn>;
+const mockHttpsRequest = vi.hoisted(() => vi.fn());
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('node:https', () => ({ request: mockHttpsRequest }));
 
 describe('Notification Routes', () => {
   let app: Hono<Env>;
@@ -17,6 +25,10 @@ describe('Notification Routes', () => {
     app = new Hono<Env>();
     app.route('/api/notify', notificationRoutes);
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    mockHttpsRequest.mockReset();
+    installWebhookTransportMock(mockHttpsRequest, mockFetch);
   });
 
   describe('POST /api/notify/webhook', () => {

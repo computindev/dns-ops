@@ -5,20 +5,17 @@
  *
  * BUG-007: validateUrl() checked hostname string but not resolved IP.
  *   A domain like evil.attacker.com that resolves to 10.0.0.1 passed
- *   validateUrl() (hostname isn't on the blocklist) but the fetch()
- *   would connect to a private IP. resolveAndCheck() closes this gap
- *   by pre-resolving and checking the resolved IP.
+ *   validateUrl() (hostname isn't on the blocklist) but a downstream client
+ *   could connect to a private IP. resolveAndCheck() pre-resolves and checks
+ *   the address; strict callers must pin their client to the result.
  *
- * BUG-008: DNS resolution failure was treated as a block.
- *   Initial implementation returned { allowed: false } when dns.lookup
- *   threw ENOTFOUND. This broke all webhook tests that use mock URLs
- *   (example.com, webhook.test.com) because those don't resolve.
- *   DNS failure ≠ rebinding attack. Fix: allow through, let fetch()
- *   handle the connection error naturally.
+ * BUG-008: DNS resolution failure was treated as a block in one caller but
+ *   allowed through in the webhook path. Every outbound path now fails closed
+ *   on DNS errors and never falls back to hostname-based connection.
  *
- * BUG-009: MTA-STS fetch was missing resolveAndCheck() entirely.
- *   webhook.ts was protected but mta-sts.ts still used only validateUrl().
- *   Same TOCTOU gap in a different call site. Both must be checked.
+ * BUG-009: MTA-STS fetch was missing a resolved-address check entirely.
+ *   It now has a dedicated fail-closed pinned `https.request` path, as does
+ *   webhook delivery.
  */
 
 import { promises as dnsPromises } from 'node:dns';
@@ -94,7 +91,7 @@ describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
   });
 
   describe('DNS failure handling (BUG-008)', () => {
-    it('allows through when DNS resolution fails (ENOTFOUND)', async () => {
+    it('fails closed when DNS resolution fails (ENOTFOUND)', async () => {
       mockLookup.mockRejectedValue(
         Object.assign(new Error('getaddrinfo ENOTFOUND nonexistent.invalid.test'), {
           code: 'ENOTFOUND',
@@ -102,16 +99,17 @@ describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
       );
 
       const result = await resolveAndCheck('nonexistent.invalid.test');
-      expect(result.allowed).toBe(true);
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) expect(result.reason).toContain('ENOTFOUND');
     });
 
-    it('allows through when DNS resolution fails (any error)', async () => {
+    it('fails closed when DNS resolution fails (any error)', async () => {
       mockLookup.mockRejectedValue(new Error('ESERVFAIL'));
 
       const result = await resolveAndCheck('timeout.test');
 
-      // Must allow — DNS failure is not a rebinding attack
-      expect(result.allowed).toBe(true);
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) expect(result.reason).toContain('ESERVFAIL');
     });
 
     it('blocks hostname that resolves to private IPv6', async () => {
@@ -126,14 +124,14 @@ describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
       }
     });
 
-    it('allows hostname that resolves to public IPv6', async () => {
+    it('fails closed when a hostname resolves to public IPv6', async () => {
       mockLookup.mockResolvedValue({ address: '2606:4700:4700::1111', family: 6 });
 
       const result = await resolveAndCheck('cloudflare-dns.com');
 
-      expect(result.allowed).toBe(true);
-      if (result.allowed) {
-        expect(result.ip).toBe('2606:4700:4700::1111');
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.reason).toContain('2606:4700:4700::1111');
       }
     });
 
@@ -143,6 +141,17 @@ describe('resolveAndCheck — DNS rebinding mitigation (BUG-007)', () => {
       if (!result.allowed) {
         expect(result.reason).toContain('empty hostname');
       }
+    });
+
+    it('returns a blocked result when DNS resolution is aborted', async () => {
+      mockLookup.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+      const resultPromise = resolveAndCheck('slow.example.com', controller.signal);
+      controller.abort();
+
+      const result = await resultPromise;
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) expect(result.reason).toContain('aborted');
     });
   });
 });

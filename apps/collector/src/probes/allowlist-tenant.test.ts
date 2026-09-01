@@ -157,4 +157,43 @@ describe('Tenant-Scoped Allowlist - AUTH-003', () => {
       expect(entries[0].type).toBe('mx');
     });
   });
+
+  describe('hostname canonicalization (Issue #67 review)', () => {
+    it('canonicalizes mixed-case MX answers so lowercase probes are allowed', () => {
+      const allowlist = createTenantAllowlist('tenant-mixed-case');
+
+      const entries = allowlist.generateFromDnsResults('example.com', [
+        {
+          success: true,
+          query: { name: 'example.com', type: 'MX' as const },
+          answers: [
+            {
+              name: 'example.com',
+              type: 'MX' as const,
+              ttl: 300,
+              data: '10 MAIL.EXAMPLE.COM.',
+            },
+          ],
+        },
+      ]);
+
+      // Entry is stored canonical, matching the lowercase hosts the
+      // persisted-evidence loader produces.
+      expect(entries[0].hostname).toBe('mail.example.com');
+
+      // Lookups are canonicalized too: raw-case and canonical queries both hit.
+      expect(allowlist.isAllowed('mail.example.com', 25)).toBe(true);
+      expect(allowlist.isAllowed('MAIL.EXAMPLE.COM', 25)).toBe(true);
+      expect(allowlist.getEntry('Mail.Example.Com', 25)).toBeDefined();
+    });
+
+    it('canonicalizes custom entries', () => {
+      const allowlist = createTenantAllowlist('tenant-custom-case');
+
+      allowlist.addCustomEntry('RELAY.Example.ORG.', 25, 'ops', 'break-glass');
+
+      expect(allowlist.isAllowed('relay.example.org', 25)).toBe(true);
+      expect(allowlist.isAllowed('RELAY.EXAMPLE.ORG', 25)).toBe(true);
+    });
+  });
 });

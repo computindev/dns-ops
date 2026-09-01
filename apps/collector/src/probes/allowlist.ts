@@ -26,9 +26,14 @@ export interface AllowlistEntry {
 
 export interface TenantScopedAllowlist {
   /**
-   * Generate allowlist entries from DNS query results for this tenant
+   * Generate allowlist entries from DNS query results for this tenant.
+   * Persisted evidence can supply its already-computed expiry.
    */
-  generateFromDnsResults(domain: string, dnsResults: DNSQueryResult[]): AllowlistEntry[];
+  generateFromDnsResults(
+    domain: string,
+    dnsResults: DNSQueryResult[],
+    expiresAt?: Date
+  ): AllowlistEntry[];
 
   /**
    * Add a custom allowlist entry for this tenant
@@ -62,6 +67,24 @@ export interface TenantScopedAllowlist {
 }
 
 /**
+ * Canonical hostname form for allowlist keying: DNS names are
+ * case-insensitive (RFC 1035 §2.3.3) and may carry a trailing root dot.
+ * Persisted MX targets arrive normalized lowercase, while raw MX answer
+ * data may be mixed-case — both entries and lookups are canonicalized so
+ * mixed-case answers authorize normalized probe targets.
+ */
+function canonicalHostname(hostname: string): string {
+  return hostname.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/** An omitted expiry keeps the legacy allowlist API's TTL behavior. */
+export function isExpiryFresh(expiresAt?: Date): boolean {
+  if (expiresAt === undefined) return true;
+  const timestamp = expiresAt instanceof Date ? expiresAt.getTime() : Number.NaN;
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
+/**
  * Create a tenant-scoped allowlist instance
  */
 export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
@@ -73,19 +96,24 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
   }
 
   function cleanup(): void {
-    const now = new Date();
     for (const [k, entry] of entries) {
-      if (entry.expiresAt < now) {
+      if (!isExpiryFresh(entry.expiresAt)) {
         entries.delete(k);
       }
     }
   }
 
   return {
-    generateFromDnsResults(domain: string, dnsResults: DNSQueryResult[]): AllowlistEntry[] {
+    generateFromDnsResults(
+      domain: string,
+      dnsResults: DNSQueryResult[],
+      persistedExpiresAt?: Date
+    ): AllowlistEntry[] {
       const resultEntries: AllowlistEntry[] = [];
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + defaultTtlMs);
+      const entryExpiresAt = persistedExpiresAt
+        ? new Date(persistedExpiresAt.getTime())
+        : new Date(now.getTime() + defaultTtlMs);
 
       for (const dnsResult of dnsResults) {
         if (!dnsResult.success) continue;
@@ -95,7 +123,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
           for (const answer of dnsResult.answers) {
             const parts = answer.data.trim().split(/\s+/);
             if (parts.length >= 2) {
-              const hostname = parts[1].replace(/\.$/, '');
+              const hostname = canonicalHostname(parts[1]);
               const entry: AllowlistEntry = {
                 tenantId,
                 type: 'mx',
@@ -107,7 +135,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
                   queryName: dnsResult.query.name,
                   answerData: answer.data,
                 },
-                expiresAt,
+                expiresAt: new Date(entryExpiresAt.getTime()),
               };
               resultEntries.push(entry);
               entries.set(key(entry), entry);
@@ -116,11 +144,17 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
         }
 
         // Extract MTA-STS policy host
-        if (dnsResult.query.type === 'TXT' && dnsResult.query.name.includes('_mta-sts')) {
+        if (
+          dnsResult.query.type === 'TXT' &&
+          (dnsResult.query.name.toLowerCase().includes('_mta-sts') ||
+            dnsResult.answers.some((answer) =>
+              answer.data.trim().toLowerCase().startsWith('v=stsv1')
+            ))
+        ) {
           const entry: AllowlistEntry = {
             tenantId,
             type: 'mta-sts',
-            hostname: `mta-sts.${domain}`,
+            hostname: canonicalHostname(`mta-sts.${domain}`),
             port: 443,
             derivedFrom: {
               domain,
@@ -128,7 +162,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
               queryName: dnsResult.query.name,
               answerData: dnsResult.answers.map((a: { data: string }) => a.data).join(', '),
             },
-            expiresAt,
+            expiresAt: new Date(entryExpiresAt.getTime()),
           };
           resultEntries.push(entry);
           entries.set(key(entry), entry);
@@ -150,7 +184,7 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
       const entry: AllowlistEntry = {
         tenantId,
         type: 'custom',
-        hostname,
+        hostname: canonicalHostname(hostname),
         port,
         derivedFrom: {
           domain: 'custom',
@@ -168,13 +202,14 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
     isAllowed(hostname: string, port?: number): boolean {
       cleanup();
 
-      const entryKey = port ? `${hostname}:${port}` : hostname;
+      const host = canonicalHostname(hostname);
+      const entryKey = port ? `${host}:${port}` : host;
       if (entries.has(entryKey)) {
         return true;
       }
 
       for (const entry of entries.values()) {
-        if (entry.hostname === hostname) {
+        if (entry.hostname === host) {
           if (port === undefined || entry.port === undefined || entry.port === port) {
             return true;
           }
@@ -187,7 +222,8 @@ export function createTenantAllowlist(tenantId: string): TenantScopedAllowlist {
     getEntry(hostname: string, port?: number): AllowlistEntry | undefined {
       cleanup();
 
-      const entryKey = port ? `${hostname}:${port}` : hostname;
+      const host = canonicalHostname(hostname);
+      const entryKey = port ? `${host}:${port}` : host;
       return entries.get(entryKey);
     },
 
@@ -267,10 +303,16 @@ export class ProbeAllowlist {
     this.defaultTtlMs = defaultTtlMs;
   }
 
-  generateFromDnsResults(domain: string, dnsResults: DNSQueryResult[]): AllowlistEntry[] {
+  generateFromDnsResults(
+    domain: string,
+    dnsResults: DNSQueryResult[],
+    persistedExpiresAt?: Date
+  ): AllowlistEntry[] {
     const entries: AllowlistEntry[] = [];
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.defaultTtlMs);
+    const entryExpiresAt = persistedExpiresAt
+      ? new Date(persistedExpiresAt.getTime())
+      : new Date(now.getTime() + this.defaultTtlMs);
 
     for (const result of dnsResults) {
       if (!result.success) continue;
@@ -279,7 +321,7 @@ export class ProbeAllowlist {
         for (const answer of result.answers) {
           const parts = answer.data.trim().split(/\s+/);
           if (parts.length >= 2) {
-            const hostname = parts[1].replace(/\.$/, '');
+            const hostname = canonicalHostname(parts[1]);
             const entry: AllowlistEntry = {
               tenantId: 'default', // Legacy entries are tenant-scoped
               type: 'mx',
@@ -291,7 +333,7 @@ export class ProbeAllowlist {
                 queryName: result.query.name,
                 answerData: answer.data,
               },
-              expiresAt,
+              expiresAt: new Date(entryExpiresAt.getTime()),
             };
             entries.push(entry);
             this.entries.set(this.key(entry), entry);
@@ -299,11 +341,15 @@ export class ProbeAllowlist {
         }
       }
 
-      if (result.query.type === 'TXT' && result.query.name.includes('_mta-sts')) {
+      if (
+        result.query.type === 'TXT' &&
+        (result.query.name.toLowerCase().includes('_mta-sts') ||
+          result.answers.some((answer) => answer.data.trim().toLowerCase().startsWith('v=stsv1')))
+      ) {
         const entry: AllowlistEntry = {
           tenantId: 'default',
           type: 'mta-sts',
-          hostname: `mta-sts.${domain}`,
+          hostname: canonicalHostname(`mta-sts.${domain}`),
           port: 443,
           derivedFrom: {
             domain,
@@ -311,7 +357,7 @@ export class ProbeAllowlist {
             queryName: result.query.name,
             answerData: result.answers.map((a: { data: string }) => a.data).join(', '),
           },
-          expiresAt,
+          expiresAt: new Date(entryExpiresAt.getTime()),
         };
         entries.push(entry);
         this.entries.set(this.key(entry), entry);
@@ -333,7 +379,7 @@ export class ProbeAllowlist {
     const entry: AllowlistEntry = {
       tenantId: 'default',
       type: 'custom',
-      hostname,
+      hostname: canonicalHostname(hostname),
       port,
       derivedFrom: {
         domain: 'custom',
@@ -351,13 +397,14 @@ export class ProbeAllowlist {
   isAllowed(hostname: string, port?: number): boolean {
     this.cleanup();
 
-    const key = port ? `${hostname}:${port}` : hostname;
+    const host = canonicalHostname(hostname);
+    const key = port ? `${host}:${port}` : host;
     if (this.entries.has(key)) {
       return true;
     }
 
     for (const entry of this.entries.values()) {
-      if (entry.hostname === hostname) {
+      if (entry.hostname === host) {
         if (port === undefined || entry.port === undefined || entry.port === port) {
           return true;
         }
@@ -370,7 +417,8 @@ export class ProbeAllowlist {
   getEntry(hostname: string, port?: number): AllowlistEntry | undefined {
     this.cleanup();
 
-    const key = port ? `${hostname}:${port}` : hostname;
+    const host = canonicalHostname(hostname);
+    const key = port ? `${host}:${port}` : host;
     return this.entries.get(key);
   }
 
@@ -380,9 +428,8 @@ export class ProbeAllowlist {
   }
 
   private cleanup(): void {
-    const now = new Date();
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt < now) {
+      if (!isExpiryFresh(entry.expiresAt)) {
         this.entries.delete(key);
       }
     }

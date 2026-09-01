@@ -5,9 +5,11 @@
  * Performs limited SMTP handshake to detect TLS support.
  */
 
+import * as dns from 'node:dns';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
-import { probeAllowlistManager } from './allowlist.js';
+import { isExpiryFresh, probeAllowlistManager } from './allowlist.js';
+import { getProbeSemaphore } from './semaphore.js';
 import { checkSSRF } from './ssrf-guard.js';
 
 export interface SMTPProbeResult {
@@ -35,65 +37,285 @@ interface SMTPResponse {
   lines: string[];
 }
 
-/**
- * Read SMTP response from socket
- *
- * SMTP responses can be multiline (ESMTP). Format:
- * - Continuation lines start with "xxx-" (same code, more data)
- * - Final line starts with "xxx " (space after code indicates end)
- *
- * SEC-004: Fixed to read ALL lines of multiline responses.
- * Previously only read the last line, missing STARTTLS in middle of EHLO response.
- */
-function readResponse(socket: net.Socket, timeoutMs: number): Promise<SMTPResponse> {
-  return new Promise((resolve, reject) => {
-    let buffer = '';
-    const timeout = setTimeout(() => {
-      reject(new Error(`Timeout waiting for SMTP response`));
-    }, timeoutMs);
+const MAX_SMTP_RESPONSE_BYTES = 64 * 1024;
 
-    const onData = (data: Buffer) => {
-      buffer += data.toString();
+class SMTPProbeTimeoutError extends Error {
+  constructor() {
+    super('SMTP probe deadline exceeded');
+    this.name = 'SMTPProbeTimeoutError';
+  }
+}
 
-      // Check for complete response - need to find final line
-      // Final line format: "xxx <text>" (space after 3-digit code)
-      // Continuation format: "xxx-<text>" (hyphen after 3-digit code)
-      // Note: After splitting by \r?\n, lines should not contain \r, but we filter empty strings
-      const lines = buffer.split(/\r?\n/).filter((l) => l.trim());
+function remainingMs(deadline: number): number {
+  return Math.max(1, deadline - Date.now());
+}
 
-      if (lines.length === 0) return;
+/** Race an operation against the probe's cumulative abort signal. */
+function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new SMTPProbeTimeoutError());
 
-      const lastLine = lines[lines.length - 1];
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
 
-      // Check if this is the final line (space after code, not hyphen)
-      const finalLineMatch = lastLine.match(/^(\d{3})\s/);
-      if (finalLineMatch) {
-        clearTimeout(timeout);
-        socket.off('data', onData);
-
-        // SEC-004: Join all lines for complete response
-        const allLines = lines.join('\n');
-        resolve({
-          code: parseInt(finalLineMatch[1], 10),
-          message: allLines,
-          lines: lines,
-        });
-      }
+    const cleanup = () => {
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new SMTPProbeTimeoutError());
     };
 
-    socket.on('data', onData);
-    socket.on('error', (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
   });
 }
 
 /**
- * Send SMTP command
+ * Read one complete SMTP response. The caller owns the cumulative deadline;
+ * this helper never starts a fresh per-response timeout.
  */
-function sendCommand(socket: net.Socket, command: string): void {
+function readResponse(
+  socket: net.Socket,
+  signal: AbortSignal,
+  deadline: number
+): Promise<SMTPResponse> {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+
+    const cleanup = () => {
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      socket.off('timeout', onTimeout);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const finish = (response: SMTPResponse) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(response);
+    };
+    const onAbort = () => {
+      const error = new SMTPProbeTimeoutError();
+      fail(error);
+      socket.destroy();
+    };
+    const onClose = () => {
+      fail(new Error('SMTP socket closed before response'));
+    };
+    const onError = (error: Error) => {
+      fail(error);
+    };
+    const onTimeout = () => {
+      const error = new SMTPProbeTimeoutError();
+      fail(error);
+      socket.destroy();
+    };
+    const onData = (data: Buffer | string) => {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (buffer.byteLength + chunk.byteLength > MAX_SMTP_RESPONSE_BYTES) {
+        const error = new Error('SMTP response exceeded 65536 bytes');
+        fail(error);
+        socket.destroy();
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+
+      const text = buffer.toString('utf8');
+      if (!text.endsWith('\n')) return;
+      const lines = text
+        .split(/\r?\n/)
+        .slice(0, -1)
+        .filter((line) => line.trim().length > 0);
+      const lastLine = lines[lines.length - 1];
+      const finalLineMatch = lastLine?.match(/^(\d{3})\s/);
+      if (!finalLineMatch) return;
+
+      finish({
+        code: Number.parseInt(finalLineMatch[1], 10),
+        message: lines.join('\n'),
+        lines,
+      });
+    };
+
+    try {
+      socket.on('data', onData);
+      socket.on('error', onError);
+      socket.on('close', onClose);
+      socket.on('timeout', onTimeout);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted || deadline <= Date.now()) {
+        onTimeout();
+        return;
+      }
+      socket.setTimeout(remainingMs(deadline));
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+function sendCommand(socket: net.Socket, command: string, signal: AbortSignal): void {
+  if (signal.aborted) throw new SMTPProbeTimeoutError();
   socket.write(`${command}\r\n`);
+}
+
+function connectSocket(
+  socket: net.Socket,
+  port: number,
+  address: string,
+  signal: AbortSignal,
+  deadline: number
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      socket.off('connect', onConnect);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      socket.off('timeout', onTimeout);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const onAbort = () => {
+      const error = new SMTPProbeTimeoutError();
+      finish(error);
+      socket.destroy();
+    };
+    const onClose = () => {
+      finish(new Error('SMTP socket closed before connect'));
+    };
+    const onConnect = () => finish();
+    const onError = (error: Error) => finish(error);
+    const onTimeout = () => {
+      const error = new SMTPProbeTimeoutError();
+      finish(error);
+      socket.destroy();
+    };
+
+    try {
+      socket.once('connect', onConnect);
+      socket.once('error', onError);
+      socket.once('close', onClose);
+      socket.once('timeout', onTimeout);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted || deadline <= Date.now()) {
+        onAbort();
+        return;
+      }
+      socket.setTimeout(remainingMs(deadline));
+      socket.connect(port, address);
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+function waitForTls(socket: tls.TLSSocket, signal: AbortSignal, deadline: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      socket.off('secureConnect', onSecureConnect);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      socket.off('timeout', onTimeout);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const onAbort = () => {
+      const error = new SMTPProbeTimeoutError();
+      finish(error);
+      socket.destroy();
+    };
+    const onSecureConnect = () => finish();
+    const onError = (error: Error) => finish(error);
+    const onClose = () => finish(new Error('TLS socket closed before handshake'));
+    const onTimeout = () => {
+      const error = new SMTPProbeTimeoutError();
+      finish(error);
+      socket.destroy();
+    };
+
+    try {
+      socket.once('secureConnect', onSecureConnect);
+      socket.once('error', onError);
+      socket.once('close', onClose);
+      socket.once('timeout', onTimeout);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted || deadline <= Date.now()) {
+        onAbort();
+        return;
+      }
+      socket.setTimeout(remainingMs(deadline));
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+/**
+ * Resolve a probe hostname through the SSRF guard and return the checked IP
+ * to pin the connection to. DNS failures fail closed so a later hostname
+ * connect cannot re-open the DNS rebinding window.
+ */
+async function resolveCheckedTarget(
+  hostname: string,
+  signal: AbortSignal
+): Promise<{ ok: true; ip: string } | { ok: false; error: string }> {
+  try {
+    const result = await withAbort(dns.promises.lookup(hostname), signal);
+    const address = typeof result === 'string' ? result : result.address;
+    if (!address) return { ok: false, error: `DNS resolution returned no address for ${hostname}` };
+
+    const check = checkSSRF(address);
+    if (!check.allowed) {
+      return {
+        ok: false,
+        error: `SSRF blocked: ${hostname} resolves to ${address} (${check.reason})`,
+      };
+    }
+    return { ok: true, ip: address };
+  } catch (error) {
+    if (signal.aborted || error instanceof SMTPProbeTimeoutError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `DNS resolution failed for ${hostname}: ${message}` };
+  }
 }
 
 /**
@@ -111,6 +333,7 @@ export async function probeSMTPStarttls(
     timeoutMs?: number;
     checkAllowlist?: boolean;
     ehloDomain?: string;
+    expiresAt?: Date;
   }
 ): Promise<SMTPProbeResult> {
   const {
@@ -118,12 +341,36 @@ export async function probeSMTPStarttls(
     timeoutMs = 30000,
     checkAllowlist = true,
     ehloDomain = 'dns-ops-probe.local',
+    expiresAt,
   } = options || {};
-
   const startTime = Date.now();
+  const deadline = startTime + timeoutMs;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  const { signal } = controller;
+  let rawSocket: net.Socket | undefined;
+  let tlsSocket: tls.TLSSocket | undefined;
+  const destroyActiveSockets = () => {
+    rawSocket?.destroy();
+    tlsSocket?.destroy();
+  };
+  signal.addEventListener('abort', destroyActiveSockets, { once: true });
 
   try {
-    // SSRF check
+    if (!isExpiryFresh(expiresAt)) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: 'Persisted DNS evidence expired before probe start',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
+    if (deadline <= Date.now() || signal.aborted) {
+      throw new SMTPProbeTimeoutError();
+    }
+
     const ssrfCheck = checkSSRF(hostname);
     if (!ssrfCheck.allowed) {
       return {
@@ -136,7 +383,6 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Allowlist check (tenant-scoped via probeAllowlistManager)
     if (checkAllowlist && !probeAllowlistManager.isAllowed(tenantId, hostname, port)) {
       return {
         success: false,
@@ -148,25 +394,37 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Create socket connection
-    const socket = new net.Socket();
+    const resolved = await resolveCheckedTarget(hostname, signal);
+    if (!resolved.ok) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: resolved.error,
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
 
-    // Set timeout
-    socket.setTimeout(timeoutMs);
+    if (!isExpiryFresh(expiresAt) || signal.aborted) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: signal.aborted
+          ? `Timeout after ${timeoutMs}ms`
+          : 'Persisted DNS evidence expired before socket start',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
 
-    // Connect
-    await new Promise<void>((resolve, reject) => {
-      socket.once('connect', resolve);
-      socket.once('error', reject);
-      socket.connect(port, hostname);
-    });
+    rawSocket = new net.Socket();
+    await connectSocket(rawSocket, port, resolved.ip, signal, deadline);
 
-    // Read banner
-    const banner = await readResponse(socket, 10000);
+    const banner = await readResponse(rawSocket, signal, deadline);
     const smtpBanner = banner.message;
-
     if (banner.code !== 220) {
-      socket.destroy();
       return {
         success: false,
         hostname,
@@ -178,12 +436,9 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Send EHLO
-    sendCommand(socket, `EHLO ${ehloDomain}`);
-    const ehloResponse = await readResponse(socket, 10000);
-
+    sendCommand(rawSocket, `EHLO ${ehloDomain}`, signal);
+    const ehloResponse = await readResponse(rawSocket, signal, deadline);
     if (ehloResponse.code !== 250) {
-      socket.destroy();
       return {
         success: false,
         hostname,
@@ -195,11 +450,8 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Check for STARTTLS in capabilities
     const supportsStarttls = ehloResponse.message.toUpperCase().includes('STARTTLS');
-
     if (!supportsStarttls) {
-      socket.destroy();
       return {
         success: true,
         hostname,
@@ -210,12 +462,9 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Try STARTTLS
-    sendCommand(socket, 'STARTTLS');
-    const starttlsResponse = await readResponse(socket, 10000);
-
+    sendCommand(rawSocket, 'STARTTLS', signal);
+    const starttlsResponse = await readResponse(rawSocket, signal, deadline);
     if (starttlsResponse.code !== 220) {
-      socket.destroy();
       return {
         success: true,
         hostname,
@@ -227,23 +476,15 @@ export async function probeSMTPStarttls(
       };
     }
 
-    // Upgrade to TLS
-    const tlsSocket = tls.connect({
-      socket,
+    tlsSocket = tls.connect({
+      socket: rawSocket,
       servername: hostname,
-      rejectUnauthorized: false, // Allow self-signed for probing
+      rejectUnauthorized: false,
     });
+    await waitForTls(tlsSocket, signal, deadline);
 
-    await new Promise<void>((resolve, reject) => {
-      tlsSocket.once('secureConnect', resolve);
-      tlsSocket.once('error', reject);
-    });
-
-    // Get TLS info
     const tlsInfo = tlsSocket.getCipher();
     const cert = tlsSocket.getPeerCertificate();
-
-    // Close connection gracefully
     tlsSocket.write('QUIT\r\n');
     tlsSocket.end();
 
@@ -269,9 +510,10 @@ export async function probeSMTPStarttls(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const isTimeout =
+      signal.aborted ||
+      error instanceof SMTPProbeTimeoutError ||
       errorMessage.toLowerCase().includes('timeout') ||
-      errorMessage.toLowerCase().includes('etimedout') ||
-      errorMessage.includes('ETIMEDOUT');
+      errorMessage.toLowerCase().includes('etimedout');
 
     return {
       success: false,
@@ -281,6 +523,13 @@ export async function probeSMTPStarttls(
       error: isTimeout ? `Timeout after ${timeoutMs}ms` : errorMessage,
       responseTimeMs: Date.now() - startTime,
     };
+  } finally {
+    signal.removeEventListener('abort', destroyActiveSockets);
+    clearTimeout(timeoutId);
+    tlsSocket?.destroy();
+    rawSocket?.destroy();
+    tlsSocket?.removeAllListeners();
+    rawSocket?.removeAllListeners();
   }
 }
 
@@ -293,17 +542,33 @@ export async function probeMXHosts(
   options?: {
     timeoutMs?: number;
     concurrency?: number;
+    expiresAt?: Date;
   }
 ): Promise<SMTPProbeResult[]> {
-  const { timeoutMs = 30000, concurrency = 3 } = options || {};
+  const { timeoutMs = 30000, concurrency = 3, expiresAt } = options || {};
 
   const results: SMTPProbeResult[] = [];
+  const semaphore = getProbeSemaphore();
 
-  // Process in batches to limit concurrency
+  // Process in local batches while acquiring the same process-wide permit for
+  // each host. The local bound controls one request; the semaphore controls
+  // all simultaneous batch and single-host requests together.
   for (let i = 0; i < hosts.length; i += concurrency) {
     const batch = hosts.slice(i, i + concurrency);
     const batchPromises = batch.map((host) =>
-      probeSMTPStarttls(host.hostname, tenantId, { timeoutMs })
+      semaphore.run(async () => {
+        if (!isExpiryFresh(expiresAt)) {
+          return {
+            success: false,
+            hostname: host.hostname,
+            port: 25,
+            supportsStarttls: false,
+            error: 'Persisted DNS evidence expired before probe start',
+            responseTimeMs: 0,
+          };
+        }
+        return probeSMTPStarttls(host.hostname, tenantId, { timeoutMs, expiresAt });
+      })
     );
 
     const batchResults = await Promise.all(batchPromises);

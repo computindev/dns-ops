@@ -63,10 +63,12 @@ export class SimpleDatabaseAdapter {
    */
   async selectOne<T extends PgTable>(
     table: T,
-    condition: SQL
+    condition: SQL,
+    orderBy?: SQL
   ): Promise<T['$inferSelect'] | undefined> {
     const db = this.db as NodePgDatabase<Schema>;
-    const results = await db.select().from(table).where(condition).limit(1);
+    const query = db.select().from(table).where(condition);
+    const results = orderBy ? await query.orderBy(orderBy).limit(1) : await query.limit(1);
     return results[0];
   }
 

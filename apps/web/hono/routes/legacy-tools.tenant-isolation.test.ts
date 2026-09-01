@@ -53,11 +53,19 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
+function getConditionParams(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
   const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    constructor?: { name?: string };
+    value?: unknown;
+    queryChunks?: unknown[];
   };
-  return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+  if (sql.constructor?.name === 'Param') return [sql.value];
+  return (sql.queryChunks ?? []).flatMap(getConditionParams);
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -78,7 +86,12 @@ function createMockDb(state: MockState): IDatabaseAdapter {
         return state.shadowComparisons.filter((r) => r.domain === param);
       if (name === 'snapshots') return state.snapshots.filter((r) => r.domainName === param);
       if (name === 'findings') return state.findings.filter((r) => r.snapshotId === param);
-      if (name === 'domains') return state.domains.filter((r) => r.normalizedName === param);
+      if (name === 'domains') {
+        const params = getConditionParams(condition);
+        return state.domains.filter(
+          (r) => r.normalizedName === params[0] && (params.length < 2 || r.tenantId === params[1])
+        );
+      }
       return [];
     }),
     selectOne: vi.fn(async () => null),

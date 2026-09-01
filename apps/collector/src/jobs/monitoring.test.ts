@@ -8,12 +8,15 @@
 
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installWebhookTransportMock } from '../notifications/webhook.test-support.js';
 import type { Env } from '../types.js';
 import { monitoringRoutes } from './monitoring.js';
 
-// Mock fetch for webhook tests
+const mockHttpsRequest = vi.hoisted(() => vi.fn());
+vi.mock('node:https', () => ({ request: mockHttpsRequest }));
+
+// Request-plan spy for the native HTTPS webhook fixture.
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
 
 // Mock DNS so resolveAndCheck() doesn't hit the network and hang
 vi.mock('node:dns', () => ({
@@ -31,6 +34,9 @@ const NORMALIZED_TENANT_ID = '197364d6-0eda-54c5-bcda-3702507a5221';
 const originalEnv = process.env;
 beforeEach(() => {
   process.env = { ...originalEnv, INTERNAL_SECRET: 'test-internal-secret' };
+  mockFetch.mockReset();
+  mockHttpsRequest.mockReset();
+  installWebhookTransportMock(mockHttpsRequest, mockFetch);
 });
 afterEach(() => {
   process.env = originalEnv;

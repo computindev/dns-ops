@@ -194,11 +194,19 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
+function getConditionParams(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
   const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    constructor?: { name?: string };
+    value?: unknown;
+    queryChunks?: unknown[];
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  if (sql.constructor?.name === 'Param') return [sql.value];
+  return (sql.queryChunks ?? []).flatMap(getConditionParams);
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(data: MockData) {
@@ -264,9 +272,18 @@ function createMockDb(data: MockData) {
       if (tableName === 'auditEvents') return [...data.auditEvents];
       return [];
     }),
-    selectWhere: vi.fn(async (table: unknown, _condition: unknown) => {
+    selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
       const tableName = getTable(table);
-      if (tableName === 'domains') return [...data.domains];
+      if (tableName === 'domains') {
+        const params = getConditionParams(condition);
+        return data.domains.filter(
+          (domain) =>
+            (domain.id === params[0] ||
+              domain.normalizedName === params[0] ||
+              domain.name === params[0]) &&
+            (params.length < 2 || domain.tenantId === params[1])
+        );
+      }
       if (tableName === 'domainNotes') return [...data.domainNotes];
       if (tableName === 'domainTags') return [...data.domainTags];
       if (tableName === 'auditEvents') return [...data.auditEvents];

@@ -93,6 +93,38 @@ describe('Fleet Report Routes', () => {
       expect(json.error).toContain('too large');
     });
 
+    it.each([
+      null,
+      42,
+      [],
+      {},
+      { domain: null },
+      { domain: 42 },
+      { domain: 'not a domain' },
+    ])('should return 400 for malformed inventory member %j', async (member) => {
+      const res = await app.request('/api/fleet-report/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inventory: [member] }),
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Invalid inventory entry');
+    });
+
+    it('should accept valid domain objects in inventory', async () => {
+      const res = await app.request('/api/fleet-report/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inventory: [{ domain: 'example.com' }] }),
+      });
+
+      expect([200, 500]).toContain(res.status);
+      const json = await res.json();
+      if (json.error) expect(json.error).not.toContain('Invalid inventory entry');
+    });
+
     it('should process valid inventory (DB context available)', async () => {
       // This test verifies that the DB context is properly available
       // The route successfully uses c.get('db') without crashing
@@ -391,29 +423,34 @@ describe('Fleet Report truth model (issue #65)', () => {
       : '';
   }
 
-  function getConditionParam(condition: unknown): unknown {
+  function getConditionParams(condition: unknown): unknown[] {
+    if (!condition || typeof condition !== 'object') return [];
     const sql = condition as {
       queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
     };
-    return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+    return (sql.queryChunks ?? []).flatMap((chunk) =>
+      chunk?.constructor?.name === 'Param' ? [chunk.value] : getConditionParams(chunk)
+    );
   }
 
   function createMockDb(data: MockData) {
     return {
       selectWhere: async (table: unknown, condition: unknown) => {
         const tableName = getTableName(table);
-        const param = getConditionParam(condition);
+        const params = getConditionParams(condition);
         if (tableName === 'domains') {
-          return data.domains.filter((d) => d.normalizedName === param || d.tenantId === param);
+          return data.domains.filter(
+            (d) => params.includes(d.normalizedName) && params.includes(d.tenantId)
+          );
         }
         if (tableName === 'snapshots') {
-          return data.snapshots.filter((s) => s.domainId === param);
+          return data.snapshots.filter((s) => params.includes(s.domainId));
         }
         if (tableName === 'findings') {
-          return data.findings.filter((f) => f.snapshotId === param);
+          return data.findings.filter((f) => params.includes(f.snapshotId));
         }
         if (tableName === 'observations') {
-          return data.observations.filter((o) => o.snapshotId === param);
+          return data.observations.filter((o) => params.includes(o.snapshotId));
         }
         return [];
       },

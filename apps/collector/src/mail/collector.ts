@@ -69,6 +69,7 @@ export async function generateMailQueries(
     { name: domain, type: 'MX' },
     { name: domain, type: 'TXT' }, // For SPF
     { name: `_dmarc.${domain}`, type: 'TXT' },
+    { name: `_mta-sts.${domain}`, type: 'CNAME' },
     { name: `_mta-sts.${domain}`, type: 'TXT' },
     { name: `_smtp._tls.${domain}`, type: 'TXT' },
   ];
