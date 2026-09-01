@@ -20,15 +20,15 @@ created_at: 2026-09-01T20:50:55.400Z
 
 ## Observations (expected → seen)
 
-- 
+-
 
 ## Forbidden (must not happen → confirmed absent)
 
-- 
+-
 
 ## Read-back (side effects checked through an independent path)
 
-- 
+-
 
 ## Artifacts
 
