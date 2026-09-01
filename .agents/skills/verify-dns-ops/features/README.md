@@ -9,7 +9,7 @@ One file per user-facing feature, from the user's point of view: what it is, how
 | health.public | api | changed | health.public.md |
 | auth.login | web | critical | auth.login.md |
 | domain.overview | web | changed | domain.overview.md |
-| portfolio.search | web | changed | portfolio.search.md |
+| portfolio.search | web | critical | portfolio.search.md |
 | fleet.reports | web | critical | fleet.reports.md |
 
 ## Baseline preconditions (unless a feature file overrides them)
