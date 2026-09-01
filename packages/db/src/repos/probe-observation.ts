@@ -14,6 +14,15 @@ import {
   type SMTPProbeData,
 } from '../schema/index.js';
 
+type SMTPTrustProbeData = SMTPProbeData & {
+  tlsNegotiated?: boolean;
+  tlsTrusted?: boolean;
+  certificate?: NonNullable<SMTPProbeData['certificate']> & {
+    chainAuthorized?: boolean;
+    hostnameAuthorized?: boolean;
+  };
+};
+
 /**
  * Effective success under the SMTP trust contract (issue #74).
  *
@@ -26,7 +35,7 @@ import {
  */
 function isEffectivelySuccessful(probe: ProbeObservation): boolean {
   if (probe.probeType !== 'smtp_starttls') return probe.success === true;
-  const probeData = probe.probeData as SMTPProbeData | null;
+  const probeData = probe.probeData as SMTPTrustProbeData | null;
   return (
     probe.success === true &&
     probeData?.supportsStarttls === true &&

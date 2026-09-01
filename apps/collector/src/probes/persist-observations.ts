@@ -11,6 +11,9 @@ import type { Env } from '../types.js';
 import type { MTASTSProbeResult } from './mta-sts.js';
 import type { SMTPProbeResult } from './smtp-starttls.js';
 
+type PersistedSMTPProbeData = SMTPProbeData &
+  Pick<SMTPProbeResult, 'tlsNegotiated' | 'tlsTrusted' | 'certificate'>;
+
 const logger = getCollectorLogger();
 
 /**
@@ -46,7 +49,7 @@ export function smtpResultToObservation(
   success: boolean;
   errorMessage: string | null;
   responseTimeMs: number;
-  probeData: SMTPProbeData | null;
+  probeData: PersistedSMTPProbeData | null;
 } {
   const tlsNegotiated = result.tlsNegotiated === true;
   // Never trust a caller-asserted trust or success bit alone: derive trust
@@ -83,7 +86,7 @@ export function smtpResultToObservation(
 
   // Diagnostic TLS state and certificate evidence are always persisted,
   // including for untrusted or failed sessions.
-  const probeData: SMTPProbeData = {
+  const probeData: PersistedSMTPProbeData = {
     supportsStarttls: result.supportsStarttls,
     tlsNegotiated,
     tlsTrusted,

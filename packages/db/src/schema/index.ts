@@ -1123,17 +1123,9 @@ export const probeStatusEnum = pgEnum('probe_status', [
 
 /**
  * Probe-specific data stored in JSONB
- *
- * TLS trust fields are optional at this storage boundary because legacy
- * JSONB rows predate them; absence means "not proven trusted" and every
- * consumer must fail closed on it (issue #74).
  */
 export interface SMTPProbeData {
   supportsStarttls: boolean;
-  /** The diagnostic TLS handshake completed. */
-  tlsNegotiated?: boolean;
-  /** Chain and hostname authorization both passed. */
-  tlsTrusted?: boolean;
   tlsVersion?: string;
   tlsCipher?: string;
   certificate?: {
@@ -1142,9 +1134,6 @@ export interface SMTPProbeData {
     validFrom: string;
     validTo: string;
     fingerprint: string;
-    chainAuthorized?: boolean;
-    hostnameAuthorized?: boolean;
-    authorizationError?: string;
   };
   smtpBanner?: string;
 }
