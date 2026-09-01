@@ -42,7 +42,7 @@ fleetReportRoutes.post('/run', async (c) => {
     inventory = [],
     checks = ['spf', 'dmarc', 'mx', 'infrastructure'],
     format = 'detailed',
-  } = body;
+  } = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 
   if (!Array.isArray(inventory) || inventory.length === 0) {
     return c.json(
@@ -65,6 +65,17 @@ fleetReportRoutes.post('/run', async (c) => {
     );
   }
 
+  const inventoryDomains = inventory.map(inventoryItemDomain);
+  const invalidIndex = inventoryDomains.indexOf(undefined);
+  if (invalidIndex !== -1) {
+    return c.json(
+      {
+        error: `Invalid inventory entry at index ${invalidIndex}: expected a domain string or an object with a valid domain string`,
+      },
+      400
+    );
+  }
+
   // Tenant-scoped domain lookups
   const tenantId = c.get('tenantId');
   if (!tenantId) {
@@ -81,9 +92,7 @@ fleetReportRoutes.post('/run', async (c) => {
     const results: FleetReportResult[] = [];
     const errors: Array<{ domain: string; error: string }> = [];
 
-    for (const item of inventory) {
-      const domainName = typeof item === 'string' ? item : item.domain;
-
+    for (const domainName of inventoryDomains as string[]) {
       try {
         // Find domain scoped to tenant
         const domain = await domainRepo.findByNameForTenant(domainName, tenantId);
@@ -291,6 +300,18 @@ fleetReportRoutes.get('/templates', (c) => {
 // =============================================================================
 // Helper Types & Functions
 // =============================================================================
+
+function inventoryItemDomain(item: unknown): string | undefined {
+  const domain =
+    typeof item === 'string'
+      ? item
+      : item && typeof item === 'object' && !Array.isArray(item)
+        ? (item as { domain?: unknown }).domain
+        : undefined;
+
+  if (typeof domain !== 'string' || !isValidDomain(domain)) return undefined;
+  return domain.trim();
+}
 
 interface FleetReportResult {
   domain: string;

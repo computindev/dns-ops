@@ -16,7 +16,7 @@ vulnerabilities plus one wiring deficiency:
 
 | Finding | Severity | Status |
 |---------|----------|--------|
-| IPv4-mapped IPv6 bypass (`::ffff:127.0.0.1`) | High | **Fixed** |
+| IPv6 target policy bypass (including `fec0::/10` and mapped forms) | High | **Fixed — all IPv6 targets fail closed** |
 | Redirect-to-private bypass (MTA-STS 3xx) | High | **Fixed** |
 | `PROBE_CONCURRENCY` / `PROBE_TIMEOUT_MS` not wired | Medium | **Fixed** |
 | No global semaphore (per-request only) | Medium | **Fixed** |
@@ -35,7 +35,7 @@ the PR-06 fixes.
 |--------|----------|------------|---------|
 | SSRF — private network access | Critical | SSRF guard + allowlist | ✅ |
 | SSRF — cloud metadata services (169.254.169.254) | Critical | Link-local block | ✅ |
-| SSRF — IPv4-mapped IPv6 (`::ffff:x.x.x.x`) | High | IPv4 extraction in checkIPv6 | ✅ Fixed in PR-06 |
+| SSRF — IPv4-mapped IPv6 (`::ffff:x.x.x.x`) | High | IPv6 fail-closed policy | ✅ Fixed in PR-06.1 |
 | SSRF — redirect-to-private (HTTP 3xx) | High | Native HTTPS rejects every 3xx | ✅ Fixed |
 | DNS rebinding (TOCTOU) | Medium | Checked-address pinning for SMTP and MTA-STS | ✅ Fixed |
 | Concurrency abuse (probe flood) | Medium | Global semaphore | ✅ Fixed in PR-06 |
@@ -71,27 +71,23 @@ All blocking is implemented in `apps/collector/src/probes/ssrf-guard.ts`.
 | `192.0.2.0/24` | TEST-NET-1 | `checkIPv4` range table |
 | `198.51.100.0/24` | TEST-NET-2 | `checkIPv4` range table |
 | `203.0.113.0/24` | TEST-NET-3 | `checkIPv4` range table |
-| `::1/128` | IPv6 loopback | `checkIPv6` prefix match |
-| `fe80::/10` | IPv6 link-local | `checkIPv6` prefix match |
-| `fc00::/7`, `fd::/8` | Unique local | `checkIPv6` prefix match |
-| `ff00::/8` | IPv6 multicast | `checkIPv6` prefix match |
-| `::ffff:x.x.x.x/96` | IPv4-mapped IPv6 | `extractIPv4FromMapped` → `checkIPv4` |
+| All IPv6 addresses, including `fec0::/10` | IPv6 policy not yet complete and maintained | `checkIPv6` fail-closed policy |
+| IPv4-mapped and IPv4-compatible IPv6 forms | IPv6 policy is intentionally fail closed | `checkIPv6` fail-closed policy |
 
-### Gap Fixed: IPv4-mapped IPv6 (`::ffff:x.x.x.x`)
+### IPv6 fail-closed policy
 
-**What was wrong (v1.0):** `checkIPv6` used prefix string matching. Addresses
-like `::ffff:127.0.0.1` start with `::` and were caught by the `::/128`
-(unspecified) prefix — meaning they were blocked, but with the wrong category
-(`reserved` instead of `loopback`). More importantly, `::ffff:8.8.8.8`
-(a public IPv4 in mapped form) was also incorrectly blocked.
+The controlled live harness accepts only checked public IPv4 answers. The
+active-probe SSRF guard follows the same boundary: every IPv6 literal is
+rejected until a complete, maintained IPv6 public-address policy exists. This
+includes unique-local, deprecated site-local (`fec0::/10`), documentation,
+multicast, IPv4-mapped, and IPv4-compatible forms. SMTP resolution and
+MTA-STS resolution both reject such answers before creating a socket or HTTPS
+request.
 
-**The fix (PR-06):** `checkIPv6` now detects `::ffff:` prefix and calls
-`extractIPv4FromMapped()`, which parses both dot-decimal (`::ffff:127.0.0.1`)
-and hex (`::ffff:7f00:0001`) notations, then routes the extracted IPv4 through
-`checkIPv4`. This gives correct classification (loopback/private/public) and
-correctly allows public IPv4-mapped addresses.
-
-**Test coverage:** `ssrf-guard.test.ts` PR-06.1 section; `probe-security.e2e.test.ts`.
+**Test coverage:** IPv6 boundary and mapped-form cases in
+`ssrf-guard.test.ts`, resolved-address cases in `smtp-starttls.test.ts` and
+`mta-sts.test.ts`, and the controlled policy in
+`tools/controlled-live-harness/runner.mjs`.
 
 ### Gap Fixed: Redirect-to-Private via HTTP 3xx
 
@@ -116,20 +112,22 @@ separate operations, the private IP is used without ever being checked.
 
 ### Current mitigation
 
-Both active probes resolve their target before opening a connection, reject
-failed or unsafe resolution, and prevent a second DNS decision:
+All active outbound paths resolve their target before opening a connection,
+reject failed or unsafe resolution, and prevent a second DNS decision:
 
 - **SMTP probe (`smtp-starttls.ts`):** resolves with `dns.promises.lookup`,
-  checks the address through `checkSSRF`, and connects to the checked IP
-  literal. DNS failures fail closed.
+  checks the address through `checkSSRF`, and connects to the checked IPv4
+  literal. DNS failures and every IPv6 answer fail closed.
 - **MTA-STS probe (`mta-sts.ts`):** resolves every address with
-  `dns.promises.lookup(..., { all: true })`, rejects unsafe or malformed output,
-  and passes a static `lookup` callback to native `https.request`. The request
-  uses `servername` and `Host` for the original hostname while the TCP
-  connection remains pinned to the checked address.
+  `dns.promises.lookup(..., { all: true })`, rejects unsafe, malformed, and
+  IPv6 output, and passes a static `lookup` callback to native
+  `https.request`. The request uses `servername` and `Host` for the original
+  hostname while the TCP connection remains pinned to the checked address.
+- **Webhook delivery (`notifications/webhook.ts`):** resolves a single public
+  IPv4, rejects DNS errors, and uses native HTTPS with a static lookup/address
+  pin. Redirects are rejected and the response is bounded and consumed under
+  one cumulative deadline.
 
-The compatibility-sensitive `resolveAndCheck()` helper remains fail-open on
-DNS errors for webhook callers; MTA-STS does not use it.
 
 ### Hardening note
 
@@ -282,7 +280,7 @@ public unicast destinations at the network layer as defense in depth.
 
 | Gap | Severity | Recommendation |
 |-----|----------|---------------|
-| `::` covers non-mapped IPv6 addresses broadly | Low | Acceptable — probe targets should be standard FQDN hostnames resolved from DNS, not raw IPv6 literals |
+| Complete public IPv6 policy is not yet maintained | Medium | All IPv6 literals and DNS answers fail closed until the policy exists |
 
 ---
 
@@ -292,6 +290,7 @@ public unicast destinations at the network layer as defense in depth.
 |---------|------|---------|
 | 1.0.0 | 2024-03-24 | Initial (unverified — incorrectly claimed zero remaining gaps) |
 | 2.0.0 | 2026-04-04 | PR-06 security audit; fixed IPv4-mapped IPv6, redirect handling, config wiring, semaphore gaps, DNS pinning, and body/deadline limits |
+| 2.1.0 | 2026-09-01 | Fail closed for all IPv6 active-probe targets; pin webhook HTTPS delivery and reject DNS failures, redirects, and oversized bodies |
 
 ---
 

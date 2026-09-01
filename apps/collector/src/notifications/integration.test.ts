@@ -2,25 +2,37 @@
  * Notification Integration Tests - PR-08.3
  *
  * Tests webhook notification integration with alert creation:
- * - Webhook URL configured → fetch fires with correct payload
+ * - Webhook URL configured → native HTTPS request fires with correct payload
  * - No webhook URL → no attempt
  * - Suppressed alert → no notification
  * - Private IP webhook → SSRF guard rejects
  * - Webhook timeout → error logged, no crash
  */
 
+import { promises as dnsPromises } from 'node:dns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildWebhookPayload, isPrivateUrl, sendAlertWebhook } from './webhook.js';
+import { installWebhookTransportMock } from './webhook.test-support.js';
 
+vi.mock('node:dns', () => ({
+  promises: { lookup: vi.fn() },
+}));
+
+const mockLookup = dnsPromises.lookup as ReturnType<typeof vi.fn>;
+const mockHttpsRequest = vi.hoisted(() => vi.fn());
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('node:https', () => ({ request: mockHttpsRequest }));
 
 describe('PR-08.3: Notification Integration Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    mockHttpsRequest.mockReset();
+    installWebhookTransportMock(mockHttpsRequest, mockFetch);
   });
 
-  describe('Webhook URL configured → fetch fires with correct payload', () => {
+  describe('Webhook URL configured → native HTTPS request fires with correct payload', () => {
     it('sends webhook with correct payload structure', async () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 

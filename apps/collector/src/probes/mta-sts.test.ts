@@ -203,6 +203,24 @@ describe('fetchMTASTSPolicy pinned HTTPS transport', () => {
   });
 
   it.each([
+    ['fc00::1', 6],
+    ['fec0::1', 6],
+    ['2606:4700:4700::1111', 6],
+    ['::ffff:93.184.216.34', 6],
+  ] as const)('rejects IPv6 answer %s before opening HTTPS', async (address, family) => {
+    fixtureState.lookup.mockResolvedValue([{ address, family }]);
+
+    const result = await fetchMTASTSPolicy('example.com', 'tenant-fixture', {
+      checkAllowlist: false,
+      timeoutMs: 1000,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(address);
+    expect(fixtureState.requests).toHaveLength(0);
+  });
+
+  it.each([
     ['100.64.0.0', '100.64.0.0/10'],
     ['100.127.255.255', '100.64.0.0/10'],
     ['198.18.0.0', '198.18.0.0/15'],

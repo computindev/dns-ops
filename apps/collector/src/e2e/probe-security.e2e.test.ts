@@ -6,8 +6,8 @@
  *
  * These tests are designed to catch the class of issues found during the
  * PR-06 security review:
- *   1. IPv4-mapped IPv6 bypass (::ffff:127.0.0.1)
- *   2. Redirect-to-private bypass (fetch following 3xx to private IP)
+ *   1. IPv6 policy bypass (including mapped and site-local forms)
+ *   2. Redirect-to-private bypass (following 3xx to private IP)
  *   3. Concurrency/timeout not wired from env config
  *   4. Global semaphore not enforced across concurrent requests
  *
@@ -21,66 +21,41 @@ import { resetProbeSemaphore, Semaphore } from '../probes/semaphore.js';
 import { checkSSRF, validateUrl } from '../probes/ssrf-guard.js';
 
 // ---------------------------------------------------------------------------
-// PR-06.1 — SSRF Guard: IPv4-mapped IPv6 bypass
+// PR-06.1 — SSRF Guard: IPv6 targets fail closed
 // ---------------------------------------------------------------------------
 
-describe('PR-06.1 E2E: IPv4-mapped IPv6 SSRF bypass prevention', () => {
-  // Gap: the original checkIPv6 used prefix matching and caught ::ffff:* as
-  // "::/128 (unspecified)" with the wrong category. Public IPv4-mapped IPs
-  // were also incorrectly blocked. The fix extracts the embedded IPv4 and
-  // routes it through checkIPv4 for correct classification.
+describe('PR-06.1 E2E: IPv6 SSRF targets fail closed', () => {
+  // IPv6 policy is intentionally fail closed until a complete, maintained
+  // public-address policy exists. Mapped forms cannot bypass that boundary.
 
-  const PRIVATE_MAPPED = [
-    { addr: '::ffff:127.0.0.1', category: 'loopback', desc: 'loopback via mapped' },
-    { addr: '::ffff:10.0.0.1', category: 'private', desc: '10.x via mapped' },
-    { addr: '::ffff:192.168.1.1', category: 'private', desc: '192.168.x via mapped' },
-    { addr: '::ffff:172.16.0.1', category: 'private', desc: '172.16.x via mapped' },
-    { addr: '::ffff:172.31.255.255', category: 'private', desc: '172.31.x via mapped' },
-    { addr: '::ffff:169.254.169.254', category: 'link-local', desc: 'AWS metadata via mapped' },
-    { addr: '::ffff:0.0.0.0', category: 'reserved', desc: '0.0.0.0 via mapped' },
+  const IPV6_TARGETS = [
+    '::ffff:127.0.0.1',
+    '::ffff:10.0.0.1',
+    '::ffff:8.8.8.8',
+    '::ffff:7f00:0001',
+    'fec0::1',
+    '2001:db8::1',
   ] as const;
 
-  for (const { addr, category, desc } of PRIVATE_MAPPED) {
-    it(`blocks ${desc} (${addr})`, () => {
+  for (const addr of IPV6_TARGETS) {
+    it(`blocks IPv6 target ${addr}`, () => {
       const r = checkSSRF(addr);
       expect(r.allowed, `${addr} should be blocked`).toBe(false);
-      expect(r.blockedCategory, `${addr} wrong category`).toBe(category);
+      expect(r.blockedCategory, `${addr} wrong category`).toBe('reserved');
     });
   }
-
-  it('blocks ::ffff:7f00:0001 (hex form of 127.0.0.1) as loopback', () => {
-    const r = checkSSRF('::ffff:7f00:0001');
-    expect(r.allowed).toBe(false);
-    expect(r.blockedCategory).toBe('loopback');
-  });
-
-  it('blocks ::ffff:c0a8:0101 (hex form of 192.168.1.1) as private', () => {
-    const r = checkSSRF('::ffff:c0a8:0101');
-    expect(r.allowed).toBe(false);
-    expect(r.blockedCategory).toBe('private');
-  });
-
-  it('ALLOWS ::ffff:8.8.8.8 (Google DNS, public IPv4 in mapped form)', () => {
-    const r = checkSSRF('::ffff:8.8.8.8');
-    expect(r.allowed).toBe(true);
-  });
-
-  it('ALLOWS ::ffff:1.1.1.1 (Cloudflare DNS, public IPv4 in mapped form)', () => {
-    const r = checkSSRF('::ffff:1.1.1.1');
-    expect(r.allowed).toBe(true);
-  });
 
   it('validateUrl blocks https://[::ffff:127.0.0.1] (IPv6 URL syntax)', () => {
     // Browsers and curl accept bracketed IPv6 in URLs
     const r = validateUrl('https://[::ffff:127.0.0.1]/path');
     expect(r.allowed).toBe(false);
-    expect(r.blockedCategory).toBe('loopback');
+    expect(r.blockedCategory).toBe('reserved');
   });
 
   it('validateUrl blocks https://[::ffff:10.0.0.1]', () => {
     const r = validateUrl('https://[::ffff:10.0.0.1]');
     expect(r.allowed).toBe(false);
-    expect(r.blockedCategory).toBe('private');
+    expect(r.blockedCategory).toBe('reserved');
   });
 });
 
@@ -89,9 +64,8 @@ describe('PR-06.1 E2E: IPv4-mapped IPv6 SSRF bypass prevention', () => {
 // ---------------------------------------------------------------------------
 
 describe('PR-06.1 E2E: DNS rebinding risk documentation', () => {
-  // The SSRF guard checks the URL hostname at call time but cannot prevent a
-  // DNS server from returning different IPs on the second resolution (rebind).
-  // We document the residual risk and verify the mitigating checks work.
+  // The SSRF guard checks the URL hostname and each resolved address. Active
+  // transports pin the checked address before making a connection.
 
   it('blocks a private IP that a rebound hostname could resolve to (127.0.0.1)', () => {
     // After rebinding, the guard MUST block the resolved IP
@@ -111,10 +85,7 @@ describe('PR-06.1 E2E: DNS rebinding risk documentation', () => {
     expect(r.blockedCategory).toBe('link-local');
   });
 
-  // Note: Full DNS rebinding prevention requires a custom `lookup` callback
-  // in net.connect / tls.connect that resolves the hostname and passes the
-  // result through checkSSRF before connecting. That is a future hardening
-  // item documented in the security review (docs/security/probe-sandbox-review.md).
+  // SMTP, MTA-STS, and webhook transports use checked-address pinning.
 });
 
 // ---------------------------------------------------------------------------
@@ -122,11 +93,8 @@ describe('PR-06.1 E2E: DNS rebinding risk documentation', () => {
 // ---------------------------------------------------------------------------
 
 describe('PR-06.1 E2E: Redirect-to-private prevention in MTA-STS fetch', () => {
-  // Gap: fetch() follows redirects by default. Without redirect:'error', a
-  // server at mta-sts.attacker.com returning 301→http://127.0.0.1/exfil
-  // would be followed without SSRF checking the redirect target.
-  //
-  // Fix: mta-sts.ts now passes redirect:'error' to fetch().
+  // Native HTTPS transports do not follow redirects; MTA-STS and webhook
+  // delivery reject every 3xx response.
 
   it('validateUrl blocks redirect target http://127.0.0.1/exfil', () => {
     const r = validateUrl('http://127.0.0.1/exfil');
@@ -149,7 +117,7 @@ describe('PR-06.1 E2E: Redirect-to-private prevention in MTA-STS fetch', () => {
   it('validateUrl blocks redirect target http://[::ffff:127.0.0.1]/', () => {
     const r = validateUrl('http://[::ffff:127.0.0.1]/');
     expect(r.allowed).toBe(false);
-    expect(r.blockedCategory).toBe('loopback');
+    expect(r.blockedCategory).toBe('reserved');
   });
 
   it('validateUrl allows redirect to legitimate public URL', () => {
@@ -159,12 +127,11 @@ describe('PR-06.1 E2E: Redirect-to-private prevention in MTA-STS fetch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PR-06.1 E2E — fc00::/7 unique local full range (pre-existing prefix bug)
+// PR-06.1 E2E — unique local IPv6 targets fail closed
 // ---------------------------------------------------------------------------
 
-describe('PR-06.1 E2E: fc00::/7 unique local IPv6 full range', () => {
-  // Bug in pre-PR-06 code: prefix 'fc00:' only matched fc00::/12, not full /7.
-  // fc00::/7 = fc00:: through fdff::. Requires 'fc' and 'fd' prefixes.
+describe('PR-06.1 E2E: unique local IPv6 targets fail closed', () => {
+  // Every IPv6 target is rejected until a complete, maintained policy exists.
 
   const UNIQUE_LOCAL = [
     { addr: 'fc00::1', desc: 'fc00:: start' },
@@ -177,10 +144,10 @@ describe('PR-06.1 E2E: fc00::/7 unique local IPv6 full range', () => {
   ];
 
   for (const { addr, desc } of UNIQUE_LOCAL) {
-    it(`blocks ${desc} (${addr}) as private`, () => {
+    it(`blocks ${desc} (${addr}) as reserved`, () => {
       const r = checkSSRF(addr);
       expect(r.allowed, `${addr} should be blocked`).toBe(false);
-      expect(r.blockedCategory, `${addr} wrong category`).toBe('private');
+      expect(r.blockedCategory, `${addr} wrong category`).toBe('reserved');
     });
   }
 });
@@ -559,7 +526,7 @@ describe('PR-06 E2E: Defense-in-depth — both SSRF guard and allowlist enforced
 
     const r = simulateProbeRequest('::ffff:192.168.1.1', TENANT, 25);
     expect(r.blocked).toBe(true);
-    expect(r.reason).toContain('ssrf:private');
+    expect(r.reason).toContain('ssrf:reserved');
   });
 
   it('public hostname not in allowlist: blocked at allowlist layer', () => {

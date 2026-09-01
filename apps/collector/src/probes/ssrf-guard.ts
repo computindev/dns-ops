@@ -9,7 +9,7 @@ import { isIP } from 'node:net';
  * - Link-local addresses
  * - Multicast addresses
  * - Reserved addresses
- * - IPv4-mapped IPv6 addresses that embed private/loopback IPv4
+ * - All IPv6 targets until a complete public-address policy is maintained
  *
  * Security review: docs/security/probe-sandbox-review.md
  */
@@ -91,65 +91,17 @@ function checkIPv4(ip: string): SSRFCheckResult {
 }
 
 /**
- * Extract the embedded IPv4 address from an IPv4-mapped IPv6 address.
- *
- * IPv4-mapped IPv6 format: ::ffff:a.b.c.d  (RFC 4291 §2.5.5.2)
- *
- * These addresses represent IPv4 nodes in an IPv6 address space. An SSRF
- * bypass would occur if we checked the outer IPv6 form and missed that the
- * embedded IPv4 is private/loopback. We extract and check through checkIPv4.
- *
- * @returns The dotted-decimal IPv4 string, or null if not IPv4-mapped.
- */
-function extractIPv4FromMapped(normalized: string): string | null {
-  let address = normalized;
-  const dottedTail = address.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (dottedTail) {
-    const octets = dottedTail.slice(1).map(Number);
-    if (octets.some((octet) => octet < 0 || octet > 255)) return null;
-    const high = ((octets[0] << 8) | octets[1]).toString(16);
-    const low = ((octets[2] << 8) | octets[3]).toString(16);
-    address = `${address.slice(0, dottedTail.index)}${high}:${low}`;
-  }
-
-  const compressedParts = address.split('::');
-  if (compressedParts.length > 2) return null;
-  const left = compressedParts[0] ? compressedParts[0].split(':') : [];
-  const right =
-    compressedParts.length === 2 && compressedParts[1] ? compressedParts[1].split(':') : [];
-  const missing = compressedParts.length === 2 ? 8 - left.length - right.length : 0;
-  const parts =
-    compressedParts.length === 2
-      ? [...left, ...Array(Math.max(0, missing)).fill('0'), ...right]
-      : left;
-  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null;
-  const hextets = parts.map((part) => Number.parseInt(part, 16));
-  const mappedPrefix = hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
-  const compatiblePrefix = hextets.slice(0, 6).every((part) => part === 0);
-  if (!mappedPrefix && !compatiblePrefix) return null;
-
-  const high = hextets[6];
-  const low = hextets[7];
-  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
-}
-
-/**
- * Normalize and check IPv6 address.
- *
- * SECURITY: IPv4-mapped IPv6 (::ffff:x.x.x.x) is handled first by extracting
- * the embedded IPv4 and running it through checkIPv4. This ensures correct
- * classification (loopback/private/public) rather than a blanket "unspecified"
- * block.
+ * Reject IPv6 targets until a complete, maintained IPv6 public-address policy
+ * exists. This intentionally includes IPv4-mapped and IPv4-compatible forms:
+ * the controlled live harness accepts only validated public IPv4 answers, and
+ * active probes must enforce the same boundary.
  */
 function checkIPv6(ip: string): SSRFCheckResult {
-  // Normalize IPv6 (lowercase, strip brackets)
   const normalized = ip
     .toLowerCase()
     .trim()
     .replace(/^\[|\]$/g, '');
 
-  // Zone identifiers are meaningful only in a local interface context and are
-  // never valid outbound probe targets. Reject rather than normalize them.
   if (normalized.includes('%')) {
     return {
       allowed: false,
@@ -158,65 +110,15 @@ function checkIPv6(ip: string): SSRFCheckResult {
     };
   }
 
-  if (normalized === '::1') {
-    return { allowed: false, reason: 'Blocked: ::1/128 (loopback)', blockedCategory: 'loopback' };
-  }
-  if (normalized === '::') {
-    return { allowed: false, reason: 'Blocked: ::/128 (unspecified)', blockedCategory: 'reserved' };
-  }
-
-  // --- IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) ---
-  // Must be checked BEFORE the generic prefix list because ::ffff: starts
-  // with :: and would otherwise be caught as "unspecified" with wrong category.
-  const embeddedIPv4 = extractIPv4FromMapped(normalized);
-  if (embeddedIPv4 !== null) {
-    const ipv4Result = checkIPv4(embeddedIPv4);
-    if (!ipv4Result.allowed) {
-      // Preserve exact category from the IPv4 check (loopback, private, etc.)
-      return {
-        allowed: false,
-        reason: `Blocked: IPv4-mapped IPv6 embeds blocked IPv4 – ${ipv4Result.reason}`,
-        blockedCategory: ipv4Result.blockedCategory,
-      };
-    }
-    // Embedded IPv4 is public — allow the mapped address
-    return { allowed: true };
-  }
-
   if (isIP(normalized) !== 6) {
     return { allowed: false, reason: 'Invalid IPv6 address', blockedCategory: 'invalid' };
   }
 
-  // Classify the complete CIDR range from the first 16-bit hextet rather than
-  // matching one textual spelling. This covers compressed and expanded forms.
-  const firstHextetText = normalized.split(':').find((part) => part.length > 0);
-  const firstHextet = firstHextetText ? Number.parseInt(firstHextetText, 16) : Number.NaN;
-  if (!Number.isFinite(firstHextet) || firstHextet < 0 || firstHextet > 0xffff) {
-    return { allowed: false, reason: 'Invalid IPv6 address', blockedCategory: 'invalid' };
-  }
-  if ((firstHextet & 0xffc0) === 0xfe80) {
-    return {
-      allowed: false,
-      reason: 'Blocked: fe80::/10 (link-local)',
-      blockedCategory: 'link-local',
-    };
-  }
-  if ((firstHextet & 0xfe00) === 0xfc00) {
-    return {
-      allowed: false,
-      reason: 'Blocked: fc00::/7 (unique local)',
-      blockedCategory: 'private',
-    };
-  }
-  if ((firstHextet & 0xff00) === 0xff00) {
-    return {
-      allowed: false,
-      reason: 'Blocked: ff00::/8 (multicast)',
-      blockedCategory: 'multicast',
-    };
-  }
-
-  return { allowed: true };
+  return {
+    allowed: false,
+    reason: 'Blocked: IPv6 targets are not permitted until a complete maintained policy exists',
+    blockedCategory: 'reserved',
+  };
 }
 
 /**
@@ -296,41 +198,64 @@ export function checkResolvedIP(ip: string): SSRFCheckResult {
   return checkSSRF(ip);
 }
 
+/** Race DNS resolution against a caller-owned cumulative deadline. */
+function withAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  if (signal.aborted) return Promise.reject(new Error('DNS resolution aborted'));
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('DNS resolution aborted'));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+}
+
 /**
- * Resolve a hostname and verify the resolved IP is safe.
- *
- * Pre-checks the DNS result against the DNS rebinding case: validateUrl()
- * checks the hostname string, while a downstream client may resolve DNS
- * independently. This function resolves first, checks the result, and returns
- * the address so strict callers can pin their connection to it. It retains
- * fail-open behavior on DNS errors for compatibility-sensitive webhook callers.
- *
- * NOTE: This helper intentionally retains its fail-open DNS-error behavior
- * for compatibility-sensitive webhook callers. Callers that need strict
- * pinning must resolve with a fail-closed policy and pass a static `lookup`
- * callback to their native Node request, as the MTA-STS probe does.
- *
- * @returns The resolved IP address if safe, or an SSRFCheckResult if blocked.
+ * Resolve a hostname and verify a public IPv4 address before a caller pins it.
+ * DNS failures are rejected rather than falling back to hostname resolution.
  */
 export async function resolveAndCheck(
-  hostname: string
+  hostname: string,
+  signal?: AbortSignal
 ): Promise<{ allowed: true; ip: string } | (SSRFCheckResult & { allowed: false })> {
-  // Check hostname/IP against SSRF blocklists first (covers empty, localhost, IP literals)
+  // Check hostname/IP against SSRF blocklists first (covers empty, localhost, IP literals).
   const ssrfResult = checkSSRF(hostname);
   if (!ssrfResult.allowed) {
     return { ...ssrfResult, allowed: false as const };
   }
 
-  // Skip resolution for IP literals — we already checked them above
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname.includes(':')) {
+  // Public IPv4 literals are already resolved and checked.
+  if (isIP(hostname) === 4) {
     return { allowed: true, ip: hostname };
   }
 
   try {
     const { promises: dnsPromises } = await import('node:dns');
-    const { address } = await dnsPromises.lookup(hostname);
+    const resolved = await withAbort(dnsPromises.lookup(hostname, { family: 4 }), signal);
+    const address = typeof resolved === 'string' ? resolved : resolved.address;
+    const family = typeof resolved === 'string' ? isIP(address) : resolved.family;
     const ipCheck = checkSSRF(address);
-
     if (!ipCheck.allowed) {
       return {
         allowed: false,
@@ -338,12 +263,21 @@ export async function resolveAndCheck(
         blockedCategory: ipCheck.blockedCategory,
       };
     }
+    if (family !== 4 || isIP(address) !== 4) {
+      return {
+        allowed: false,
+        reason: `DNS resolution did not return a public IPv4 address for ${hostname}`,
+        blockedCategory: 'invalid',
+      };
+    }
 
     return { allowed: true, ip: address };
-  } catch {
-    // DNS resolution failure (ENOTFOUND, ESERVFAIL, etc.) is NOT treated as a
-    // rebinding block for compatibility-sensitive webhook callers. Strict
-    // probe callers use their own fail-closed resolution path instead.
-    return { allowed: true, ip: hostname };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      allowed: false,
+      reason: `DNS resolution failed for ${hostname}: ${message}`,
+      blockedCategory: 'invalid',
+    };
   }
 }

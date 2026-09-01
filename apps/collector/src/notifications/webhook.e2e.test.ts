@@ -7,19 +7,31 @@
  * - Alert status transitions (pending → sent)
  */
 
+import { promises as dnsPromises } from 'node:dns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildWebhookPayload, isPrivateUrl, sendAlertWebhook } from './webhook.js';
+import { installWebhookTransportMock } from './webhook.test-support.js';
+
+vi.mock('node:dns', () => ({
+  promises: { lookup: vi.fn() },
+}));
 
 // =============================================================================
-// Mock fetch for E2E tests
+// Mock native HTTPS for E2E tests
 // =============================================================================
 
+const mockLookup = dnsPromises.lookup as ReturnType<typeof vi.fn>;
+const mockHttpsRequest = vi.hoisted(() => vi.fn());
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('node:https', () => ({ request: mockHttpsRequest }));
 
 describe('Phase 2: Webhook Notification E2E Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    mockHttpsRequest.mockReset();
+    installWebhookTransportMock(mockHttpsRequest, mockFetch);
   });
 
   // =============================================================================
@@ -51,7 +63,7 @@ describe('Phase 2: Webhook Notification E2E Tests', () => {
       expect(result.statusCode).toBe(200);
       expect(result.resolvedHostname).toBe('webhook.service.com');
 
-      // Verify fetch was called with correct parameters
+      // Verify the native HTTPS request through the fixture's request-plan spy
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch).toHaveBeenCalledWith(
         'https://webhook.service.com/alerts',
@@ -383,6 +395,10 @@ describe('Phase 2: Webhook Notification E2E Tests', () => {
 describe('Webhook Integration Patterns', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    mockHttpsRequest.mockReset();
+    installWebhookTransportMock(mockHttpsRequest, mockFetch);
   });
 
   it('demonstrates successful webhook delivery pattern', async () => {
