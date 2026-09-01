@@ -16,7 +16,7 @@ interface ReportTemplate {
 
 interface CheckResult {
   check: string;
-  status: 'pass' | 'fail' | 'warning' | 'missing';
+  status: 'pass' | 'fail' | 'warning' | 'missing' | 'unknown';
   severity: 'ok' | 'low' | 'medium' | 'high' | 'critical';
   message: string;
   details?: Record<string, unknown>;
@@ -40,6 +40,7 @@ interface FleetReportResponse {
   summary: {
     totalDomains: number;
     domainsWithIssues: number;
+    unknownChecks: number;
     [key: string]: unknown;
   };
   results?: FleetReportResult[];
@@ -293,12 +294,17 @@ example.org, example.net"
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <SummaryCard label="Domains Checked" value={report.domainsChecked} color="blue" />
               <SummaryCard
                 label="With Issues"
                 value={report.summary.domainsWithIssues}
                 color={report.summary.domainsWithIssues > 0 ? 'yellow' : 'green'}
+              />
+              <SummaryCard
+                label="Unknown"
+                value={report.summary.unknownChecks}
+                color={report.summary.unknownChecks > 0 ? 'orange' : 'green'}
               />
               <SummaryCard
                 label="High Priority"
@@ -384,6 +390,18 @@ example.org, example.net"
   );
 }
 
+// Export for testing — UNKNOWN must never render with clean/success styling.
+export function statusBadge(status: CheckResult['status']): { style: string; icon: string } {
+  const badges = {
+    pass: { style: 'ds-badge--success', icon: '✓' },
+    fail: { style: 'ds-badge--danger', icon: '✗' },
+    warning: { style: 'ds-badge--warning', icon: '!' },
+    missing: { style: 'ds-badge--unknown', icon: '?' },
+    unknown: { style: 'ds-badge--unknown', icon: '?' },
+  };
+  return badges[status];
+}
+
 // =============================================================================
 // Helper Components
 // =============================================================================
@@ -416,17 +434,23 @@ function SummaryCard({
 function DomainResultCard({ result }: { result: FleetReportResult }) {
   const [expanded, setExpanded] = useState(false);
   const hasIssues = result.issues.length > 0;
+  const hasUnknownChecks = result.checks.some((check) => check.status === 'unknown');
 
   return (
     <div
       className={`p-3 rounded-lg border ${
-        hasIssues ? 'border-warning bg-warning-surface' : 'border-line bg-surface-muted'
+        hasIssues || hasUnknownChecks
+          ? 'border-warning bg-warning-surface'
+          : 'border-line bg-surface-muted'
       }`}
     >
       <div className="flex items-center justify-between">
         <div>
           <span className="font-medium text-ink">{result.domain}</span>
           <span className="ml-2 text-xs text-muted">{result.findingsCount} findings</span>
+          {hasUnknownChecks && (
+            <span className="ds-badge ds-badge--unknown ml-2">Unknown checks</span>
+          )}
         </div>
         <button
           type="button"
@@ -456,19 +480,10 @@ function DomainResultCard({ result }: { result: FleetReportResult }) {
 }
 
 function StatusBadge({ status }: { status: CheckResult['status'] }) {
-  const styles = {
-    pass: 'ds-badge--success',
-    fail: 'ds-badge--danger',
-    warning: 'ds-badge--warning',
-    missing: 'ds-badge--unknown',
-  };
-
-  const icons = {
-    pass: '✓',
-    fail: '✗',
-    warning: '!',
-    missing: '?',
-  };
-
-  return <span className={`ds-badge ${styles[status]}`}>{icons[status]}</span>;
+  const badge = statusBadge(status);
+  return (
+    <span className={`ds-badge ${badge.style}`} title={status}>
+      {badge.icon}
+    </span>
+  );
 }

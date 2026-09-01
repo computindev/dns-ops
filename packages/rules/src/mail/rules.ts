@@ -221,9 +221,9 @@ export const spfRule: Rule = {
           riskPosture: 'high',
           blastRadius: 'single-domain',
           reviewOnly: false,
-          evidence: successfulTxtObs.map((obs) => ({
+          evidence: allTxtObservations.map((obs) => ({
             observationId: obs.id,
-            description: `${obs.vantageType}: TXT record present but no SPF found`,
+            description: `${obs.vantageType}: ${obs.status} — no SPF record found`,
           })),
           ruleId: this.id,
           ruleVersion: this.version,
@@ -390,12 +390,12 @@ export const dmarcRule: Rule = {
 
   evaluate(context: RuleContext): RuleResult | null {
     // Find DMARC TXT record
-    const dmarcObservations = context.observations.filter(
+    const allDmarcObservations = context.observations.filter(
       (obs) =>
         obs.queryType === 'TXT' &&
-        obs.queryName.toLowerCase() === `_dmarc.${context.domainName}`.toLowerCase() &&
-        obs.status === 'success'
+        obs.queryName.toLowerCase() === `_dmarc.${context.domainName}`.toLowerCase()
     );
+    const dmarcObservations = allDmarcObservations.filter((obs) => obs.status === 'success');
 
     let dmarcRecord: string | null = null;
     let dmarcObservation: Observation | null = null;
@@ -422,9 +422,9 @@ export const dmarcRule: Rule = {
           riskPosture: 'high',
           blastRadius: 'single-domain',
           reviewOnly: false,
-          evidence: dmarcObservations.map((obs) => ({
+          evidence: allDmarcObservations.map((obs) => ({
             observationId: obs.id,
-            description: `${obs.vantageType}: ${obs.status}`,
+            description: `${obs.vantageType}: ${obs.status} — no DMARC record found`,
           })),
           ruleId: this.id,
           ruleVersion: this.version,
