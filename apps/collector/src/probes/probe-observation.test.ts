@@ -497,10 +497,33 @@ describe('Probe Observation Persistence', () => {
     ];
 
     const makeRepo = (fixtures: ProbeObservation[]) => {
+      const fixtureIds = new Set(fixtures.map((f) => f.id));
+      // Extract the id matched by an eq(probeObservations.id, id) condition.
+      // Drizzle conditions are cyclic graphs; bound the walk.
+      const idFromCondition = (
+        condition: unknown,
+        depth = 0,
+        seen = new Set<unknown>()
+      ): string | null => {
+        if (typeof condition === 'string' && fixtureIds.has(condition)) return condition;
+        if (condition === null || typeof condition !== 'object' || depth > 6 || seen.has(condition))
+          return null;
+        seen.add(condition);
+        for (const value of Object.values(condition)) {
+          const hit = idFromCondition(value, depth + 1, seen);
+          if (hit) return hit;
+        }
+        return null;
+      };
       const selectWhere = vi.fn(async () => fixtures);
+      const select = vi.fn(async () => fixtures);
+      const selectOne = vi.fn(async (_table: unknown, condition: unknown) => {
+        const id = idFromCondition(condition);
+        return id ? (fixtures.find((f) => f.id === id) ?? null) : null;
+      });
       const mockDb = {
-        select: vi.fn(),
-        selectOne: vi.fn(),
+        select,
+        selectOne,
         selectWhere,
         insert: vi.fn(),
         insertMany: vi.fn(),
@@ -509,7 +532,7 @@ describe('Probe Observation Persistence', () => {
         transaction: vi.fn(),
         getDrizzle: vi.fn(),
       } as unknown as IDatabaseAdapter;
-      return { repo: new ProbeObservationRepository(mockDb), selectWhere };
+      return { repo: new ProbeObservationRepository(mockDb), selectWhere, selectOne, select };
     };
 
     it('findBySnapshotId reads untrusted SMTP success as error without mutating rows', async () => {
@@ -620,6 +643,280 @@ describe('Probe Observation Persistence', () => {
       expect(summary.failed).toBe(12);
       expect(summary.byType).toEqual({ smtp_starttls: 12, mta_sts: 2 });
       expect(summary.avgResponseTimeMs).toBe(100);
+    });
+
+    // Extra rows for the slow-probe threshold and time-range boundaries.
+    const makeReadBoundaryFixtures = (): ProbeObservation[] => [
+      ...makeFixtures(),
+      // Forged SMTP row whose response time sits exactly at the threshold.
+      smtpRow(
+        'smtp-forged-at-threshold',
+        {
+          supportsStarttls: true,
+          tlsNegotiated: true,
+          tlsTrusted: true, // forged: no certificate evidence
+        },
+        { responseTimeMs: 500 }
+      ),
+      // Legacy SMTP row with null timing.
+      smtpRow('smtp-null-timing', null, { responseTimeMs: null }),
+      // SMTP row probed outside the time range under test.
+      smtpRow('smtp-out-of-range', null, { probedAt: new Date('2026-08-31T00:00:00Z') }),
+    ];
+
+    it('normalizes forged SMTP at every remaining read boundary without mutating adapter rows (issue #74)', async () => {
+      const asList = (r: ProbeObservation | ProbeObservation[] | null): ProbeObservation[] =>
+        Array.isArray(r) ? r : r === null ? [] : [r];
+
+      const baseFixtures = makeFixtures();
+      const extendedFixtures = makeReadBoundaryFixtures();
+
+      const untrustedSmtpIds = [
+        'smtp-legacy-null',
+        'smtp-legacy-no-trust',
+        'smtp-forged-no-cert',
+        'smtp-forged-chain-false',
+        'smtp-forged-chain-missing',
+        'smtp-forged-hostname-false',
+        'smtp-forged-hostname-missing',
+        'smtp-tls-not-negotiated',
+        'smtp-no-starttls',
+      ];
+
+      interface ReadBoundaryCase {
+        label: string;
+        fixtures: ProbeObservation[];
+        call: (
+          repo: ProbeObservationRepository
+        ) => Promise<ProbeObservation | ProbeObservation[] | null>;
+        adapter: 'selectOne' | 'selectWhere' | 'select';
+        expectedIds: string[];
+        expectedNormalized: string[];
+        expectedUnchanged: string[];
+      }
+
+      const cases: ReadBoundaryCase[] = [
+        {
+          label: 'findById forged SMTP normalizes',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findById('smtp-forged-chain-false'),
+          adapter: 'selectOne',
+          expectedIds: ['smtp-forged-chain-false'],
+          expectedNormalized: ['smtp-forged-chain-false'],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findById trusted SMTP unchanged',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findById('smtp-trusted'),
+          adapter: 'selectOne',
+          expectedIds: ['smtp-trusted'],
+          expectedNormalized: [],
+          expectedUnchanged: ['smtp-trusted'],
+        },
+        {
+          label: 'findById non-SMTP unchanged',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findById('mtasts-success'),
+          adapter: 'selectOne',
+          expectedIds: ['mtasts-success'],
+          expectedNormalized: [],
+          expectedUnchanged: ['mtasts-success'],
+        },
+        {
+          label: 'findById missing id returns null',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findById('does-not-exist'),
+          adapter: 'selectOne',
+          expectedIds: [],
+          expectedNormalized: [],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findBySnapshotAndType filters by type and sorts by hostname',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findBySnapshotAndType('snapshot-1', 'smtp_starttls'),
+          adapter: 'selectWhere',
+          expectedIds: [
+            'smtp-forged-chain-false',
+            'smtp-forged-chain-missing',
+            'smtp-forged-hostname-false',
+            'smtp-forged-hostname-missing',
+            'smtp-forged-no-cert',
+            'smtp-legacy-no-trust',
+            'smtp-legacy-null',
+            'smtp-no-starttls',
+            'smtp-refused',
+            'smtp-timeout',
+            'smtp-tls-not-negotiated',
+            'smtp-trusted',
+          ],
+          expectedNormalized: untrustedSmtpIds,
+          expectedUnchanged: ['smtp-trusted'],
+        },
+        {
+          label: 'findBySnapshotAndType non-SMTP type unchanged',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findBySnapshotAndType('snapshot-1', 'mta_sts'),
+          adapter: 'selectWhere',
+          expectedIds: ['mtasts-success', 'mtasts-failed'],
+          expectedNormalized: [],
+          expectedUnchanged: ['mtasts-success', 'mtasts-failed'],
+        },
+        {
+          label: 'findByHostname exact hostname forged SMTP normalizes',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findByHostname('snapshot-1', 'mx-forged-chain-false.example.com'),
+          adapter: 'selectWhere',
+          expectedIds: ['smtp-forged-chain-false'],
+          expectedNormalized: ['smtp-forged-chain-false'],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findByHostname non-SMTP unchanged',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findByHostname('snapshot-1', 'mta-sts-a.example.com'),
+          adapter: 'selectWhere',
+          expectedIds: ['mtasts-success'],
+          expectedNormalized: [],
+          expectedUnchanged: ['mtasts-success'],
+        },
+        {
+          label: 'findByHostname unmatched hostname returns empty',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findByHostname('snapshot-1', 'no-such-host.example.com'),
+          adapter: 'selectWhere',
+          expectedIds: [],
+          expectedNormalized: [],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findFailedProbes includes forged raw-success SMTP as failures',
+          fixtures: baseFixtures,
+          call: (repo) => repo.findFailedProbes('snapshot-1'),
+          adapter: 'selectWhere',
+          expectedIds: [
+            'smtp-legacy-null',
+            'smtp-legacy-no-trust',
+            'smtp-forged-no-cert',
+            'smtp-forged-chain-false',
+            'smtp-forged-chain-missing',
+            'smtp-forged-hostname-false',
+            'smtp-forged-hostname-missing',
+            'smtp-tls-not-negotiated',
+            'smtp-no-starttls',
+            'smtp-timeout',
+            'smtp-refused',
+            'mtasts-failed',
+          ],
+          expectedNormalized: untrustedSmtpIds,
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findSlowProbes includes equality at threshold and excludes null timing',
+          fixtures: extendedFixtures,
+          call: (repo) => repo.findSlowProbes('snapshot-1', 500),
+          adapter: 'selectWhere',
+          expectedIds: ['smtp-forged-at-threshold'],
+          expectedNormalized: ['smtp-forged-at-threshold'],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findSlowProbes excludes rows just below threshold',
+          fixtures: extendedFixtures,
+          call: (repo) => repo.findSlowProbes('snapshot-1', 501),
+          adapter: 'selectWhere',
+          expectedIds: [],
+          expectedNormalized: [],
+          expectedUnchanged: [],
+        },
+        {
+          label: 'findByTimeRange is inclusive and excludes out-of-range rows',
+          fixtures: extendedFixtures,
+          call: (repo) =>
+            repo.findByTimeRange(
+              new Date('2026-09-01T00:00:00Z'),
+              new Date('2026-09-01T23:59:59Z')
+            ),
+          adapter: 'select',
+          expectedIds: [
+            ...baseFixtures.map((f) => f.id),
+            'smtp-forged-at-threshold',
+            'smtp-null-timing',
+          ],
+          expectedNormalized: [...untrustedSmtpIds, 'smtp-forged-at-threshold', 'smtp-null-timing'],
+          expectedUnchanged: ['smtp-trusted', 'mtasts-success'],
+        },
+        {
+          label: 'findByTimeRange exact instant matches both inclusive boundaries',
+          fixtures: extendedFixtures,
+          call: (repo) => repo.findByTimeRange(probedAt, probedAt),
+          adapter: 'select',
+          expectedIds: [
+            ...baseFixtures.map((f) => f.id),
+            'smtp-forged-at-threshold',
+            'smtp-null-timing',
+          ],
+          expectedNormalized: [...untrustedSmtpIds, 'smtp-forged-at-threshold', 'smtp-null-timing'],
+          expectedUnchanged: ['smtp-trusted', 'mtasts-success'],
+        },
+      ];
+
+      for (const testCase of cases) {
+        const fixtures = testCase.fixtures;
+        const before = structuredClone(fixtures);
+        const { repo, selectOne, selectWhere, select } = makeRepo(fixtures);
+
+        const results = asList(await testCase.call(repo));
+
+        // Adapter was queried once against the probe observations table.
+        const adapterMock =
+          testCase.adapter === 'selectOne'
+            ? selectOne
+            : testCase.adapter === 'select'
+              ? select
+              : selectWhere;
+        expect(adapterMock, testCase.label).toHaveBeenCalledTimes(1);
+        expect(adapterMock.mock.calls[0]?.[0], testCase.label).toBe(probeObservations);
+
+        // Selection, ordering, and boundary semantics are preserved.
+        expect(
+          results.map((r) => r.id),
+          testCase.label
+        ).toEqual(testCase.expectedIds);
+
+        const byId = new Map(results.map((r) => [r.id, r]));
+        const fixtureById = new Map(fixtures.map((f) => [f.id, f]));
+
+        // Forged/legacy SMTP rows fail closed while diagnostics survive.
+        for (const id of testCase.expectedNormalized) {
+          expect(byId.get(id)?.success, `${testCase.label}: ${id} success`).toBe(false);
+          expect(byId.get(id)?.status, `${testCase.label}: ${id} status`).toBe('error');
+          expect(byId.get(id)?.probeData, `${testCase.label}: ${id} diagnostics`).toEqual(
+            fixtureById.get(id)?.probeData
+          );
+        }
+
+        // Trusted SMTP and non-SMTP rows are returned byte-for-byte.
+        for (const id of testCase.expectedUnchanged) {
+          expect(byId.get(id), `${testCase.label}: ${id} unchanged`).toEqual(fixtureById.get(id));
+        }
+
+        // Raw failure statuses survive normalization.
+        const timeout = byId.get('smtp-timeout');
+        if (timeout) {
+          expect(timeout.status).toBe('timeout');
+          expect(timeout.success).toBe(false);
+        }
+        const refused = byId.get('smtp-refused');
+        if (refused) {
+          expect(refused.status).toBe('refused');
+          expect(refused.success).toBe(false);
+        }
+
+        // Adapter-owned fixture objects were never mutated.
+        expect(fixtures, testCase.label).toEqual(before);
+      }
     });
   });
 });

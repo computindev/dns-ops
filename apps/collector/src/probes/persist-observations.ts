@@ -55,9 +55,7 @@ export function smtpResultToObservation(
   // persist as success.
   const certificate = result.certificate;
   const tlsTrusted =
-    result.tlsTrusted === true &&
-    certificate?.chainAuthorized === true &&
-    certificate.hostnameAuthorized === true;
+    certificate?.chainAuthorized === true && certificate.hostnameAuthorized === true;
   const trusted =
     result.success === true && result.supportsStarttls === true && tlsNegotiated && tlsTrusted;
 

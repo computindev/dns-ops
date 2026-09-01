@@ -64,7 +64,7 @@ export class ProbeObservationRepository {
    */
   async findById(id: string): Promise<ProbeObservation | null> {
     const result = await this.db.selectOne(probeObservations, eq(probeObservations.id, id));
-    return result || null;
+    return result ? asReadRow(result) : null;
   }
 
   /**
@@ -97,6 +97,7 @@ export class ProbeObservationRepository {
     );
     return results
       .filter((p) => p.probeType === probeType)
+      .map(asReadRow)
       .sort((a, b) => a.hostname.localeCompare(b.hostname));
   }
 
@@ -108,7 +109,7 @@ export class ProbeObservationRepository {
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    return results.filter((p) => p.hostname === hostname);
+    return results.filter((p) => p.hostname === hostname).map(asReadRow);
   }
 
   /**
@@ -128,13 +129,16 @@ export class ProbeObservationRepository {
 
   /**
    * Find failed probes for a snapshot (for alerting/reporting)
+   *
+   * Normalizes before filtering (issue #74): forged or legacy SMTP rows with
+   * a raw `success:true` but no trust proof read as failures here.
    */
   async findFailedProbes(snapshotId: string): Promise<ProbeObservation[]> {
     const results = await this.db.selectWhere(
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    return results.filter((p) => !p.success);
+    return results.map(asReadRow).filter((p) => !p.success);
   }
 
   /**
@@ -145,7 +149,9 @@ export class ProbeObservationRepository {
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    return results.filter((p) => p.responseTimeMs !== null && p.responseTimeMs >= thresholdMs);
+    return results
+      .filter((p) => p.responseTimeMs !== null && p.responseTimeMs >= thresholdMs)
+      .map(asReadRow);
   }
 
   /**
@@ -153,7 +159,7 @@ export class ProbeObservationRepository {
    */
   async findByTimeRange(start: Date, end: Date): Promise<ProbeObservation[]> {
     const all = await this.db.select(probeObservations);
-    return all.filter((p) => p.probedAt >= start && p.probedAt <= end);
+    return all.filter((p) => p.probedAt >= start && p.probedAt <= end).map(asReadRow);
   }
 
   /**

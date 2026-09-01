@@ -175,6 +175,41 @@ describe('Probe Observation Persistence E2E', () => {
       expect(noCert.probeData?.tlsTrusted).toBe(false);
     });
 
+    it('should persist tlsTrusted=true when both certificate verdicts are true regardless of the caller bit (issue #74)', () => {
+      // Positive control for the P1 fix: the caller-asserted tlsTrusted bit is
+      // no longer part of the derivation. Authoritative certificate verdicts
+      // true/true with every other success prerequisite true must persist as
+      // trusted success even when the caller bit is false.
+      const result: SMTPProbeResult = {
+        success: true,
+        hostname: 'valid.example.com',
+        port: 25,
+        supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: false, // stale/incorrect caller assertion
+        tlsVersion: 'TLSv1.3',
+        tlsCipher: 'AES256-GCM-SHA384',
+        certificate: {
+          subject: 'valid.example.com',
+          issuer: 'DigiCert SHA2 Extended Validation Server CA',
+          validFrom: '2026-01-01',
+          validTo: '2027-01-01',
+          fingerprint: 'AB:CD:EF',
+          chainAuthorized: true,
+          hostnameAuthorized: true,
+        },
+        smtpBanner: '220 valid.example.com ESMTP',
+        responseTimeMs: 110,
+      };
+
+      const observation = smtpResultToObservation('snap-valid', result);
+
+      expect(observation.success).toBe(true);
+      expect(observation.status).toBe('success');
+      expect(observation.probeData?.tlsTrusted).toBe(true);
+      expect(observation.errorMessage).toBeNull();
+    });
+
     it('should map SMTP result with timeout error to timeout status', () => {
       const result: SMTPProbeResult = {
         success: false,
