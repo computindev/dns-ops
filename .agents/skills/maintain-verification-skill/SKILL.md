@@ -1,6 +1,7 @@
 ---
 name: maintain-verification-skill
-description: Keep a repo's verify-<app> skill and its feature map honest as the app changes: compare every mapped feature with current source, fix doc drift, run a live verification pass, and report product regressions without hiding them. Use when someone says "maintain the verification skill", "is the feature map still accurate", "the verify skill is stale", after a large refactor or UI change, before a release, or on a periodic cadence in repos that have .agents/skills/verify-*. Never use it to fix product code.
+description: >-
+  Keep a repo's verify-<app> skill and its feature map honest as the app changes: compare every mapped feature with current source, fix doc drift, run a live verification pass, and report product regressions without hiding them. Use when someone says "maintain the verification skill", "is the feature map still accurate", "the verify skill is stale", after a large refactor or UI change, before a release, or on a periodic cadence in repos that have .agents/skills/verify-*. Never use it to fix product code.
 ---
 
 # Maintain a verification skill
