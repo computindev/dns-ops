@@ -423,4 +423,28 @@ test.describe('DNS Parsed TTL countdown', () => {
     await expect(page.getByTitle(/no valid public-recursive evidence/i)).toHaveCount(2);
     await expect(page.locator('table time')).toHaveCount(0);
   });
+
+  test('renders UNKNOWN without a time element when the TTL deadline overflows the Date range', async ({
+    page,
+  }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(page, [
+      ttlObservation({
+        id: 'obs-ttl-overflow',
+        vantageType: 'public-recursive',
+        status: 'success',
+        ttl: Number.MAX_SAFE_INTEGER,
+      }),
+    ]);
+
+    await openParsedDnsView(page);
+
+    // A successful recursive answer whose queriedAt + ttl × 1000 exceeds the
+    // maximum Date value is unusable evidence: both cells show a visible
+    // UNKNOWN and the machine-readable <time> element must not exist.
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
+    await expect(page.getByTitle(/no valid public-recursive evidence/i)).toHaveCount(2);
+    await expect(page.locator('table time')).toHaveCount(0);
+  });
 });

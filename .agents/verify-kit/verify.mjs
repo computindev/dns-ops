@@ -112,13 +112,20 @@ function changedFiles(base, head) {
   const o = three !== null ? three : git(['diff', '--name-only', base, head]);
   return o.split('\n').map((s) => s.trim()).filter(Boolean);
 }
-/** Tree object of the current working tree (tracked + untracked-not-ignored), via a temp index. null if no commits. */
+/** Tree object of the current working tree (tracked + untracked-not-ignored), via a temp index. null if no commits.
+ *  Tracked gitlinks (embedded repos like .pi/self-learning-memory) can have no commit checked
+ *  out; `git add -A` aborts on them, which used to silently bind the digest to HEAD. Gitlinks
+ *  keep their recorded HEAD value instead — codeDigest() filters them via quick_paths anyway. */
 function workingTree() {
   const tmp = path.join(os.tmpdir(), `verify-index-${process.pid}-${Date.now()}`);
   const env = { GIT_INDEX_FILE: tmp };
   try {
     if (git(['read-tree', 'HEAD'], { allowFail: true, env }) === null) return null;
-    if (git(['add', '-A'], { allowFail: true, env }) === null) return null;
+    const gitlinks = (git(['ls-files', '--stage', '-z'], { allowFail: true, env }) || '')
+      .split('\0')
+      .filter((l) => l.startsWith('160000 '))
+      .map((l) => l.slice(l.indexOf('\t') + 1));
+    if (git(['add', '-A', '--', '.', ...gitlinks.map((p) => `:(exclude)${p}`)], { allowFail: true, env }) === null) return null;
     return git(['write-tree'], { allowFail: true, env });
   } finally { try { fs.unlinkSync(tmp); } catch {} }
 }
