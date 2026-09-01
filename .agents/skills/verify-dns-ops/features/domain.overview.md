@@ -9,6 +9,7 @@ paths:
   - apps/web/app/components/DNSViews.tsx
   - apps/web/app/lib/dns-ttl.ts
   - apps/web/app/lib/dns-ttl.test.ts
+  - apps/web/app/lib/domain-route.test.ts
   - apps/web/e2e/domain-states.spec.ts
   - apps/collector/src/dns/collector.ts
   - apps/collector/src/dns/collector.concurrency.test.ts

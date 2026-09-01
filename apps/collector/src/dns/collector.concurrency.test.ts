@@ -10,7 +10,7 @@
  */
 
 import type { IDatabaseAdapter } from '@dns-ops/db';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Semaphore } from '../probes/semaphore.js';
 import { collectQueriesConcurrently, DNSCollector, type ResolverLike } from './collector.js';
 import type {
@@ -115,23 +115,57 @@ describe('DNS query concurrency (collectQueriesConcurrently)', () => {
     expect(getMax()).toBe(2);
   });
 
-  it('stamps each successful response at resolver completion', async () => {
-    const { resolver } = makeTrackingResolver(5);
-    const before = Date.now();
-    const results = await collectQueriesConcurrently(
-      resolver,
-      queries(3),
-      vantage,
-      new Semaphore(5),
-      []
-    );
-    const after = Date.now();
+  it('stamps each successful response at its resolver completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const baseTime = Date.parse('2030-01-01T00:00:00.000Z');
+      vi.setSystemTime(baseTime);
+      const completionTimes = new Map<string, number>();
+      const resolver: ResolverLike = {
+        async query(q, v) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, q.name === 'fast.example.com' ? 10 : 40)
+          );
+          const completedAt = Date.now();
+          completionTimes.set(q.name, completedAt);
+          return {
+            query: q,
+            vantage: v,
+            success: true,
+            responseCode: 0,
+            flags: { ...UNIFORM_FLAGS },
+            answers: [],
+            authority: [],
+            additional: [],
+            responseTime: 1,
+          };
+        },
+      };
+      const input = [
+        { name: 'fast.example.com', type: 'A' },
+        { name: 'slow.example.com', type: 'A' },
+      ];
 
-    expect(results).toHaveLength(3);
-    for (const result of results) {
-      expect(result.receivedAt).toBeInstanceOf(Date);
-      expect(result.receivedAt.getTime()).toBeGreaterThanOrEqual(before);
-      expect(result.receivedAt.getTime()).toBeLessThanOrEqual(after);
+      const pending = collectQueriesConcurrently(resolver, input, vantage, new Semaphore(5), []);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(30);
+      const results = await pending;
+      const resultByName = new Map(results.map((result) => [result.query.name, result]));
+
+      expect(results).toHaveLength(2);
+      expect(completionTimes.get('fast.example.com')).toBe(baseTime + 10);
+      expect(completionTimes.get('slow.example.com')).toBe(baseTime + 40);
+      expect(completionTimes.get('fast.example.com')).not.toBe(
+        completionTimes.get('slow.example.com')
+      );
+      expect(resultByName.get('fast.example.com')?.receivedAt.getTime()).toBe(
+        completionTimes.get('fast.example.com')
+      );
+      expect(resultByName.get('slow.example.com')?.receivedAt.getTime()).toBe(
+        completionTimes.get('slow.example.com')
+      );
+    } finally {
+      vi.useRealTimers();
     }
   });
 

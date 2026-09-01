@@ -13,7 +13,7 @@
 
 import type { IDatabaseAdapter } from '@dns-ops/db';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { DNSCollector } from './collector.js';
+import { DNSCollector, type ResolverLike } from './collector.js';
 import { DNSResolver } from './resolver.js';
 import type { CollectionConfig, DNSQueryResult, VantageInfo } from './types.js';
 
@@ -534,6 +534,67 @@ describe('DNS Collector Integration', () => {
     expect(obs.status).toBeDefined();
     expect(obs.queriedAt).toBeInstanceOf(Date);
     expect(Number.isFinite((obs.queriedAt as Date).getTime())).toBe(true);
+  });
+
+  it('persists each resolver completion time as queriedAt', async () => {
+    vi.useFakeTimers();
+    try {
+      const baseTime = Date.parse('2030-01-01T00:00:00.000Z');
+      vi.setSystemTime(baseTime);
+      const { db, rows } = createInMemoryDb();
+      const completionTimes = new Map<string, number>();
+      const resolver: ResolverLike = {
+        async query(query, vantage) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, query.name === 'fast.example.com' ? 10 : 40)
+          );
+          const completedAt = Date.now();
+          completionTimes.set(query.name, completedAt);
+          return buildSuccessResult(
+            query.name,
+            query.type,
+            [makeAnswer(query.name, query.type, '1.2.3.4')],
+            vantage
+          );
+        },
+      };
+      const config: CollectionConfig = {
+        tenantId: 'tenant-1',
+        domain: 'example.com',
+        zoneManagement: 'unmanaged',
+        recordTypes: ['A'],
+        queryNames: ['fast.example.com', 'slow.example.com'],
+        triggeredBy: 'test',
+        includeDelegationData: false,
+      };
+      const collector = new DNSCollector(config, db, { resolver, queryConcurrency: 2 });
+
+      const pending = collector.collect();
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(30);
+      await pending;
+
+      const observations = rows('observations');
+      const byName = new Map(
+        observations.map((observation) => [observation.queryName, observation])
+      );
+      const queriedAt = (name: string) => {
+        const observation = byName.get(name);
+        expect(observation).toBeDefined();
+        expect(observation?.queriedAt).toBeInstanceOf(Date);
+        return (observation?.queriedAt as Date).getTime();
+      };
+
+      expect(completionTimes.get('fast.example.com')).toBe(baseTime + 10);
+      expect(completionTimes.get('slow.example.com')).toBe(baseTime + 40);
+      expect(completionTimes.get('fast.example.com')).not.toBe(
+        completionTimes.get('slow.example.com')
+      );
+      expect(queriedAt('fast.example.com')).toBe(completionTimes.get('fast.example.com'));
+      expect(queriedAt('slow.example.com')).toBe(completionTimes.get('slow.example.com'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should consolidate observations into record sets', async () => {
