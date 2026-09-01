@@ -1,28 +1,36 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const collectorRoot = resolve(import.meta.dirname, '..');
-const distDirectory = join(collectorRoot, 'dist');
-const distEntry = join(distDirectory, 'index.js');
+const workspaceRoot = resolve(collectorRoot, '../..');
+const buildOutputDirectories = [
+  join(collectorRoot, 'dist'),
+  ...['contracts', 'db', 'logging', 'parsing', 'rules'].map((packageName) =>
+    join(workspaceRoot, 'packages', packageName, 'dist')
+  ),
+];
 
 describe('collector start lifecycle', () => {
-  it('builds source before executing a pre-existing dist entry', () => {
-    const markerDirectory = mkdtempSync(join(tmpdir(), 'dns-ops-collector-start-'));
-    const staleMarker = join(markerDirectory, 'stale-entry-ran');
-    const previousEntry = existsSync(distEntry) ? readFileSync(distEntry) : undefined;
+  it('builds the collector and workspace dependencies before starting from a clean checkout', () => {
+    const backupDirectory = mkdtempSync(join(tmpdir(), 'dns-ops-collector-start-'));
+    let outputsRemoved = false;
 
     try {
-      mkdirSync(distDirectory, { recursive: true });
-      writeFileSync(
-        distEntry,
-        [
-          "import { writeFileSync } from 'node:fs';",
-          `writeFileSync(${JSON.stringify(staleMarker)}, 'stale');`,
-          'process.exit(73);',
-        ].join('\n')
+      for (const [index, outputDirectory] of buildOutputDirectories.entries()) {
+        if (existsSync(outputDirectory)) {
+          cpSync(outputDirectory, join(backupDirectory, String(index)), { recursive: true });
+        }
+      }
+      for (const outputDirectory of buildOutputDirectories) {
+        rmSync(outputDirectory, { force: true, recursive: true });
+      }
+      outputsRemoved = true;
+
+      expect(buildOutputDirectories.every((outputDirectory) => !existsSync(outputDirectory))).toBe(
+        true
       );
 
       const childEnv = {
@@ -30,6 +38,7 @@ describe('collector start lifecycle', () => {
         COLLECTOR_SKIP_LISTEN: 'true',
         DATABASE_URL: 'postgresql://127.0.0.1:1/collector-start-test',
         NODE_ENV: 'test',
+        TURBO_FORCE: 'true',
         WORKER_ENABLED: 'false',
       };
 
@@ -42,15 +51,22 @@ describe('collector start lifecycle', () => {
 
       expect(result.error, result.error?.message).toBeUndefined();
       expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(existsSync(staleMarker)).toBe(false);
-      expect(readFileSync(distEntry, 'utf8')).not.toContain('stale-entry-ran');
+      expect(buildOutputDirectories.every((outputDirectory) => existsSync(outputDirectory))).toBe(
+        true
+      );
     } finally {
-      if (previousEntry === undefined) {
-        rmSync(distDirectory, { force: true, recursive: true });
-      } else {
-        writeFileSync(distEntry, previousEntry);
+      if (outputsRemoved) {
+        for (const outputDirectory of buildOutputDirectories) {
+          rmSync(outputDirectory, { force: true, recursive: true });
+        }
+        for (const [index, outputDirectory] of buildOutputDirectories.entries()) {
+          const backupPath = join(backupDirectory, String(index));
+          if (existsSync(backupPath)) {
+            cpSync(backupPath, outputDirectory, { recursive: true });
+          }
+        }
       }
-      rmSync(markerDirectory, { force: true, recursive: true });
+      rmSync(backupDirectory, { force: true, recursive: true });
     }
-  });
+  }, 60_000);
 });

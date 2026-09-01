@@ -5,6 +5,8 @@ profile: changed
 paths:
   - apps/web/hono/routes/api.ts
   - apps/collector/src/index.ts
+  - apps/collector/package.json
+  - apps/collector/src/start.test.ts
   - .railway/railway.ts
 always_with: []
 ---
