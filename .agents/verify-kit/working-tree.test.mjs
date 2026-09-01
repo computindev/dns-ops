@@ -1,7 +1,7 @@
 /**
  * Regression tests for exact working-tree digests: tolerate the intentional
- * unborn `.pi/self-learning-memory` gitlink, track valid gitlink pointers, and
- * fail closed when any other gitlink cannot be staged.
+ * `.pi/self-learning-memory` gitlink, track valid gitlink pointers, and fail
+ * closed when temporary-index staging fails.
  *
  * Run: node --test .agents/verify-kit/working-tree.test.mjs
  */
@@ -21,8 +21,40 @@ function git(cwd, args) {
   return r.stdout.trim();
 }
 
-function verifyKit(cwd, args) {
-  return spawnSync(process.execPath, [KIT, ...args], { cwd, encoding: 'utf8' });
+function verifyKit(cwd, args, env = {}) {
+  return spawnSync(process.execPath, [KIT, ...args], {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+function failingGitWrapper() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-kit-git-'));
+  const realPath = process.env.PATH;
+  assert.ok(realPath, 'PATH is required to delegate non-failing git commands');
+  const wrapper = path.join(dir, 'git');
+  fs.writeFileSync(wrapper, `#!/bin/sh
+if [ "$VERIFY_KIT_FAIL_TEMP_INDEX_ADD" = "1" ] &&
+   [ -n "$GIT_INDEX_FILE" ] &&
+   [ "$1" = "add" ] &&
+   [ "$2" = "-A" ]; then
+  echo "controlled temp-index git add failure" >&2
+  exit 97
+fi
+PATH="$VERIFY_KIT_REAL_PATH"
+export PATH
+exec git "$@"
+`);
+  fs.chmodSync(wrapper, 0o755);
+  return {
+    dir,
+    env: {
+      PATH: `${dir}${path.delimiter}${realPath}`,
+      VERIFY_KIT_REAL_PATH: realPath,
+      VERIFY_KIT_FAIL_TEMP_INDEX_ADD: '1',
+    },
+  };
 }
 
 function digestFrom(output) {
@@ -35,6 +67,7 @@ test('check-commit --working-tree handles memory links, tracks pointers, and fai
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-kit-wt-'));
   const memory = path.join(repo, '.pi', 'self-learning-memory');
   const embedded = path.join(repo, 'embedded');
+  let wrapperDir;
   try {
     // A repo with one tracked product file.
     git(repo, ['init', '--quiet']);
@@ -44,9 +77,9 @@ test('check-commit --working-tree handles memory links, tracks pointers, and fai
     git(repo, ['add', 'code.ts']);
     git(repo, ['commit', '--quiet', '-m', 'init']);
 
-    // The memory gitlink has an unborn HEAD and is the one intentional
-    // exception. A sibling gitlink has a valid pointer and must remain in the
-    // temporary index so pointer changes affect the digest.
+    // The memory gitlink is the one intentional excluded path. A sibling
+    // gitlink has a valid pointer and must remain in the temporary index so
+    // pointer changes affect the digest.
     fs.mkdirSync(memory, { recursive: true });
     git(memory, ['init', '--quiet']);
     git(memory, ['config', 'user.email', 't@example.com']);
@@ -65,13 +98,11 @@ test('check-commit --working-tree handles memory links, tracks pointers, and fai
 
     git(repo, ['add', '.pi/self-learning-memory', 'embedded']);
     git(repo, ['commit', '--quiet', '-m', 'track gitlinks']);
-    git(memory, ['update-ref', '-d', `refs/heads/${git(memory, ['branch', '--show-current'])}`]);
-    assert.match(git(repo, ['status', '--porcelain']), /\.pi\/self-learning-memory/);
 
     // Unstaged product change: the working tree differs from HEAD.
     fs.writeFileSync(path.join(repo, 'code.ts'), 'v2\n');
 
-    // Before the fix, `git add -A` aborted on the gitlink, workingTree() was
+    // Before the fix, a failed temp-index `git add -A` made workingTree()
     // null and check-commit exited 0 with no output at all.
     const first = verifyKit(repo, ['check-commit', '--working-tree']);
     assert.equal(first.status, 0, first.stderr);
@@ -94,23 +125,14 @@ test('check-commit --working-tree handles memory links, tracks pointers, and fai
     const digest3 = digestFrom(third.stdout);
     assert.notEqual(digest2, digest3, 'code_digest ignored a valid gitlink pointer change');
 
-    // A second unborn gitlink is not the intentional memory exception. The
-    // exact-tree digest must fail closed rather than fall back to HEAD.
-    const broken = path.join(repo, 'broken');
-    fs.mkdirSync(broken, { recursive: true });
-    git(broken, ['init', '--quiet']);
-    git(broken, ['config', 'user.email', 't@example.com']);
-    git(broken, ['config', 'user.name', 't']);
-    fs.writeFileSync(path.join(broken, 'README.md'), 'broken v1\n');
-    git(broken, ['add', 'README.md']);
-    git(broken, ['commit', '--quiet', '-m', 'broken init']);
-    git(repo, ['add', 'broken']);
-    git(repo, ['commit', '--quiet', '-m', 'track broken gitlink']);
-    git(broken, ['update-ref', '-d', `refs/heads/${git(broken, ['branch', '--show-current'])}`]);
+    // A temp-index git add failure must fail closed rather than fall back to
+    // HEAD. Simulate that command failure directly so this assertion does not
+    // depend on Git's nested-repository status semantics.
     fs.writeFileSync(path.join(repo, 'code.ts'), 'v4\n');
-
-    const failed = verifyKit(repo, ['check-commit', '--working-tree']);
-    assert.notEqual(failed.status, 0, 'unexpected gitlink failure passed open');
+    const wrapper = failingGitWrapper();
+    wrapperDir = wrapper.dir;
+    const failed = verifyKit(repo, ['check-commit', '--working-tree'], wrapper.env);
+    assert.notEqual(failed.status, 0, 'unexpected temp-index failure passed open');
     assert.match(
       `${failed.stdout}${failed.stderr}`,
       /could not construct exact working-tree digest/,
@@ -118,5 +140,6 @@ test('check-commit --working-tree handles memory links, tracks pointers, and fai
     );
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+    if (wrapperDir) fs.rmSync(wrapperDir, { recursive: true, force: true });
   }
 });
