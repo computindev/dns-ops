@@ -11,10 +11,13 @@ export * from './dig/index.js';
 export {
   getWildcardBase,
   isWildcard,
+  MAX_DNS_CNAME_HOPS,
+  type NormalizedDNSOwner,
   normalizeDomain as normalizeDNSDomain,
   type ParsedAnswer,
   parseDNSAnswer,
   parseTXTRecord,
+  tryNormalizeDNSOwner,
 } from './dns/index.js';
 export * from './dns/recordset.js';
 

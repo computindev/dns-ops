@@ -334,6 +334,43 @@ describe('observationsToRecordSets', () => {
   });
 });
 
+describe('CNAME owner and target normalization', () => {
+  it('canonicalizes valid CNAME targets while retaining malformed observations', () => {
+    const observation = createObservation({
+      queryName: '_MTA-STS.Example.NET.',
+      queryType: 'CNAME',
+      answerSection: [
+        {
+          name: '_mta-sts.example.net.',
+          type: 'CNAME',
+          ttl: 300,
+          data: '_Policy._MTA-STS.Example.NET.',
+        },
+        {
+          name: '_mta-sts.example.net.',
+          type: 'CNAME',
+          ttl: 300,
+          data: 'not a valid target',
+        },
+        {
+          name: 'unrelated.example.net.',
+          type: 'CNAME',
+          ttl: 300,
+          data: 'ignored.example.net.',
+        },
+      ],
+    });
+
+    expect(observationsToRecordSets([observation])).toMatchObject([
+      {
+        name: '_mta-sts.example.net',
+        type: 'CNAME',
+        values: ['_policy._mta-sts.example.net', 'not a valid target'],
+      },
+    ]);
+  });
+});
+
 describe('groupRecordsByType', () => {
   it('should group records by type in preferred order', () => {
     const records = [

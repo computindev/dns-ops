@@ -25,7 +25,11 @@ import {
   SnapshotRepository,
   SuggestionRepository,
 } from '@dns-ops/db';
-import { observationsToRecordSets, tryNormalizeDomain } from '@dns-ops/parsing';
+import {
+  MAX_DNS_CNAME_HOPS,
+  observationsToRecordSets,
+  tryNormalizeDNSOwner,
+} from '@dns-ops/parsing';
 import {
   authoritativeFailureRule,
   authoritativeMismatchRule,
@@ -61,11 +65,6 @@ import type {
 // Current ruleset version - keep in sync with web app findings.ts
 const CURRENT_RULESET_VERSION = '1.2.0';
 const CURRENT_RULESET_NAME = 'DNS and Mail Rules';
-const MAX_MTA_STS_CNAME_HOPS = 5;
-
-function normalizeDnsOwnerName(name: string): string {
-  return name.trim().replace(/\.+$/, '').toLowerCase();
-}
 
 const logger = getCollectorLogger();
 
@@ -159,7 +158,8 @@ export class DNSCollector {
     db: IDatabaseAdapter,
     options?: { resolver?: ResolverLike; queryConcurrency?: number }
   ) {
-    this.config = config;
+    const normalizedDomain = tryNormalizeDNSOwner(config.domain)?.normalized;
+    this.config = normalizedDomain ? { ...config, domain: normalizedDomain } : config;
     this.resolver = options?.resolver ?? new DNSResolver();
     this.semaphore = new Semaphore(options?.queryConcurrency ?? getDnsQueryConcurrency());
     this.domainRepo = new DomainRepository(db);
@@ -259,7 +259,6 @@ export class DNSCollector {
   private async generateQueries(): Promise<DNSQuery[]> {
     const queries: DNSQuery[] = [];
     const {
-      domain,
       zoneManagement,
       recordTypes,
       queryNames,
@@ -267,12 +266,15 @@ export class DNSCollector {
       dkimSelectors,
       managedDkimSelectors,
     } = this.config;
+    const domain = tryNormalizeDNSOwner(this.config.domain)?.normalized ?? this.config.domain;
 
     if (queryNames) {
       // Use explicit query names (targeted inspection)
       for (const name of queryNames) {
+        const normalizedName = tryNormalizeDNSOwner(name)?.normalized;
+        if (!normalizedName) continue;
         for (const type of recordTypes) {
-          queries.push({ name, type });
+          queries.push({ name: normalizedName, type });
         }
       }
     } else if (zoneManagement === 'unmanaged') {
@@ -357,7 +359,8 @@ export class DNSCollector {
   ): Promise<DNSQueryResult[]> {
     if (this.config.includeMailRecords === false) return [];
 
-    const initialOwner = normalizeDnsOwnerName(`_mta-sts.${this.config.domain}`);
+    const initialOwner = tryNormalizeDNSOwner(`_mta-sts.${this.config.domain}`)?.normalized;
+    if (!initialOwner) return [];
     const queriedNames = new Set([initialOwner]);
     let pending = new Set(this.extractMtaStsCnameTargets(initialResults, new Set([initialOwner])));
     const collected: DNSQueryResult[] = [];
@@ -367,7 +370,7 @@ export class DNSCollector {
       region: 'us-central',
     };
 
-    for (let hop = 1; hop <= MAX_MTA_STS_CNAME_HOPS && pending.size > 0; hop++) {
+    for (let hop = 1; hop <= MAX_DNS_CNAME_HOPS && pending.size > 0; hop++) {
       const owners = [...pending].filter((owner) => !queriedNames.has(owner));
       if (owners.length === 0) break;
       for (const owner of owners) queriedNames.add(owner);
@@ -391,13 +394,12 @@ export class DNSCollector {
     const targets: string[] = [];
     for (const result of results) {
       if (result.query.type !== 'CNAME' || !result.success) continue;
-      const queryName = normalizeDnsOwnerName(result.query.name);
+      const queryName = tryNormalizeDNSOwner(result.query.name)?.normalized;
       if (!queryName || !ownerNames.has(queryName)) continue;
       for (const answer of result.answers) {
-        if (answer.type !== 'CNAME' || normalizeDnsOwnerName(answer.name) !== queryName) {
-          continue;
-        }
-        const target = tryNormalizeDomain(answer.data)?.normalized;
+        const answerName = tryNormalizeDNSOwner(answer.name)?.normalized;
+        if (answer.type !== 'CNAME' || answerName !== queryName) continue;
+        const target = tryNormalizeDNSOwner(answer.data)?.normalized;
         if (target) targets.push(target);
       }
     }
@@ -535,7 +537,8 @@ export class DNSCollector {
     snapshotId: string;
     resultState: 'complete' | 'partial' | 'failed';
   }> {
-    const { tenantId, domain, zoneManagement, triggeredBy } = this.config;
+    const { tenantId, zoneManagement, triggeredBy } = this.config;
+    const domain = tryNormalizeDNSOwner(this.config.domain)?.normalized ?? this.config.domain;
     // Find or create domain within the current tenant scope.
     // The same normalized domain may legitimately exist in multiple tenant portfolios.
     let domainRecord = await this.domainRepo.findByNameForTenant(domain, tenantId);

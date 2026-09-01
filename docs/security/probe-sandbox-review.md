@@ -17,14 +17,13 @@ vulnerabilities plus one wiring deficiency:
 | Finding | Severity | Status |
 |---------|----------|--------|
 | IPv4-mapped IPv6 bypass (`::ffff:127.0.0.1`) | High | **Fixed** |
-| Redirect-to-private bypass (`fetch()` following 3xx) | High | **Fixed** |
+| Redirect-to-private bypass (MTA-STS 3xx) | High | **Fixed** |
 | `PROBE_CONCURRENCY` / `PROBE_TIMEOUT_MS` not wired | Medium | **Fixed** |
 | No global semaphore (per-request only) | Medium | **Fixed** |
-| DNS rebinding / TOCTOU residual risk | Medium | **Documented, partially mitigated** |
+| DNS rebinding / TOCTOU | Medium | **Fixed for active probes** |
 
 The probe sandbox is safe to enable with standard precautions **after** applying
-the PR-06 fixes. Remaining risk (DNS rebinding) is documented below with a
-specific remediation path.
+the PR-06 fixes.
 
 ---
 
@@ -37,8 +36,8 @@ specific remediation path.
 | SSRF — private network access | Critical | SSRF guard + allowlist | ✅ |
 | SSRF — cloud metadata services (169.254.169.254) | Critical | Link-local block | ✅ |
 | SSRF — IPv4-mapped IPv6 (`::ffff:x.x.x.x`) | High | IPv4 extraction in checkIPv6 | ✅ Fixed in PR-06 |
-| SSRF — redirect-to-private (HTTP 3xx) | High | `redirect:'error'` in MTA-STS fetch | ✅ Fixed in PR-06 |
-| DNS rebinding (TOCTOU) | Medium | Partially — see §DNS Rebinding | ⚠️ Residual |
+| SSRF — redirect-to-private (HTTP 3xx) | High | Native HTTPS rejects every 3xx | ✅ Fixed |
+| DNS rebinding (TOCTOU) | Medium | Checked-address pinning for SMTP and MTA-STS | ✅ Fixed |
 | Concurrency abuse (probe flood) | Medium | Global semaphore | ✅ Fixed in PR-06 |
 | Timeout exhaustion | Medium | `PROBE_TIMEOUT_MS` enforced | ✅ Fixed in PR-06 |
 | Arbitrary target probing | Critical | MX-only allowlist | ✅ |
@@ -96,24 +95,17 @@ correctly allows public IPv4-mapped addresses.
 
 ### Gap Fixed: Redirect-to-Private via HTTP 3xx
 
-**What was wrong (v1.0):** `fetchMTASTSPolicy` used `fetch(url, { ... })` with
-default redirect behavior (`follow`). A MITM or attacker-controlled server at
-`https://mta-sts.attacker.com` returning `301 → http://127.0.0.1/exfil` would
-cause the `fetch` to silently follow the redirect without SSRF-checking the
-target URL.
+**What was wrong (v1.0):** the MTA-STS policy fetch followed redirects by
+default. A server returning `301 → http://127.0.0.1/exfil` could therefore
+bypass the SSRF check on the original URL.
 
-**The fix (PR-06):** `redirect: 'error'` added to the `fetch` call in
-`mta-sts.ts`. Any 3xx response from the MTA-STS endpoint is now treated as a
-fetch error, preventing redirect-following entirely.
-
-**Why not check the redirect target with the SSRF guard?** Node.js `fetch` does
-not expose a redirect callback at the response layer; the only safe option is
-to reject all redirects. MTA-STS policy URLs should be served directly from
-`https://mta-sts.{domain}/.well-known/mta-sts.txt` with no redirects.
+**The fix:** `mta-sts.ts` uses native `https.request`, which does not follow
+redirects, and explicitly rejects every 3xx response. MTA-STS policy URLs are
+served directly from `https://mta-sts.{domain}/.well-known/mta-sts.txt`.
 
 ---
 
-## DNS Rebinding / TOCTOU Residual Risk
+## DNS Rebinding / TOCTOU Protection
 
 ### What is DNS rebinding?
 
@@ -124,41 +116,26 @@ separate operations, the private IP is used without ever being checked.
 
 ### Current mitigation
 
-The allowlist restricts probe targets to MX-derived hostnames. An attacker
-cannot add an arbitrary hostname to the allowlist. For DNS rebinding to succeed,
-the attacker would need to:
+Both active probes resolve their target before opening a connection, reject
+failed or unsafe resolution, and prevent a second DNS decision:
 
-1. Control the DNS for a domain whose MX record a tenant has legitimately added
-   to their allowlist, **AND**
-2. Rebind that MX hostname's IP to a private range after the allowlist was
-   generated.
+- **SMTP probe (`smtp-starttls.ts`):** resolves with `dns.promises.lookup`,
+  checks the address through `checkSSRF`, and connects to the checked IP
+  literal. DNS failures fail closed.
+- **MTA-STS probe (`mta-sts.ts`):** resolves every address with
+  `dns.promises.lookup(..., { all: true })`, rejects unsafe or malformed output,
+  and passes a static `lookup` callback to native `https.request`. The request
+  uses `servername` and `Host` for the original hostname while the TCP
+  connection remains pinned to the checked address.
 
-This is a high bar but not impossible (e.g., if a tenant imports a compromised
-domain's MX record).
-
-### Residual exposure
-
-- **SMTP probe (`smtp-starttls.ts`): FIXED (Issue #67 review, P1). The
-  probe resolves the hostname itself (`dns.promises.lookup`), runs the
-  resolved address through `checkSSRF`, and connects to the checked IP
-  literal — `net.connect` never re-resolves the hostname, and DNS
-  resolution failures (e.g. `ENOTFOUND`) fail closed instead of falling
-  back to hostname-based connect.
-
-- **MTA-STS probe (`mta-sts.ts`):** Uses `fetch()`, which re-resolves the
-  hostname internally. `resolveAndCheck()` validates the resolved IP before
-  the fetch, but a sub-millisecond TTL switch between the check and the
-  fetch's own resolution remains theoretically possible (the two-step check
-  is the industry-standard mitigation for HTTP-based SSRF).
+The compatibility-sensitive `resolveAndCheck()` helper remains fail-open on
+DNS errors for webhook callers; MTA-STS does not use it.
 
 ### Hardening note
 
-The earlier "future hardening path" (a custom `lookup` for
-`net.connect`/`tls.connect`) has been implemented for the SMTP probe as
-checked-IP pinning instead: the probe resolves once, checks the address,
-and connects to the IP literal directly. Lookup-function pinning is not
-available to HTTP-fetch probes (`mta-sts.ts`), which keep the
-`resolveAndCheck()` pre-resolution mitigation and its documented residual.
+Native HTTPS is used with `agent: false`, `rejectUnauthorized: true`, and no
+redirect following. The request deadline remains active while the response
+body is streamed, with a 64 KiB declared and actual body limit.
 
 ---
 
@@ -297,27 +274,14 @@ patterns.
 
 ### Before enabling in untrusted-tenant environments
 
-The DNS rebinding residual is now limited to the **MTA-STS HTTPS fetch**
-(the SMTP probe pins the checked IP; see §DNS Rebinding / TOCTOU Residual
-Risk). `fetch()` re-resolves `mta-sts.{domain}` internally, so a TTL switch
-between `resolveAndCheck()` and the fetch's own resolution can still land the
-connection on a private address. A feasible mitigation exists without adding
-dependencies: fetch the policy over a connection pinned to the checked IP —
-resolve once, run the address through the SSRF guard, then `tls.connect` to
-the resolved IP literal with `servername: 'mta-sts.{domain}'` (preserving
-SNI and certificate validation) and issue the HTTP GET over that socket,
-mirroring the SMTP probe's checked-IP pinning. Node's global `fetch()` exposes
-no lookup override, which is why the pin has to happen below it. Until that
-lands, treat MTA-STS fetch destinations as a residual risk for deployments
-where tenants can import MX records from domains they do not fully control,
-and restrict collector egress to public unicast destinations at the network
-layer as a compensating control.
+The active probes now pin their checked DNS results and enforce public-unicast
+SSRF policy at the connection layer. Continue to restrict collector egress to
+public unicast destinations at the network layer as defense in depth.
 
 ### Remaining gaps
 
 | Gap | Severity | Recommendation |
 |-----|----------|---------------|
-| MTA-STS fetch DNS re-resolution (TOCTOU) | Medium | SMTP is fixed via checked-IP pinning; pin the MTA-STS fetch the same way — `tls.connect` to the checked IP with `servername` for SNI, HTTP over that socket (documented above). Interim: network-layer egress restriction to public unicast |
 | `::` covers non-mapped IPv6 addresses broadly | Low | Acceptable — probe targets should be standard FQDN hostnames resolved from DNS, not raw IPv6 literals |
 
 ---
@@ -327,7 +291,7 @@ layer as a compensating control.
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2024-03-24 | Initial (unverified — incorrectly claimed zero remaining gaps) |
-| 2.0.0 | 2026-04-03 | PR-06 security audit; found and fixed IPv4-mapped IPv6, redirect-to-private, config wiring, semaphore gaps; documented DNS rebinding residual risk |
+| 2.0.0 | 2026-04-04 | PR-06 security audit; fixed IPv4-mapped IPv6, redirect handling, config wiring, semaphore gaps, DNS pinning, and body/deadline limits |
 
 ---
 
@@ -337,7 +301,7 @@ layer as a compensating control.
 |------|---------|
 | `apps/collector/src/probes/ssrf-guard.ts` | SSRF guard — IP/URL validation |
 | `apps/collector/src/probes/allowlist.ts` | Tenant-scoped probe allowlist |
-| `apps/collector/src/probes/mta-sts.ts` | MTA-STS policy fetch (redirect:'error' fix) |
+| `apps/collector/src/probes/mta-sts.ts` | Pinned MTA-STS policy fetch and body limits |
 | `apps/collector/src/probes/semaphore.ts` | Global concurrency semaphore |
 | `apps/collector/src/probes/ssrf-guard.test.ts` | SSRF guard unit tests |
 | `apps/collector/src/probes/probe-ratelimit.test.ts` | Rate-limit/concurrency tests |

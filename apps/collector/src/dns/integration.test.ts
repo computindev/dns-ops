@@ -671,22 +671,23 @@ describe('DNS Collector Integration', () => {
     }
   });
 
-  it('should persist collected CNAME hops and authorize the terminal MTA-STS TXT', async () => {
+  it('should canonicalize mixed-case underscore CNAME hops and authorize terminal TXT', async () => {
     const { db, rows } = createInMemoryDb();
     const initialOwner = '_mta-sts.example.com';
-    const terminalOwner = 'mta-sts-policy.example.net';
+    const observedTarget = '_Policy._MTA-STS.Example.NET.';
+    const terminalOwner = '_policy._mta-sts.example.net';
     const txtRecord = 'v=STSv1; id=20260901';
     const queryResults = new Map<string, DNSQueryResult>([
       [
         `${initialOwner}:CNAME`,
         buildSuccessResult(initialOwner, 'CNAME', [
-          makeAnswer(initialOwner, 'CNAME', terminalOwner, 120),
+          makeAnswer('_MTA-STS.Example.COM.', 'CNAME', observedTarget, 120),
         ]),
       ],
       [
         `${terminalOwner}:TXT`,
         buildSuccessResult(terminalOwner, 'TXT', [
-          makeAnswer(terminalOwner, 'TXT', txtRecord, 300),
+          makeAnswer('_POLICY._MTA-STS.EXAMPLE.NET.', 'TXT', txtRecord, 300),
         ]),
       ],
     ]);
@@ -694,7 +695,7 @@ describe('DNS Collector Integration', () => {
     const collector = createCollectorWithMockedResolver(
       {
         tenantId: 'tenant-cname',
-        domain: 'example.com',
+        domain: 'Example.COM.',
         zoneManagement: 'unknown',
         recordTypes: ['TXT'],
         triggeredBy: 'test',
@@ -706,6 +707,13 @@ describe('DNS Collector Integration', () => {
     const collection = await collector.collect();
 
     expect(collection.resultState).toBe('complete');
+    const observations = rows('observations');
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ queryName: initialOwner, queryType: 'CNAME' }),
+        expect.objectContaining({ queryName: terminalOwner, queryType: 'TXT' }),
+      ])
+    );
     const recordSets = rows('record_sets');
     expect(recordSets).toEqual(
       expect.arrayContaining([
@@ -728,7 +736,7 @@ describe('DNS Collector Integration', () => {
     );
 
     const evidence = await loadPersistedMtaStsEvidence(db, {
-      domain: 'example.com',
+      domain: 'EXAMPLE.COM.',
       tenantId: 'tenant-cname',
     });
     expect(evidence).toMatchObject({ ok: true, txtRecord, txtRecordId: '20260901' });

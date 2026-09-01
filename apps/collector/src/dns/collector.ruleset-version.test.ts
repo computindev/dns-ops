@@ -141,7 +141,12 @@ vi.mock('../middleware/error-tracking.js', () => ({
 }));
 
 vi.mock('@dns-ops/parsing', () => ({
+  MAX_DNS_CNAME_HOPS: 5,
   observationsToRecordSets: vi.fn().mockReturnValue([]),
+  tryNormalizeDNSOwner: (name: string) => ({
+    original: name,
+    normalized: name.toLowerCase().replace(/\.$/, ''),
+  }),
 }));
 
 describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {

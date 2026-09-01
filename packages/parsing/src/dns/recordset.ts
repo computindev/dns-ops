@@ -6,6 +6,7 @@
  */
 
 import type { DNSRecord, Observation } from '@dns-ops/db/schema';
+import { tryNormalizeDNSOwner } from './index.js';
 
 export interface NormalizedRecord {
   name: string;
@@ -38,7 +39,9 @@ function groupByNameType(observations: Observation[]): Map<string, Observation[]
   const groups = new Map<string, Observation[]>();
 
   for (const obs of observations) {
-    const key = `${obs.queryName.toLowerCase()}|${obs.queryType}`;
+    const owner = tryNormalizeDNSOwner(obs.queryName)?.normalized;
+    if (!owner) continue;
+    const key = `${owner}|${obs.queryType}`;
     if (!groups.has(key)) {
       groups.set(key, []);
     }
@@ -49,12 +52,20 @@ function groupByNameType(observations: Observation[]): Map<string, Observation[]
 }
 
 /**
- * Extract values from DNS records
+ * Extract values from DNS records. Keep malformed CNAME data unchanged so a
+ * later persisted-evidence authorization check can reject it rather than
+ * silently dropping the observation.
  */
-function extractValues(records: DNSRecord[]): string[] {
+function extractValues(records: DNSRecord[], ownerName: string, recordType: string): string[] {
   const values: string[] = [];
   for (const record of records) {
-    if (record.type === 'MX' && record.priority !== undefined) {
+    if (record.type !== recordType) continue;
+    const recordOwner = tryNormalizeDNSOwner(record.name)?.normalized;
+    if (recordOwner !== ownerName) continue;
+
+    if (record.type === 'CNAME') {
+      values.push(tryNormalizeDNSOwner(record.data)?.normalized ?? record.data);
+    } else if (record.type === 'MX' && record.priority !== undefined) {
       values.push(`${record.priority} ${record.data}`);
     } else {
       values.push(record.data);
@@ -101,7 +112,7 @@ export function observationsToRecordSets(observations: Observation[]): Normalize
       vantages.push(vantageId);
       observationIds.push(obs.id);
 
-      const values = extractValues(obs.answerSection || []);
+      const values = extractValues(obs.answerSection || [], name, type);
       allValues.push(...values);
       vantageValues.set(vantageId, values);
     }
@@ -143,7 +154,14 @@ export function observationsToRecordSets(observations: Observation[]): Normalize
 
     // Calculate average TTL
     const ttls = successfulObs
-      .flatMap((obs) => (obs.answerSection || []).map((r) => r.ttl))
+      .flatMap((obs) =>
+        (obs.answerSection || [])
+          .filter(
+            (record) =>
+              record.type === type && tryNormalizeDNSOwner(record.name)?.normalized === name
+          )
+          .map((r) => r.ttl)
+      )
       .filter((ttl): ttl is number => ttl !== undefined);
 
     const avgTtl = ttls.length > 0 ? Math.round(ttls.reduce((a, b) => a + b, 0) / ttls.length) : 0;

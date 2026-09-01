@@ -5,9 +5,9 @@
  *
  * BUG-007: validateUrl() checked hostname string but not resolved IP.
  *   A domain like evil.attacker.com that resolves to 10.0.0.1 passed
- *   validateUrl() (hostname isn't on the blocklist) but the fetch()
- *   would connect to a private IP. resolveAndCheck() closes this gap
- *   by pre-resolving and checking the resolved IP.
+ *   validateUrl() (hostname isn't on the blocklist) but a downstream client
+ *   could connect to a private IP. resolveAndCheck() pre-resolves and checks
+ *   the address; strict callers must pin their client to the result.
  *
  * BUG-008: DNS resolution failure was treated as a block.
  *   Initial implementation returned { allowed: false } when dns.lookup
@@ -16,9 +16,9 @@
  *   DNS failure ≠ rebinding attack. Fix: allow through, let fetch()
  *   handle the connection error naturally.
  *
- * BUG-009: MTA-STS fetch was missing resolveAndCheck() entirely.
- *   webhook.ts was protected but mta-sts.ts still used only validateUrl().
- *   Same TOCTOU gap in a different call site. Both must be checked.
+ * BUG-009: MTA-STS fetch was missing a resolved-address check entirely.
+ *   It now has a dedicated fail-closed pinned `https.request` path; this
+ *   compatibility test documents the separate fail-open webhook helper.
  */
 
 import { promises as dnsPromises } from 'node:dns';

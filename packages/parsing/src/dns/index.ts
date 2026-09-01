@@ -14,6 +14,53 @@ export interface ParsedAnswer {
   priority?: number;
 }
 
+/** Maximum number of CNAME edges trusted by DNS evidence consumers. */
+export const MAX_DNS_CNAME_HOPS = 5;
+
+export interface NormalizedDNSOwner {
+  original: string;
+  normalized: string;
+}
+
+/**
+ * Normalize a DNS owner name without applying domain-only restrictions.
+ * Service owners such as `_mta-sts.example.com` legitimately contain `_`.
+ * DNS responses are expected to expose non-ASCII names in wire-format
+ * punycode; arbitrary escaped/binary labels are rejected here.
+ */
+export function tryNormalizeDNSOwner(name: string): NormalizedDNSOwner | null {
+  if (typeof name !== 'string') return null;
+
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.endsWith('..')) return null;
+
+  const normalized = trimmed.endsWith('.') ? trimmed.slice(0, -1) : trimmed;
+  if (
+    !normalized ||
+    normalized.length > 253 ||
+    normalized.includes('..') ||
+    normalized.includes('*')
+  ) {
+    return null;
+  }
+
+  const labels = normalized.split('.');
+  if (
+    labels.some(
+      (label) =>
+        !label ||
+        label.length > 63 ||
+        label.startsWith('-') ||
+        label.endsWith('-') ||
+        !/^[a-z0-9_-]+$/i.test(label)
+    )
+  ) {
+    return null;
+  }
+
+  return { original: name, normalized: normalized.toLowerCase() };
+}
+
 /**
  * Parse raw DNS answer data into structured format
  */

@@ -38,6 +38,7 @@ vi.mock('node:net', async (importOriginal) => {
     static instances: FakeSocket[] = [];
 
     connectArgs: { port: number; host: string } | null = null;
+    destroyed = false;
 
     constructor() {
       super();
@@ -46,13 +47,18 @@ vi.mock('node:net', async (importOriginal) => {
 
     connect(port: number, host: string): this {
       this.connectArgs = { port, host };
+      if (stallPhase === 'connect') return this;
       const emitResponse = () => {
         this.emit('connect');
         // Data arrives after the connect promise continuation has
         // registered the banner reader.
-        setImmediate(() => {
-          this.emit('data', Buffer.from('220 fake-mx.example ESMTP ready\r\n'));
-        });
+        const emitBanner = () => {
+          if (stallPhase !== 'banner') {
+            this.emit('data', Buffer.from('220 fake-mx.example ESMTP ready\r\n'));
+          }
+        };
+        if (responseDelayMs > 0) setTimeout(emitBanner, responseDelayMs);
+        else setImmediate(emitBanner);
       };
       if (socketConnectDelayMs > 0) setTimeout(emitResponse, socketConnectDelayMs);
       else setImmediate(emitResponse);
@@ -64,15 +70,22 @@ vi.mock('node:net', async (importOriginal) => {
     }
 
     write(chunk: string): boolean {
-      if (chunk.startsWith('EHLO')) {
-        setImmediate(() => {
-          this.emit('data', Buffer.from('250-fake-mx.example\r\n250 HELP\r\n'));
-        });
+      if (chunk.startsWith('EHLO') && stallPhase !== 'ehlo') {
+        const emitEhlo = () => {
+          this.emit('data', Buffer.from('250-fake-mx.example\r\n250-STARTTLS\r\n250 HELP\r\n'));
+        };
+        if (responseDelayMs > 0) setTimeout(emitEhlo, responseDelayMs);
+        else setImmediate(emitEhlo);
+      } else if (chunk.startsWith('STARTTLS') && stallPhase !== 'starttls') {
+        const emitStarttls = () => this.emit('data', Buffer.from('220 Ready\r\n'));
+        if (responseDelayMs > 0) setTimeout(emitStarttls, responseDelayMs);
+        else setImmediate(emitStarttls);
       }
       return true;
     }
 
     destroy(): this {
+      this.destroyed = true;
       return this;
     }
 
@@ -84,13 +97,74 @@ vi.mock('node:net', async (importOriginal) => {
   return { ...actual, Socket: FakeSocket };
 });
 
+vi.mock('node:tls', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:tls')>();
+  const { EventEmitter } = await import('node:events');
+
+  class FakeTlsSocket extends EventEmitter {
+    destroyed = false;
+
+    constructor() {
+      super();
+      const entry = { destroyed: false, setTimeoutMs: undefined as number | undefined };
+      tlsInstances.push(entry);
+      if (stallPhase !== 'tls') setImmediate(() => this.emit('secureConnect'));
+    }
+
+    setTimeout(timeoutMs: number): this {
+      const entry = tlsInstances[tlsInstances.length - 1];
+      if (entry) entry.setTimeoutMs = timeoutMs;
+      return this;
+    }
+
+    getCipher() {
+      return { name: 'TLS_AES_128_GCM_SHA256', version: 'TLSv1.3' };
+    }
+
+    getPeerCertificate() {
+      return {
+        subject: { CN: 'fake-mx.example' },
+        issuer: { CN: 'fake-ca' },
+        valid_from: 'Jan 1 00:00:00 2026 GMT',
+        valid_to: 'Jan 1 00:00:00 2027 GMT',
+        fingerprint: 'AA:BB',
+      };
+    }
+
+    write(): boolean {
+      return true;
+    }
+
+    end(): this {
+      return this;
+    }
+
+    destroy(): this {
+      this.destroyed = true;
+      const entry = tlsInstances[tlsInstances.length - 1];
+      if (entry) entry.destroyed = true;
+      return this;
+    }
+  }
+
+  return { ...actual, connect: vi.fn(() => new FakeTlsSocket()) };
+});
+
 const mockLookup = dnsPromises.lookup as ReturnType<typeof vi.fn>;
+type StallPhase = 'none' | 'dns' | 'connect' | 'banner' | 'ehlo' | 'starttls' | 'tls';
+let stallPhase: StallPhase = 'none';
 let socketConnectDelayMs = 0;
+let responseDelayMs = 0;
+const tlsInstances: Array<{ destroyed: boolean; setTimeoutMs?: number }> = [];
 
 /** Sockets created since the last reset (real module code news one per probe). */
-function createdSockets(): Array<{ connectArgs: { port: number; host: string } | null }> {
+function createdSockets(): Array<{
+  connectArgs: { port: number; host: string } | null;
+  destroyed: boolean;
+}> {
   return (Socket as unknown as { instances: unknown[] }).instances as Array<{
     connectArgs: { port: number; host: string } | null;
+    destroyed: boolean;
   }>;
 }
 
@@ -100,7 +174,10 @@ function resetSockets(): void {
 
 beforeEach(() => {
   mockLookup.mockReset();
+  stallPhase = 'none';
   socketConnectDelayMs = 0;
+  responseDelayMs = 0;
+  tlsInstances.length = 0;
   resetSockets();
   resetProbeSemaphore(5);
 });
@@ -154,6 +231,24 @@ describe('probeSMTPStarttls — resolved-IP SSRF pinning (Issue #67 review, P1)'
     expect(createdSockets()).toHaveLength(0);
   });
 
+  it.each([
+    ['100.64.0.0', '100.64.0.0/10'],
+    ['100.127.255.255', '100.64.0.0/10'],
+    ['198.18.0.0', '198.18.0.0/15'],
+    ['198.19.255.255', '198.18.0.0/15'],
+  ])('rejects an IANA special-purpose resolved address at the %s boundary (%s)', async (address) => {
+    mockLookup.mockResolvedValue({ address, family: 4 });
+
+    const result = await probeSMTPStarttls('rebind-special.example', 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 1000,
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect(result.error).toContain(`resolves to ${address}`);
+    expect(createdSockets()).toHaveLength(0);
+  });
+
   it('connects to the checked public IP, not the hostname', async () => {
     mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
 
@@ -164,7 +259,7 @@ describe('probeSMTPStarttls — resolved-IP SSRF pinning (Issue #67 review, P1)'
     });
 
     expect(result.success).toBe(true);
-    expect(result.supportsStarttls).toBe(false);
+    expect(result.supportsStarttls).toBe(true);
     expect(mockLookup).toHaveBeenCalledWith('mail.example.com');
 
     const sockets = createdSockets();
@@ -213,9 +308,7 @@ describe('probeSMTPStarttls — resolved-IP SSRF pinning (Issue #67 review, P1)'
   });
 
   it('does not start a later batch after shared evidence expires', async () => {
-    vi.useFakeTimers();
-    const now = new Date('2026-09-01T00:00:00.000Z');
-    vi.setSystemTime(now);
+    const now = new Date();
     socketConnectDelayMs = 100;
     mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
     const allowlist = probeAllowlistManager.getTenantAllowlist('tenant-a');
@@ -235,11 +328,6 @@ describe('probeSMTPStarttls — resolved-IP SSRF pinning (Issue #67 review, P1)'
       await Promise.resolve();
     }
     expect(createdSockets()).toHaveLength(1);
-    vi.advanceTimersByTime(100);
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-      vi.runAllTimers();
-    }
     const results = await resultsPromise;
 
     expect(results).toHaveLength(2);
@@ -249,5 +337,118 @@ describe('probeSMTPStarttls — resolved-IP SSRF pinning (Issue #67 review, P1)'
       error: 'Persisted DNS evidence expired before probe start',
     });
     expect(createdSockets()).toHaveLength(1);
+  });
+
+  it.each([
+    'dns',
+    'connect',
+    'banner',
+    'ehlo',
+    'starttls',
+    'tls',
+  ] as StallPhase[])('returns within the cumulative deadline when %s stalls', async (phase) => {
+    vi.useFakeTimers();
+    stallPhase = phase;
+    if (phase === 'dns') {
+      mockLookup.mockReturnValue(new Promise(() => undefined));
+    } else {
+      mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    }
+
+    const resultPromise = probeSMTPStarttls(`stall-${phase}.example.com`, 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ success: false, error: 'Timeout after 25ms' });
+    if (phase !== 'dns') expect(createdSockets()[0]?.destroyed).toBe(true);
+  });
+
+  it('destroys a socket when it emits timeout', async () => {
+    stallPhase = 'banner';
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    const resultPromise = probeSMTPStarttls('socket-timeout.example.com', 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 1000,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const socket = (Socket as unknown as { instances: Array<{ emit: (event: string) => void }> })
+      .instances[0];
+    socket?.emit('timeout');
+
+    const result = await resultPromise;
+    expect(result).toMatchObject({ success: false, error: 'Timeout after 1000ms' });
+    expect(createdSockets()[0]?.destroyed).toBe(true);
+  });
+
+  it('keeps phase timeouts cumulative instead of resetting after each response', async () => {
+    vi.useFakeTimers();
+    socketConnectDelayMs = 10;
+    responseDelayMs = 10;
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+
+    const resultPromise = probeSMTPStarttls('cumulative.example.com', 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ success: false, error: 'Timeout after 25ms' });
+  });
+
+  it('rejects an oversized SMTP response and destroys the socket', async () => {
+    stallPhase = 'banner';
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    const resultPromise = probeSMTPStarttls('oversized.example.com', 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 1000,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const socket = (
+      Socket as unknown as { instances: Array<{ emit: (event: string, data: Buffer) => void }> }
+    ).instances[0];
+    socket?.emit('data', Buffer.alloc(65 * 1024));
+
+    const result = await resultPromise;
+    expect(result).toMatchObject({ success: false, error: 'SMTP response exceeded 65536 bytes' });
+    expect(createdSockets()[0]?.destroyed).toBe(true);
+  });
+
+  it('releases a global permit when a stalled batch host times out', async () => {
+    vi.useFakeTimers();
+    resetProbeSemaphore(1);
+    stallPhase = 'connect';
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    const allowlist = probeAllowlistManager.getTenantAllowlist('tenant-a');
+    allowlist.addCustomEntry('stalled.example.com', 25, 'test', 'timeout test');
+    allowlist.addCustomEntry('next.example.com', 25, 'test', 'timeout test');
+
+    const first = probeMXHosts([{ hostname: 'stalled.example.com', priority: 10 }], 'tenant-a', {
+      concurrency: 1,
+      timeoutMs: 20,
+    });
+    const second = probeMXHosts([{ hostname: 'next.example.com', priority: 20 }], 'tenant-a', {
+      concurrency: 1,
+      timeoutMs: 20,
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(20);
+    const results = await Promise.all([first, second]);
+
+    expect(results).toHaveLength(2);
+    expect(results.flat()).toHaveLength(2);
+    expect(createdSockets()).toHaveLength(2);
+    expect(results.flat().every((result) => result.error === 'Timeout after 20ms')).toBe(true);
   });
 });

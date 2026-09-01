@@ -20,19 +20,29 @@ export interface SSRFCheckResult {
   blockedCategory?: 'private' | 'loopback' | 'link-local' | 'multicast' | 'reserved' | 'invalid';
 }
 
-// IPv4 private ranges (RFC 1918 + others)
+// Conservative denylist for the complete IANA IPv4 Special-Purpose Address
+// Registry plus multicast. Entries covering a smaller registered allocation
+// deliberately deny their entire enclosing prefix; keep this list in sync with
+// NON_GLOBAL_IPV4_CIDRS in tools/controlled-live-harness/runner.mjs.
 const BLOCKED_IPV4_RANGES = [
   { start: 0x00000000, end: 0x00ffffff, name: '0.0.0.0/8 (this network)' },
-  { start: 0x7f000000, end: 0x7fffffff, name: '127.0.0.0/8 (loopback)' },
   { start: 0x0a000000, end: 0x0affffff, name: '10.0.0.0/8 (private)' },
-  { start: 0xac100000, end: 0xac1fffff, name: '172.16.0.0/12 (private)' },
-  { start: 0xc0a80000, end: 0xc0a8ffff, name: '192.168.0.0/16 (private)' },
+  { start: 0x64400000, end: 0x647fffff, name: '100.64.0.0/10 (shared address space)' },
+  { start: 0x7f000000, end: 0x7fffffff, name: '127.0.0.0/8 (loopback)' },
   { start: 0xa9fe0000, end: 0xa9feffff, name: '169.254.0.0/16 (link-local)' },
+  { start: 0xac100000, end: 0xac1fffff, name: '172.16.0.0/12 (private)' },
+  { start: 0xc0000000, end: 0xc00000ff, name: '192.0.0.0/24 (IETF protocol assignments)' },
+  { start: 0xc0000200, end: 0xc00002ff, name: '192.0.2.0/24 (documentation)' },
+  { start: 0xc01fc400, end: 0xc01fc4ff, name: '192.31.196.0/24 (AS112-v4)' },
+  { start: 0xc034c100, end: 0xc034c1ff, name: '192.52.193.0/24 (AMT)' },
+  { start: 0xc0586300, end: 0xc05863ff, name: '192.88.99.0/24 (deprecated 6to4 relay anycast)' },
+  { start: 0xc0a80000, end: 0xc0a8ffff, name: '192.168.0.0/16 (private)' },
+  { start: 0xc0af3000, end: 0xc0af30ff, name: '192.175.48.0/24 (direct delegation AS112 service)' },
+  { start: 0xc6120000, end: 0xc613ffff, name: '198.18.0.0/15 (benchmarking)' },
+  { start: 0xc6336400, end: 0xc63364ff, name: '198.51.100.0/24 (documentation)' },
+  { start: 0xcb007100, end: 0xcb0071ff, name: '203.0.113.0/24 (documentation)' },
   { start: 0xe0000000, end: 0xefffffff, name: '224.0.0.0/4 (multicast)' },
   { start: 0xf0000000, end: 0xffffffff, name: '240.0.0.0/4 (reserved)' },
-  { start: 0xc0000200, end: 0xc00002ff, name: '192.0.2.0/24 (TEST-NET-1)' },
-  { start: 0xc6336400, end: 0xc63364ff, name: '198.51.100.0/24 (TEST-NET-2)' },
-  { start: 0xcb007100, end: 0xcb0071ff, name: '203.0.113.0/24 (TEST-NET-3)' },
 ];
 
 /**
@@ -289,18 +299,16 @@ export function checkResolvedIP(ip: string): SSRFCheckResult {
 /**
  * Resolve a hostname and verify the resolved IP is safe.
  *
- * Closes the DNS rebinding TOCTOU gap: validateUrl() checks the hostname
- * string, but fetch() resolves DNS independently. An attacker can register
- * a domain that resolves to a public IP on first query and a private IP
- * on the second. This function resolves first, checks the result, then
- * returns the resolved IP for the caller to connect to directly.
+ * Pre-checks the DNS result against the DNS rebinding case: validateUrl()
+ * checks the hostname string, while a downstream client may resolve DNS
+ * independently. This function resolves first, checks the result, and returns
+ * the address so strict callers can pin their connection to it. It retains
+ * fail-open behavior on DNS errors for compatibility-sensitive webhook callers.
  *
- * NOTE: This narrows but does not fully close the TOCTOU window. Node's
- * `fetch()` re-resolves DNS independently — a sub-millisecond TTL switch
- * between our check and fetch's resolution is theoretically possible.
- * Full closure requires `net.connect({ lookup })` which only applies to
- * raw TCP/TLS (probe system), not HTTP fetch. The two-step check is the
- * industry-standard mitigation for HTTP-based SSRF.
+ * NOTE: This helper intentionally retains its fail-open DNS-error behavior
+ * for compatibility-sensitive webhook callers. Callers that need strict
+ * pinning must resolve with a fail-closed policy and pass a static `lookup`
+ * callback to their native Node request, as the MTA-STS probe does.
  *
  * @returns The resolved IP address if safe, or an SSRFCheckResult if blocked.
  */
@@ -333,10 +341,9 @@ export async function resolveAndCheck(
 
     return { allowed: true, ip: address };
   } catch {
-    // DNS resolution failure (ENOTFOUND, ESERVFAIL, etc.) is NOT a rebinding
-    // attack — it means the hostname doesn't exist. Let fetch() handle the
-    // connection error naturally. Only block when resolution succeeds to a
-    // private IP.
+    // DNS resolution failure (ENOTFOUND, ESERVFAIL, etc.) is NOT treated as a
+    // rebinding block for compatibility-sensitive webhook callers. Strict
+    // probe callers use their own fail-closed resolution path instead.
     return { allowed: true, ip: hostname };
   }
 }

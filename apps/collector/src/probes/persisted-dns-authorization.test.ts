@@ -149,6 +149,39 @@ function state(
   };
 }
 
+function boundedChainState(hopCount: number) {
+  const owners = [
+    DOMAIN,
+    ...Array.from({ length: hopCount }, (_, index) => `cname-hop-${index + 1}.example.net`),
+  ];
+  const cname: Row[] = [];
+  const cnameObservations: Row[] = [];
+  for (let index = 0; index < hopCount; index++) {
+    const owner = owners[index];
+    const target = owners[index + 1];
+    const observationId = `observation-cname-${index + 1}`;
+    cname.push(recordSet(`record-cname-${index + 1}`, owner, 'CNAME', [target], [observationId]));
+    cnameObservations.push(
+      observation(observationId, owner, 'CNAME', [cnameAnswer(owner, target)])
+    );
+  }
+
+  const terminalOwner = owners[hopCount];
+  const terminalCnameObservationId = 'observation-cname-terminal';
+  cname.push(
+    recordSet('record-cname-terminal', terminalOwner, 'CNAME', [], [terminalCnameObservationId])
+  );
+  cnameObservations.push(observation(terminalCnameObservationId, terminalOwner, 'CNAME', []));
+  return state({
+    cname,
+    txtOwnerName: terminalOwner,
+    observations: [
+      observation('observation-txt', terminalOwner, 'TXT', [txtAnswer(terminalOwner)]),
+      ...cnameObservations,
+    ],
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -213,6 +246,30 @@ describe('loadPersistedMtaStsEvidence CNAME authorization', () => {
       expect(result.dnsResults[2]?.query).toEqual({ name: firstTarget, type: 'CNAME' });
       expect(result.expiresAt.getTime()).toBe(NOW.getTime() + 299_000);
     }
+  });
+
+  it('accepts exactly five persisted CNAME hops', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+
+    const result = await loadPersistedMtaStsEvidence(createDb(boundedChainState(5)), {
+      domain: 'example.com',
+      tenantId: 'tenant-a',
+    });
+
+    expect(result).toMatchObject({ ok: true, txtRecord: TXT, txtRecordId: '20260901' });
+  });
+
+  it('rejects a persisted CNAME chain at the six-hop limit', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+
+    const result = await loadPersistedMtaStsEvidence(createDb(boundedChainState(6)), {
+      domain: 'example.com',
+      tenantId: 'tenant-a',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'cname-chain-hop-limit' });
   });
 
   it('rejects a TXT answer from an unrelated canonical owner', async () => {

@@ -28,7 +28,7 @@ import {
   type Snapshot,
   SnapshotRepository,
 } from '@dns-ops/db';
-import { normalizeDNSDomain, tryNormalizeDomain } from '@dns-ops/parsing';
+import { MAX_DNS_CNAME_HOPS, tryNormalizeDNSOwner, tryNormalizeDomain } from '@dns-ops/parsing';
 import type { DNSQueryResult } from '../dns/types.js';
 import { validateMTASTSTxtRecord } from './mta-sts.js';
 
@@ -154,7 +154,11 @@ async function loadRelevantObservations(
 ): Promise<RelevantObservation[] | EvidenceFailure> {
   const obsRepo = new ObservationRepository(db);
   const relevant: RelevantObservation[] = [];
-  const answerNames = options.answerNames ?? new Set([chain.ownerName]);
+  const answerNames = new Set(
+    [...(options.answerNames ?? new Set([chain.ownerName]))]
+      .map((name) => tryNormalizeDNSOwner(name)?.normalized)
+      .filter((name): name is string => name !== undefined)
+  );
 
   for (const id of chain.recordSet.sourceObservationIds) {
     const obs = await obsRepo.findById(id);
@@ -168,7 +172,8 @@ async function loadRelevantObservations(
         'observation-snapshot-mismatch'
       );
     }
-    if (normalizeDNSDomain(obs.queryName) !== chain.ownerName || obs.queryType !== recordType) {
+    const observationOwner = tryNormalizeDNSOwner(obs.queryName)?.normalized;
+    if (observationOwner !== chain.ownerName || obs.queryType !== recordType) {
       return fail(
         403,
         'Observation does not match the record set query',
@@ -198,9 +203,11 @@ async function loadRelevantObservations(
       );
     }
 
-    const answers = (obs.answerSection ?? []).filter(
-      (a) => a.type === recordType && answerNames.has(normalizeDNSDomain(a.name))
-    );
+    const answers = (obs.answerSection ?? []).filter((a) => {
+      if (a.type !== recordType) return false;
+      const owner = tryNormalizeDNSOwner(a.name)?.normalized;
+      return owner !== undefined && answerNames.has(owner);
+    });
     if (answers.length === 0 && !options.allowNoAnswers) {
       return fail(403, 'Observation carries no answer for this record set', 'missing-answer');
     }
@@ -263,26 +270,7 @@ interface PersistedCnameChain {
  * redirect authorization through an unrelated owner or an untrusted vantage.
  */
 function normalizeCnameTarget(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = normalizeDNSDomain(value.trim());
-  if (
-    !normalized ||
-    normalized.length > 253 ||
-    normalized.includes('..') ||
-    normalized
-      .split('.')
-      .some(
-        (label) =>
-          !label ||
-          label.length > 63 ||
-          label.startsWith('-') ||
-          label.endsWith('-') ||
-          !/^[a-z0-9_-]+$/i.test(label)
-      )
-  ) {
-    return null;
-  }
-  return normalized;
+  return typeof value === 'string' ? (tryNormalizeDNSOwner(value)?.normalized ?? null) : null;
 }
 
 async function loadPersistedCnameChain(
@@ -294,6 +282,7 @@ async function loadPersistedCnameChain(
   const visited = new Set<string>();
   const observations: RelevantObservation[] = [];
   let ownerName = initialOwnerName;
+  let hopCount = 0;
 
   while (true) {
     if (visited.has(ownerName)) {
@@ -346,6 +335,13 @@ async function loadPersistedCnameChain(
       }
       return { ok: true, canonicalOwnerName: ownerName, observations };
     }
+    if (hopCount >= MAX_DNS_CNAME_HOPS) {
+      return fail(
+        403,
+        `Persisted CNAME chain exceeds ${MAX_DNS_CNAME_HOPS} hops`,
+        'cname-chain-hop-limit'
+      );
+    }
 
     if (cnameRecordSet.isConsistent !== true) {
       return fail(
@@ -392,6 +388,7 @@ async function loadPersistedCnameChain(
     if (visited.has(target)) {
       return fail(403, 'Persisted CNAME chain contains a loop', 'cname-chain-loop');
     }
+    hopCount++;
     ownerName = target;
   }
 }
@@ -403,7 +400,10 @@ function toDnsResults(
 ): DNSQueryResult[] {
   return relevant.map(({ observation, answers }) => ({
     query: {
-      name: recordType === 'CNAME' ? normalizeDNSDomain(observation.queryName) : ownerName,
+      name:
+        recordType === 'CNAME'
+          ? (tryNormalizeDNSOwner(observation.queryName)?.normalized ?? observation.queryName)
+          : ownerName,
       type: recordType,
     },
     vantage: {
@@ -412,7 +412,12 @@ function toDnsResults(
     },
     success: true,
     responseCode: observation.responseCode ?? DNS_RCODE.NOERROR,
-    answers: answers.map((a) => ({ name: a.name, type: a.type, ttl: a.ttl ?? 0, data: a.data })),
+    answers: answers.map((a) => ({
+      name: tryNormalizeDNSOwner(a.name)?.normalized ?? a.name,
+      type: a.type,
+      ttl: a.ttl ?? 0,
+      data: a.data,
+    })),
     authority: [],
     additional: [],
     responseTime: observation.responseTimeMs ?? 0,
@@ -445,7 +450,7 @@ export async function loadPersistedMxEvidence(
         return fail(403, 'Persisted MX answer is malformed', 'malformed-mx-answer');
       }
       const priority = Number.parseInt(parts[0], 10);
-      const target = tryNormalizeDomain(parts[1]);
+      const target = tryNormalizeDNSOwner(parts[1]);
       if (!Number.isFinite(priority) || !target) {
         return fail(403, 'Persisted MX answer is malformed', 'malformed-mx-answer');
       }
@@ -478,7 +483,10 @@ export async function loadPersistedMtaStsEvidence(
   const context = await loadTrustedSnapshot(db, input);
   if (!context.ok) return context;
 
-  const initialOwnerName = `_mta-sts.${context.domain}`;
+  const initialOwnerName = tryNormalizeDNSOwner(`_mta-sts.${context.domain}`)?.normalized;
+  if (!initialOwnerName) {
+    return fail(400, 'MTA-STS owner is invalid', 'invalid-mta-sts-owner');
+  }
   const cnameChain = await loadPersistedCnameChain(db, context, initialOwnerName);
   if (!cnameChain.ok) return cnameChain;
 

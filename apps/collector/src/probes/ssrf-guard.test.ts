@@ -546,17 +546,16 @@ describe('PR-06.1: RFC 6890 Special-Purpose Addresses', () => {
     expect(result.allowed).toBe(false);
   });
 
-  it('should block 100.64.0.0/10 (Shared Address Space, CGN)', () => {
-    // 100.64.0.0 - 100.127.255.255
-    const result = checkSSRF('100.64.0.0');
-    // Currently not blocked, but could be considered for CGN
-    expect(result.allowed).toBe(true); // Not in standard blocklist
-  });
-
-  it('should block 198.18.0.0/15 (Benchmarking)', () => {
-    // 198.18.0.0 - 198.19.255.255
-    const result = checkSSRF('198.18.0.0');
-    expect(result.allowed).toBe(true); // Not in standard blocklist
+  it.each([
+    ['100.64.0.0', '100.64.0.0/10 (shared address space)'],
+    ['100.127.255.255', '100.64.0.0/10 (shared address space)'],
+    ['198.18.0.0', '198.18.0.0/15 (benchmarking)'],
+    ['198.19.255.255', '198.18.0.0/15 (benchmarking)'],
+  ])('should block %s at the IANA special-purpose range boundary', (address, range) => {
+    const result = checkSSRF(address);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain(range);
+    expect(result.blockedCategory).toBe('reserved');
   });
 });
 
