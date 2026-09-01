@@ -18,15 +18,20 @@ import {
 import { type KeyboardEvent, useEffect, useId, useMemo, useState } from 'react';
 import {
   describeEstimate,
+  type EvidenceClock,
   estimateLiveAt,
   formatLiveAt,
   indexObservationsById,
+  readEvidenceClock,
   type TtlEstimate,
+  type TtlEvidenceMetadata,
   toDateTimeAttribute,
 } from '../lib/dns-ttl.js';
 
 interface DNSViewsProps {
   observations: Observation[];
+  snapshotMetadata?: TtlEvidenceMetadata;
+  evidenceClock?: EvidenceClock | null;
 }
 
 type ViewMode = 'parsed' | 'raw' | 'dig';
@@ -37,7 +42,7 @@ const VIEW_MODES: { id: ViewMode; label: string; description: string }[] = [
   { id: 'dig', label: 'Dig', description: 'CLI-style output' },
 ];
 
-export function DNSViews({ observations }: DNSViewsProps) {
+export function DNSViews({ observations, snapshotMetadata, evidenceClock }: DNSViewsProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('parsed');
   const viewIdPrefix = useId();
 
@@ -101,7 +106,13 @@ export function DNSViews({ observations }: DNSViewsProps) {
           aria-labelledby={getTabId('parsed')}
           hidden={viewMode !== 'parsed'}
         >
-          {viewMode === 'parsed' && <ParsedView observations={observations} />}
+          {viewMode === 'parsed' && (
+            <ParsedView
+              observations={observations}
+              snapshotMetadata={snapshotMetadata}
+              evidenceClock={evidenceClock}
+            />
+          )}
         </div>
         <div
           role="tabpanel"
@@ -168,18 +179,39 @@ function ViewModeSelector({
 
 // ==================== PARSED VIEW ====================
 
-function ParsedView({ observations }: { observations: Observation[] }) {
+function getMonotonicNow(): number | null {
+  if (typeof performance === 'undefined') return null;
+  const now = performance.now();
+  return Number.isFinite(now) ? now : null;
+}
+
+function ParsedView({
+  observations,
+  snapshotMetadata,
+  evidenceClock,
+}: {
+  observations: Observation[];
+  snapshotMetadata?: TtlEvidenceMetadata;
+  evidenceClock?: EvidenceClock | null;
+}) {
   const recordSets = observationsToRecordSets(observations);
   const grouped = groupRecordsByType(recordSets);
   const observationIndex = useMemo(() => indexObservationsById(observations), [observations]);
 
-  // One shared ticker drives every row's countdown; each tick recomputes from
-  // Date.now() so long-lived tabs do not accumulate interval drift.
-  const [now, setNow] = useState(() => Date.now());
+  // One shared ticker drives every row's countdown without trusting the
+  // browser wall clock or accumulating interval drift.
+  const [monotonicNow, setMonotonicNow] = useState<number | null>(() => getMonotonicNow());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    if (typeof performance === 'undefined') return;
+    const timer = setInterval(() => {
+      const now = getMonotonicNow();
+      if (now !== null) setMonotonicNow(now);
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const now =
+    evidenceClock && monotonicNow !== null ? readEvidenceClock(evidenceClock, monotonicNow) : null;
 
   if (recordSets.length === 0) {
     return (
@@ -253,12 +285,23 @@ function ParsedView({ observations }: { observations: Observation[] }) {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {records.map((record) => (
-                  <tr key={`${record.name}-${record.type}-${record.values.join(',')}`}>
+                  <tr
+                    key={`${record.name}-${record.type}-${record.values.join(',')}`}
+                    data-record-name={record.name}
+                    data-record-type={record.type}
+                  >
                     <td className="px-4 py-2 text-sm font-mono text-gray-900">{record.name}</td>
                     <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
                       {record.ttl !== null && record.ttl !== undefined ? `${record.ttl}s` : '—'}
                     </td>
-                    <TtlEstimateCells estimate={estimateLiveAt(record, observationIndex, now)} />
+                    <TtlEstimateCells
+                      estimate={estimateLiveAt(
+                        record,
+                        observationIndex,
+                        now ?? Number.NaN,
+                        snapshotMetadata
+                      )}
+                    />
                     <td className="px-4 py-2 text-sm">
                       <div className="space-y-1">
                         {record.values.map((value) => {

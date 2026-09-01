@@ -115,6 +115,26 @@ describe('DNS query concurrency (collectQueriesConcurrently)', () => {
     expect(getMax()).toBe(2);
   });
 
+  it('stamps each successful response at resolver completion', async () => {
+    const { resolver } = makeTrackingResolver(5);
+    const before = Date.now();
+    const results = await collectQueriesConcurrently(
+      resolver,
+      queries(3),
+      vantage,
+      new Semaphore(5),
+      []
+    );
+    const after = Date.now();
+
+    expect(results).toHaveLength(3);
+    for (const result of results) {
+      expect(result.receivedAt).toBeInstanceOf(Date);
+      expect(result.receivedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(result.receivedAt.getTime()).toBeLessThanOrEqual(after);
+    }
+  });
+
   it('records resolver-thrown errors and still returns the rest', async () => {
     const ok = (q: DNSQuery, v: VantageInfo): DNSQueryResult => ({
       query: q,

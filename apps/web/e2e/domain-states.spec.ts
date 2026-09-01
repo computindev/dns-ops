@@ -293,8 +293,12 @@ function ttlObservation(fixture: TtlObservationFixture): Record<string, unknown>
 
 async function mockTtlSnapshot(
   page: import('@playwright/test').Page,
-  observations: Record<string, unknown>[]
+  observations: Record<string, unknown>[],
+  options: { timingBasis?: boolean; serverDate?: string | null } = {}
 ): Promise<void> {
+  const serverDate =
+    options.serverDate === null ? undefined : (options.serverDate ?? TTL_BASE_TIME);
+  const responseHeaders = serverDate ? { Date: new Date(serverDate).toUTCString() } : undefined;
   // The domain page also calls auth/me and other DB-backed endpoints;
   // without a local DB those return HTML errors and __root's raw res.json()
   // crashes the route, so mock the session too.
@@ -322,7 +326,11 @@ async function mockTtlSnapshot(
         queriedNames: [TTL_DOMAIN],
         queriedTypes: ['A'],
         vantages: ['8.8.8.8'],
+        ...(options.timingBasis === false
+          ? {}
+          : { metadata: { dnsQueryTimestampBasis: 'response-received-v1' } }),
       }),
+      headers: responseHeaders,
     });
   });
   await page.route('**/api/snapshot/snap-ttl/observations', (route) => {
@@ -330,16 +338,15 @@ async function mockTtlSnapshot(
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(observations),
+      headers: responseHeaders,
     });
   });
 }
 
 /**
  * Deterministic fake clock: a paused clock blocks client hydration, so time is
- * instead held fixed with setFixedTime before load — Date.now() is stable
- * (deterministic countdowns) while timers keep running. Advancing the
- * countdown is done by re-setting the fixed time; the one-second interval
- * picks the new value up on its next real tick.
+ * held fixed while timers keep running. Countdown advancement uses the clock's
+ * monotonic elapsed time rather than the browser wall clock.
  */
 async function openParsedDnsView(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(`/domain/${TTL_DOMAIN}`);
@@ -364,8 +371,9 @@ test.describe('DNS Parsed TTL countdown', () => {
 
     await openParsedDnsView(page);
 
-    // 300 s TTL observed exactly at the paused base time.
-    await expect(page.getByRole('cell', { name: '300s remaining' })).toBeVisible();
+    // The server-calibrated epoch is conservative about HTTP Date precision,
+    // so the first display may have consumed one second already.
+    await expect(page.getByRole('cell', { name: /29[89]s remaining/ })).toBeVisible();
     // The sr-only caption names the table.
     await expect(page.getByRole('table', { name: /A DNS records/i })).toBeVisible();
 
@@ -375,12 +383,12 @@ test.describe('DNS Parsed TTL countdown', () => {
       '2024-06-01T12:05:00.000Z'
     );
 
-    // One shared one-second timer drives the countdown.
-    await page.clock.setFixedTime('2024-06-01T12:00:01.000Z');
-    await expect(page.getByRole('cell', { name: '299s remaining' })).toBeVisible();
+    // One shared one-second timer drives the monotonic countdown.
+    await page.clock.fastForward(1000);
+    await expect(page.getByRole('cell', { name: /29[78]s remaining/ })).toBeVisible();
   });
 
-  test('shows a valid 0 exactly at the deadline and UNKNOWN after it', async ({ page }) => {
+  test('shows UNKNOWN after the monotonic clock passes the deadline', async ({ page }) => {
     await page.clock.install({ time: TTL_BASE_TIME });
     await page.clock.setFixedTime(TTL_BASE_TIME);
     await mockTtlSnapshot(page, [
@@ -394,12 +402,13 @@ test.describe('DNS Parsed TTL countdown', () => {
 
     await openParsedDnsView(page);
 
-    // Advance to the exact deadline (queriedAt + 60 s): remaining is a valid 0.
-    await page.clock.setFixedTime('2024-06-01T12:01:00.000Z');
-    await expect(page.getByRole('cell', { name: '0s remaining' })).toBeVisible();
+    // Advance past the deadline using monotonic time. The conservative server
+    // anchor may consume up to two seconds of the displayed TTL.
+    await page.clock.fastForward(62_000);
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
 
-    // One second past the deadline both new fields render a visible UNKNOWN.
-    await page.clock.setFixedTime('2024-06-01T12:01:01.000Z');
+    // UNKNOWN remains stable after the deadline.
+    await page.clock.fastForward(1000);
     await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
     await expect(page.getByTitle(/expired/i)).toHaveCount(2);
   });
@@ -421,6 +430,73 @@ test.describe('DNS Parsed TTL countdown', () => {
     // Authoritative TTL is not cache lifetime: both new fields are UNKNOWN.
     await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
     await expect(page.getByTitle(/no valid public-recursive evidence/i)).toHaveCount(2);
+    await expect(page.locator('table time')).toHaveCount(0);
+  });
+
+  test('ignores a skewed browser wall clock and uses the server-calibrated clock', async ({
+    page,
+  }) => {
+    await page.clock.install({ time: '2099-01-01T00:00:00.000Z' });
+    await page.clock.setFixedTime('2099-01-01T00:00:00.000Z');
+    await mockTtlSnapshot(page, [
+      ttlObservation({
+        id: 'obs-ttl-skewed-browser',
+        vantageType: 'public-recursive',
+        status: 'success',
+        ttl: 300,
+      }),
+    ]);
+
+    await openParsedDnsView(page);
+
+    await expect(page.locator('table time')).toHaveAttribute(
+      'datetime',
+      '2024-06-01T12:05:00.000Z'
+    );
+    await expect(page.getByRole('cell', { name: /29[89]s remaining/ })).toBeVisible();
+  });
+
+  test('renders UNKNOWN for legacy timing metadata', async ({ page }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(
+      page,
+      [
+        ttlObservation({
+          id: 'obs-ttl-legacy',
+          vantageType: 'public-recursive',
+          status: 'success',
+          ttl: 300,
+        }),
+      ],
+      { timingBasis: false }
+    );
+
+    await openParsedDnsView(page);
+
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
+    await expect(page.locator('table time')).toHaveCount(0);
+  });
+
+  test('renders UNKNOWN when the server Date header is missing', async ({ page }) => {
+    await page.clock.install({ time: TTL_BASE_TIME });
+    await page.clock.setFixedTime(TTL_BASE_TIME);
+    await mockTtlSnapshot(
+      page,
+      [
+        ttlObservation({
+          id: 'obs-ttl-no-server-time',
+          vantageType: 'public-recursive',
+          status: 'success',
+          ttl: 300,
+        }),
+      ],
+      { serverDate: null }
+    );
+
+    await openParsedDnsView(page);
+
+    await expect(page.getByRole('cell', { name: 'UNKNOWN' })).toHaveCount(2);
     await expect(page.locator('table time')).toHaveCount(0);
   });
 

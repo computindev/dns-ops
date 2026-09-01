@@ -1,9 +1,7 @@
 /**
- * Regression test: workingTree() must tolerate a tracked gitlink whose embedded
- * repository has no commit checked out (e.g. `.pi/self-learning-memory` in a
- * local worktree). `git add -A` on the temp index aborts on such a gitlink,
- * which used to make workingTree() return null and silently bind receipts to
- * HEAD's digest instead of the verified tree.
+ * Regression tests for exact working-tree digests: tolerate the intentional
+ * unborn `.pi/self-learning-memory` gitlink, track valid gitlink pointers, and
+ * fail closed when any other gitlink cannot be staged.
  *
  * Run: node --test .agents/verify-kit/working-tree.test.mjs
  */
@@ -33,9 +31,10 @@ function digestFrom(output) {
   return m[1];
 }
 
-test('check-commit --working-tree digests the working tree despite an unborn-HEAD gitlink', () => {
+test('check-commit --working-tree handles memory links, tracks pointers, and fails closed', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-kit-wt-'));
   const memory = path.join(repo, '.pi', 'self-learning-memory');
+  const embedded = path.join(repo, 'embedded');
   try {
     // A repo with one tracked product file.
     git(repo, ['init', '--quiet']);
@@ -45,9 +44,9 @@ test('check-commit --working-tree digests the working tree despite an unborn-HEA
     git(repo, ['add', 'code.ts']);
     git(repo, ['commit', '--quiet', '-m', 'init']);
 
-    // A tracked gitlink: commit once inside the embedded repo so the parent can
-    // record the gitlink, then drop that commit so HEAD is unborn (the state a
-    // worktree with .pi/self-learning-memory materialized but empty of commits).
+    // The memory gitlink has an unborn HEAD and is the one intentional
+    // exception. A sibling gitlink has a valid pointer and must remain in the
+    // temporary index so pointer changes affect the digest.
     fs.mkdirSync(memory, { recursive: true });
     git(memory, ['init', '--quiet']);
     git(memory, ['config', 'user.email', 't@example.com']);
@@ -55,8 +54,17 @@ test('check-commit --working-tree digests the working tree despite an unborn-HEA
     fs.writeFileSync(path.join(memory, 'CORE.md'), 'memory\n');
     git(memory, ['add', 'CORE.md']);
     git(memory, ['commit', '--quiet', '-m', 'memory init']);
-    git(repo, ['add', '.pi/self-learning-memory']);
-    git(repo, ['commit', '--quiet', '-m', 'track memory gitlink']);
+
+    fs.mkdirSync(embedded, { recursive: true });
+    git(embedded, ['init', '--quiet']);
+    git(embedded, ['config', 'user.email', 't@example.com']);
+    git(embedded, ['config', 'user.name', 't']);
+    fs.writeFileSync(path.join(embedded, 'README.md'), 'embedded v1\n');
+    git(embedded, ['add', 'README.md']);
+    git(embedded, ['commit', '--quiet', '-m', 'embedded init']);
+
+    git(repo, ['add', '.pi/self-learning-memory', 'embedded']);
+    git(repo, ['commit', '--quiet', '-m', 'track gitlinks']);
     git(memory, ['update-ref', '-d', `refs/heads/${git(memory, ['branch', '--show-current'])}`]);
     assert.match(git(repo, ['status', '--porcelain']), /\.pi\/self-learning-memory/);
 
@@ -75,6 +83,39 @@ test('check-commit --working-tree digests the working tree despite an unborn-HEA
     assert.equal(second.status, 0, second.stderr);
     const digest2 = digestFrom(second.stdout);
     assert.notEqual(digest1, digest2, 'code_digest did not change with the working tree');
+
+    // A valid gitlink pointer is also part of the digest, despite being
+    // unchanged in the parent index.
+    fs.writeFileSync(path.join(embedded, 'README.md'), 'embedded v2\n');
+    git(embedded, ['add', 'README.md']);
+    git(embedded, ['commit', '--quiet', '-m', 'embedded update']);
+    const third = verifyKit(repo, ['check-commit', '--working-tree']);
+    assert.equal(third.status, 0, third.stderr);
+    const digest3 = digestFrom(third.stdout);
+    assert.notEqual(digest2, digest3, 'code_digest ignored a valid gitlink pointer change');
+
+    // A second unborn gitlink is not the intentional memory exception. The
+    // exact-tree digest must fail closed rather than fall back to HEAD.
+    const broken = path.join(repo, 'broken');
+    fs.mkdirSync(broken, { recursive: true });
+    git(broken, ['init', '--quiet']);
+    git(broken, ['config', 'user.email', 't@example.com']);
+    git(broken, ['config', 'user.name', 't']);
+    fs.writeFileSync(path.join(broken, 'README.md'), 'broken v1\n');
+    git(broken, ['add', 'README.md']);
+    git(broken, ['commit', '--quiet', '-m', 'broken init']);
+    git(repo, ['add', 'broken']);
+    git(repo, ['commit', '--quiet', '-m', 'track broken gitlink']);
+    git(broken, ['update-ref', '-d', `refs/heads/${git(broken, ['branch', '--show-current'])}`]);
+    fs.writeFileSync(path.join(repo, 'code.ts'), 'v4\n');
+
+    const failed = verifyKit(repo, ['check-commit', '--working-tree']);
+    assert.notEqual(failed.status, 0, 'unexpected gitlink failure passed open');
+    assert.match(
+      `${failed.stdout}${failed.stderr}`,
+      /could not construct exact working-tree digest/,
+      'failure did not explain that exact-tree digesting was refused'
+    );
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

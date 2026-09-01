@@ -7,9 +7,11 @@
 import type { DNSRecord, Observation } from '@dns-ops/db/schema';
 import { describe, expect, it } from 'vitest';
 import {
+  createEvidenceClock,
   estimateLiveAt,
   formatLiveAt,
   indexObservationsById,
+  readEvidenceClock,
   toDateTimeAttribute,
 } from './dns-ttl.js';
 
@@ -42,8 +44,10 @@ function record(
   return { name: 'example.com', type: 'A', sourceObservationIds: ['obs-1'], ...overrides };
 }
 
+const TIMING_METADATA = { dnsQueryTimestampBasis: 'response-received-v1' } as const;
+
 function estimate(rec: ReturnType<typeof record>, observations: Observation[], now: number) {
-  return estimateLiveAt(rec, indexObservationsById(observations), now);
+  return estimateLiveAt(rec, indexObservationsById(observations), now, TIMING_METADATA);
 }
 
 describe('estimateLiveAt — fresh evidence', () => {
@@ -95,8 +99,13 @@ describe('estimateLiveAt — zero TTL is evidence, not missing data', () => {
 });
 
 describe('estimateLiveAt — trust rules', () => {
-  it('is unknown when the matching answer carries no TTL', () => {
-    const obs = observation({ answerSection: [answer({ ttl: undefined as unknown as number })] });
+  it('is unknown when any matching RRset member carries no usable TTL', () => {
+    const obs = observation({
+      answerSection: [
+        answer({ ttl: 300 }),
+        answer({ ttl: undefined as unknown as number, data: '93.184.216.35' }),
+      ],
+    });
     expect(estimate(record(), [obs], T0).state).toBe('unknown');
   });
 
@@ -137,6 +146,14 @@ describe('estimateLiveAt — trust rules', () => {
   });
 });
 
+describe('estimateLiveAt — snapshot timing basis', () => {
+  it('is unknown for legacy snapshots without the response timing marker', () => {
+    expect(estimateLiveAt(record(), indexObservationsById([observation()]), T0)).toEqual({
+      state: 'unknown',
+    });
+  });
+});
+
 describe('estimateLiveAt — aggregation', () => {
   it('selects the latest valid deadline across recursive sources', () => {
     const early = observation({ id: 'obs-early', queriedAt: new Date(T0 - 60_000).toISOString() });
@@ -153,6 +170,33 @@ describe('estimateLiveAt — aggregation', () => {
     expect(result).toMatchObject({ state: 'live', deadline: T0 - 10_000 + 300_000 });
   });
 
+  it('uses the minimum member TTL within one resolver RRset', () => {
+    const obs = observation({
+      answerSection: [answer({ ttl: 300 }), answer({ ttl: 30, data: '93.184.216.35' })],
+    });
+    expect(estimate(record(), [obs], T0)).toMatchObject({
+      state: 'live',
+      deadline: T0 + 30_000,
+    });
+  });
+
+  it('uses the maximum reduced deadline across resolver observations', () => {
+    const early = observation({
+      id: 'obs-early',
+      queriedAt: new Date(T0).toISOString(),
+      answerSection: [answer({ ttl: 30 })],
+    });
+    const late = observation({
+      id: 'obs-late',
+      vantageIdentifier: '1.1.1.1',
+      queriedAt: new Date(T0).toISOString(),
+      answerSection: [answer({ ttl: 300 })],
+    });
+    expect(
+      estimate(record({ sourceObservationIds: ['obs-early', 'obs-late'] }), [early, late], T0)
+    ).toMatchObject({ deadline: T0 + 300_000 });
+  });
+
   it('never falls back to the synthesized record TTL', () => {
     // record.ttl is averaged across vantages and fabricates 0 for missing
     // data; the estimate must come from evidence only. Pass a NormalizedRecord
@@ -160,6 +204,89 @@ describe('estimateLiveAt — aggregation', () => {
     const rec = { ...record(), ttl: 9_999, values: ['93.184.216.34'] };
     const result = estimate(rec, [observation()], T0);
     expect(result).toMatchObject({ deadline: T0 + 300_000 });
+  });
+});
+
+describe('estimateLiveAt — CNAME evidence', () => {
+  it('follows a one-hop CNAME and includes the CNAME TTL in the minimum', () => {
+    const cname = observation({
+      id: 'cname-1',
+      queryType: 'CNAME',
+      answerSection: [
+        answer({ name: 'example.com', type: 'CNAME', ttl: 20, data: 'target.example.com.' }),
+      ],
+    });
+    const terminal = observation({
+      id: 'terminal-1',
+      answerSection: [answer({ name: 'target.example.com', ttl: 300 })],
+    });
+    const result = estimate(
+      record({ sourceObservationIds: ['terminal-1'] }),
+      [cname, terminal],
+      T0
+    );
+    expect(result).toMatchObject({ deadline: T0 + 20_000 });
+  });
+
+  it('follows multi-hop chains and rejects cross-resolver linkage', () => {
+    const first = observation({
+      id: 'cname-1',
+      queryType: 'CNAME',
+      answerSection: [
+        answer({ name: 'example.com', type: 'CNAME', ttl: 50, data: 'one.example.com' }),
+      ],
+    });
+    const second = observation({
+      id: 'cname-2',
+      queryName: 'one.example.com',
+      queryType: 'CNAME',
+      answerSection: [
+        answer({ name: 'one.example.com', type: 'CNAME', ttl: 40, data: 'target.example.com' }),
+      ],
+    });
+    const terminal = observation({
+      id: 'terminal-1',
+      answerSection: [answer({ name: 'target.example.com', ttl: 300 })],
+    });
+    expect(
+      estimate(record({ sourceObservationIds: ['terminal-1'] }), [first, second, terminal], T0)
+    ).toMatchObject({ deadline: T0 + 40_000 });
+
+    const otherResolver = { ...second, id: 'cname-other', vantageIdentifier: '1.1.1.1' };
+    expect(
+      estimate(
+        record({ sourceObservationIds: ['terminal-1'] }),
+        [first, otherResolver, terminal],
+        T0
+      ).state
+    ).toBe('unknown');
+  });
+
+  it('rejects ambiguous and cyclic chains', () => {
+    const ambiguous = observation({
+      id: 'cname-ambiguous',
+      queryType: 'CNAME',
+      answerSection: [
+        answer({ name: 'example.com', type: 'CNAME', data: 'one.example.com' }),
+        answer({ name: 'example.com', type: 'CNAME', data: 'two.example.com' }),
+      ],
+    });
+    const terminal = observation({
+      id: 'terminal-1',
+      answerSection: [answer({ name: 'one.example.com', ttl: 300 })],
+    });
+    expect(
+      estimate(record({ sourceObservationIds: ['terminal-1'] }), [ambiguous, terminal], T0).state
+    ).toBe('unknown');
+
+    const cyclic = observation({
+      id: 'cname-cycle',
+      queryType: 'CNAME',
+      answerSection: [answer({ name: 'example.com', type: 'CNAME', data: 'example.com' })],
+    });
+    expect(
+      estimate(record({ sourceObservationIds: ['terminal-1'] }), [cyclic, terminal], T0).state
+    ).toBe('unknown');
   });
 });
 
@@ -188,6 +315,42 @@ describe('estimateLiveAt — deadline overflow', () => {
   it('is unknown one second beyond the largest in-range deadline', () => {
     const obs = observation({ answerSection: [answer({ ttl: (8.64e15 - T0) / 1000 + 1 })] });
     expect(estimate(record(), [obs], T0).state).toBe('unknown');
+  });
+
+  it('accepts an in-range deadline when the TTL duration exceeds one Date range', () => {
+    const queriedAt = -8.64e15;
+    const ttl = (8.64e15 - queriedAt) / 1000;
+    const obs = observation({
+      queriedAt: new Date(queriedAt).toISOString(),
+      answerSection: [answer({ ttl })],
+    });
+    const result = estimate(record(), [obs], queriedAt);
+    expect(result).toMatchObject({ state: 'live', deadline: 8.64e15 });
+  });
+});
+
+describe('server-calibrated evidence clock', () => {
+  it('anchors to the server Date and advances with monotonic elapsed time', () => {
+    const clock = createEvidenceClock('Sat, 01 Jun 2024 12:00:00 GMT', 100, 350);
+    expect(clock).toEqual({ epochMs: T0 + 1_250, monotonicMs: 350 });
+    if (!clock) throw new Error('expected a calibrated clock');
+    expect(readEvidenceClock(clock, 1_350)).toBe(T0 + 2_250);
+  });
+
+  it('preserves fractional monotonic elapsed time', () => {
+    const clock = createEvidenceClock('Sat, 01 Jun 2024 12:00:00 GMT', 100.25, 350.75);
+    if (!clock) throw new Error('expected a calibrated clock');
+    expect(clock.epochMs).toBe(T0 + 1_250.5);
+    expect(readEvidenceClock(clock, 351.25)).toBe(T0 + 1_251);
+  });
+
+  it('rejects missing, invalid, reversed, and clock-reset inputs', () => {
+    expect(createEvidenceClock(null, 100, 350)).toBeNull();
+    expect(createEvidenceClock('not-a-date', 100, 350)).toBeNull();
+    expect(createEvidenceClock('Sat, 01 Jun 2024 12:00:00 GMT', 350, 100)).toBeNull();
+    const clock = createEvidenceClock('Sat, 01 Jun 2024 12:00:00 GMT', 100, 350);
+    if (!clock) throw new Error('expected a calibrated clock');
+    expect(readEvidenceClock(clock, 99)).toBeNull();
   });
 });
 

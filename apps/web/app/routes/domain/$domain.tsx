@@ -16,6 +16,7 @@ import { ResultStateBadge, ZoneManagementBadge } from '../../components/StatusBa
 import { TagsPanel } from '../../components/TagsPanel.js';
 import { Button } from '../../components/ui/Button.js';
 import { isDelegationTabEnabled, isSimulationEnabled } from '../../config/features.js';
+import { createEvidenceClock, type EvidenceClock } from '../../lib/dns-ttl.js';
 
 type DomainTabId = 'overview' | 'dns' | 'mail' | 'history' | 'delegation';
 
@@ -84,14 +85,23 @@ const DOMAIN_TABS: { id: DomainTabId; label: string }[] = [
 interface DomainData {
   snapshot: Snapshot | null;
   observations: Observation[];
+  evidenceClock: EvidenceClock | null;
+}
+
+function monotonicNow(): number | null {
+  if (typeof performance === 'undefined') return null;
+  const now = performance.now();
+  return Number.isFinite(now) ? now : null;
 }
 
 async function fetchDomainData(domain: string): Promise<DomainData> {
+  const snapshotStartedAt = monotonicNow();
   const snapshotResponse = await fetch(`/api/domain/${domain}/latest`, { credentials: 'include' });
+  const snapshotReceivedAt = monotonicNow();
 
   if (!snapshotResponse.ok) {
     if (snapshotResponse.status === 404) {
-      return { snapshot: null, observations: [] };
+      return { snapshot: null, observations: [], evidenceClock: null };
     }
     throw new Error(
       `Failed to load domain data: ${snapshotResponse.status} ${snapshotResponse.statusText}`
@@ -99,20 +109,43 @@ async function fetchDomainData(domain: string): Promise<DomainData> {
   }
 
   const snap = (await snapshotResponse.json()) as { id: string } & Snapshot;
+  const snapshotClock =
+    snapshotStartedAt !== null && snapshotReceivedAt !== null
+      ? createEvidenceClock(
+          snapshotResponse.headers.get('Date'),
+          snapshotStartedAt,
+          snapshotReceivedAt
+        )
+      : null;
 
   let observations: Observation[] = [];
+  let evidenceClock: EvidenceClock | null = snapshotClock;
   try {
+    const observationStartedAt = monotonicNow();
     const obsResponse = await fetch(`/api/snapshot/${snap.id}/observations`, {
       credentials: 'include',
     });
+    const observationReceivedAt = monotonicNow();
     if (obsResponse.ok) {
       observations = (await obsResponse.json()) as Observation[];
+      evidenceClock =
+        observationStartedAt !== null && observationReceivedAt !== null
+          ? createEvidenceClock(
+              obsResponse.headers.get('Date'),
+              observationStartedAt,
+              observationReceivedAt
+            )
+          : null;
+    } else {
+      evidenceClock = null;
     }
   } catch {
-    // Observation fetch failed but we still have snapshot - not critical
+    // Observation fetch failed but we still have snapshot - not critical.
+    // Without a response-calibrated clock any displayed TTL must be UNKNOWN.
+    evidenceClock = null;
   }
 
-  return { snapshot: snap, observations };
+  return { snapshot: snap, observations, evidenceClock };
 }
 
 function Domain360Page() {
@@ -414,7 +447,13 @@ function Domain360Page() {
           hidden={activeTab !== 'dns'}
           data-testid="domain-tabpanel-dns"
         >
-          {activeTab === 'dns' && <DnsTab observations={observations} />}
+          {activeTab === 'dns' && (
+            <DnsTab
+              observations={observations}
+              snapshotMetadata={snapshot?.metadata}
+              evidenceClock={domainData?.evidenceClock}
+            />
+          )}
         </div>
 
         <div
@@ -586,7 +625,15 @@ function OverviewTab({
   );
 }
 
-function DnsTab({ observations }: { observations: Observation[] }) {
+function DnsTab({
+  observations,
+  snapshotMetadata,
+  evidenceClock,
+}: {
+  observations: Observation[];
+  snapshotMetadata?: Snapshot['metadata'];
+  evidenceClock?: EvidenceClock | null;
+}) {
   if (observations.length === 0) {
     return (
       <div className="text-center py-12">
@@ -605,7 +652,11 @@ function DnsTab({ observations }: { observations: Observation[] }) {
           View DNS evidence in Parsed, Raw, or Dig-style formats.
         </p>
       </div>
-      <DNSViews observations={observations} />
+      <DNSViews
+        observations={observations}
+        snapshotMetadata={snapshotMetadata}
+        evidenceClock={evidenceClock}
+      />
     </div>
   );
 }

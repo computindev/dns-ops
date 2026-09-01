@@ -417,6 +417,9 @@ describe('DNS Collector Integration', () => {
     expect(rows('snapshots').length).toBe(1);
     expect(rows('snapshots')[0].domainName).toBe('example.com');
     expect(rows('snapshots')[0].resultState).toBe('complete');
+    expect(
+      (rows('snapshots')[0].metadata as { dnsQueryTimestampBasis?: string }).dnsQueryTimestampBasis
+    ).toBe('response-received-v1');
   });
 
   it('should collect targeted snapshot for unmanaged zone', async () => {
@@ -529,6 +532,8 @@ describe('DNS Collector Integration', () => {
     expect(obs.queryType).toBeDefined();
     expect(obs.snapshotId).toBeDefined();
     expect(obs.status).toBeDefined();
+    expect(obs.queriedAt).toBeInstanceOf(Date);
+    expect(Number.isFinite((obs.queriedAt as Date).getTime())).toBe(true);
   });
 
   it('should consolidate observations into record sets', async () => {
