@@ -39,14 +39,22 @@ function isUsableTtl(ttl: unknown): ttl is number {
   return typeof ttl === 'number' && Number.isFinite(ttl) && Number.isInteger(ttl) && ttl >= 0;
 }
 
+/** Largest ECMAScript time value (±100,000,000 days from the epoch). */
+const MAX_TIME_VALUE_MS = 8.64e15;
+
+/** A candidate deadline must itself be a valid `Date`, or the row is UNKNOWN. */
+function isUsableDeadline(ms: number): boolean {
+  return Number.isFinite(ms) && Math.abs(ms) <= MAX_TIME_VALUE_MS;
+}
+
 /**
  * Estimate the remaining cache lifetime of a normalized record row.
  *
  * Deadline = queriedAt + ttl × 1000 per matching answer; the latest deadline
  * across accepted observations is the conservative expiry. Exactly at the
  * deadline the remaining value is a valid `0`; after it the estimate is
- * `stale`. Missing, invalid, future-dated, or non-matching evidence is
- * `unknown`.
+ * `stale`. Missing, invalid, future-dated, non-matching, or deadline-overflow
+ * evidence (a TTL too large for a representable `Date`) is `unknown`.
  */
 export function estimateLiveAt(
   record: { name: string; type: string; sourceObservationIds: readonly string[] },
@@ -71,6 +79,7 @@ export function estimateLiveAt(
       if (!isUsableTtl(answer.ttl)) continue;
 
       const candidate = queriedAt + answer.ttl * 1000;
+      if (!isUsableDeadline(candidate)) continue;
       if (deadline === null || candidate > deadline) deadline = candidate;
     }
   }

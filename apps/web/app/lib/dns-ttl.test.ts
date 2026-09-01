@@ -163,6 +163,34 @@ describe('estimateLiveAt — aggregation', () => {
   });
 });
 
+describe('estimateLiveAt — deadline overflow', () => {
+  it('is unknown for a finite TTL whose deadline exceeds the Date range', () => {
+    const obs = observation({ answerSection: [answer({ ttl: Number.MAX_SAFE_INTEGER })] });
+    expect(estimate(record(), [obs], T0).state).toBe('unknown');
+  });
+
+  it('is unknown when ttl × 1000 overflows to Infinity', () => {
+    const obs = observation({ answerSection: [answer({ ttl: 1e306 })] });
+    expect(estimate(record(), [obs], T0).state).toBe('unknown');
+  });
+
+  it('still accepts the largest in-range deadline', () => {
+    // T0 + ttl × 1000 lands exactly on 8.64e15 ms, the maximum Date value.
+    const maxTtl = (8.64e15 - T0) / 1000;
+    const obs = observation({ answerSection: [answer({ ttl: maxTtl })] });
+    const result = estimate(record(), [obs], T0);
+    expect(result.state).toBe('live');
+    if (result.state !== 'live') throw new Error(`expected live, got ${result.state}`);
+    expect(result.deadline).toBe(8.64e15);
+    expect(() => toDateTimeAttribute(result.deadline)).not.toThrow();
+  });
+
+  it('is unknown one second beyond the largest in-range deadline', () => {
+    const obs = observation({ answerSection: [answer({ ttl: (8.64e15 - T0) / 1000 + 1 })] });
+    expect(estimate(record(), [obs], T0).state).toBe('unknown');
+  });
+});
+
 describe('formatting helpers', () => {
   it('renders a machine-readable ISO datetime attribute', () => {
     expect(toDateTimeAttribute(T0)).toBe('2024-06-01T12:00:00.000Z');
