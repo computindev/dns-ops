@@ -5,7 +5,7 @@
  * Validates policy format and extracts mode/max_age/mx directives.
  */
 
-import { probeAllowlistManager } from './allowlist.js';
+import { isExpiryFresh, probeAllowlistManager } from './allowlist.js';
 import { resolveAndCheck, validateUrl } from './ssrf-guard.js';
 
 export interface MTASTSProbeResult {
@@ -89,13 +89,23 @@ export async function fetchMTASTSPolicy(
   options?: {
     timeoutMs?: number;
     checkAllowlist?: boolean;
+    expiresAt?: Date;
   }
 ): Promise<MTASTSProbeResult> {
-  const { timeoutMs = 10000, checkAllowlist = true } = options || {};
+  const { timeoutMs = 10000, checkAllowlist = true, expiresAt } = options || {};
   const policyUrl = `https://mta-sts.${domain}/.well-known/mta-sts.txt`;
   const startTime = Date.now();
 
   try {
+    if (!isExpiryFresh(expiresAt)) {
+      return {
+        success: false,
+        domain,
+        policyUrl,
+        error: 'Persisted DNS evidence expired before probe start',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
     // SSRF check — step 1: reject bad URLs (IP literals, localhost, bad protocol)
     const urlCheck = validateUrl(policyUrl);
     if (!urlCheck.allowed) {
@@ -136,6 +146,18 @@ export async function fetchMTASTSPolicy(
           responseTimeMs: Date.now() - startTime,
         };
       }
+    }
+
+    // The semaphore or DNS/allowlist checks may have delayed the request.
+    // Recheck the persisted evidence immediately before starting the fetch.
+    if (!isExpiryFresh(expiresAt)) {
+      return {
+        success: false,
+        domain,
+        policyUrl,
+        error: 'Persisted DNS evidence expired before fetch start',
+        responseTimeMs: Date.now() - startTime,
+      };
     }
 
     // Fetch policy with timeout

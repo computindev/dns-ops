@@ -75,7 +75,8 @@ function createApp(
   const db = {
     async selectWhere(table: unknown, condition: unknown) {
       const values = params(condition);
-      if (table === domains) return values.includes('example.com') ? [domain] : [];
+      if (table === domains)
+        return values.includes('example.com') && domainTenantId === tenantId ? [domain] : [];
       if (table === snapshots) return values.includes('domain-1') ? snapshotsForDomain : [];
       if (table === probeObservations) return values.includes('snapshot-1') ? probes : [];
       if (table === domainProfiles)

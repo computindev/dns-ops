@@ -30,6 +30,27 @@ function createMockDb(snapshots: Record<string, unknown>[] = []) {
 }
 
 describe('SnapshotRepository', () => {
+  describe('findLatestByDomain', () => {
+    it('uses one ordered limited lookup instead of loading all snapshots', async () => {
+      const latest = { id: 'snapshot-latest', domainId: 'domain-1', createdAt: new Date() };
+      const mockDb = createMockDb([latest]);
+      const repo = new SnapshotRepository(
+        mockDb as unknown as import('../database/simple-adapter.js').IDatabaseAdapter
+      );
+
+      const result = await repo.findLatestByDomain('domain-1');
+
+      expect(result).toBe(latest);
+      expect(mockDb.selectOne).toHaveBeenCalledTimes(1);
+      expect(mockDb.selectWhere).not.toHaveBeenCalled();
+      expect(mockDb.selectOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+  });
+
   describe('findRecentByDomain', () => {
     it('returns undefined when no snapshots exist', async () => {
       const mockDb = createMockDb([]);

@@ -8,7 +8,8 @@
 import * as dns from 'node:dns';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
-import { probeAllowlistManager } from './allowlist.js';
+import { isExpiryFresh, probeAllowlistManager } from './allowlist.js';
+import { getProbeSemaphore } from './semaphore.js';
 import { checkSSRF } from './ssrf-guard.js';
 
 export interface SMTPProbeResult {
@@ -140,6 +141,7 @@ export async function probeSMTPStarttls(
     timeoutMs?: number;
     checkAllowlist?: boolean;
     ehloDomain?: string;
+    expiresAt?: Date;
   }
 ): Promise<SMTPProbeResult> {
   const {
@@ -147,11 +149,22 @@ export async function probeSMTPStarttls(
     timeoutMs = 30000,
     checkAllowlist = true,
     ehloDomain = 'dns-ops-probe.local',
+    expiresAt,
   } = options || {};
 
   const startTime = Date.now();
 
   try {
+    if (!isExpiryFresh(expiresAt)) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: 'Persisted DNS evidence expired before probe start',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
     // SSRF check
     const ssrfCheck = checkSSRF(hostname);
     if (!ssrfCheck.allowed) {
@@ -192,6 +205,19 @@ export async function probeSMTPStarttls(
       };
     }
 
+    // The DNS/allowlist checks above may have delayed the request. Do not
+    // create or connect a socket after the persisted evidence expires.
+    if (!isExpiryFresh(expiresAt)) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: false,
+        error: 'Persisted DNS evidence expired before socket start',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
+
     // Create socket connection
     const socket = new net.Socket();
 
@@ -201,6 +227,11 @@ export async function probeSMTPStarttls(
     // Connect to the pinned, checked IP (SNI/cert checks still use the
     // original hostname in the TLS upgrade below).
     await new Promise<void>((resolve, reject) => {
+      if (!isExpiryFresh(expiresAt)) {
+        socket.destroy();
+        reject(new Error('Persisted DNS evidence expired before socket start'));
+        return;
+      }
       socket.once('connect', resolve);
       socket.once('error', reject);
       socket.connect(port, resolved.ip);
@@ -338,17 +369,33 @@ export async function probeMXHosts(
   options?: {
     timeoutMs?: number;
     concurrency?: number;
+    expiresAt?: Date;
   }
 ): Promise<SMTPProbeResult[]> {
-  const { timeoutMs = 30000, concurrency = 3 } = options || {};
+  const { timeoutMs = 30000, concurrency = 3, expiresAt } = options || {};
 
   const results: SMTPProbeResult[] = [];
+  const semaphore = getProbeSemaphore();
 
-  // Process in batches to limit concurrency
+  // Process in local batches while acquiring the same process-wide permit for
+  // each host. The local bound controls one request; the semaphore controls
+  // all simultaneous batch and single-host requests together.
   for (let i = 0; i < hosts.length; i += concurrency) {
     const batch = hosts.slice(i, i + concurrency);
     const batchPromises = batch.map((host) =>
-      probeSMTPStarttls(host.hostname, tenantId, { timeoutMs })
+      semaphore.run(async () => {
+        if (!isExpiryFresh(expiresAt)) {
+          return {
+            success: false,
+            hostname: host.hostname,
+            port: 25,
+            supportsStarttls: false,
+            error: 'Persisted DNS evidence expired before probe start',
+            responseTimeMs: 0,
+          };
+        }
+        return probeSMTPStarttls(host.hostname, tenantId, { timeoutMs, expiresAt });
+      })
     );
 
     const batchResults = await Promise.all(batchPromises);

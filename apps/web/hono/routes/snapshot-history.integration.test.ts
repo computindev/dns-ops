@@ -121,11 +121,19 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
+function getConditionParams(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
   const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    constructor?: { name?: string };
+    value?: unknown;
+    queryChunks?: unknown[];
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  if (sql.constructor?.name === 'Param') return [sql.value];
+  return (sql.queryChunks ?? []).flatMap(getConditionParams);
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -147,8 +155,11 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       const name = getTableName(table);
       const param = getConditionParam(condition);
       if (name === 'domains') {
+        const params = getConditionParams(condition);
         return state.domains.filter(
-          (r) => r.id === param || r.normalizedName === param || r.name === param
+          (r) =>
+            (r.id === params[0] || r.normalizedName === params[0] || r.name === params[0]) &&
+            (params.length < 2 || r.tenantId === params[1])
         );
       }
       if (name === 'snapshots')

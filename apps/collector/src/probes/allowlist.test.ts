@@ -246,6 +246,47 @@ describe('Allowlist Entry Generation - Bead 13.4', () => {
     expect(entries).toHaveLength(0);
   });
 
+  it('should preserve a persisted evidence expiry on generated entries', () => {
+    const persistedExpiry = new Date('2024-01-01T00:00:42Z');
+    const dnsResults: DNSQueryResult[] = [
+      {
+        query: { name: 'example.com', type: 'MX' },
+        vantage: { type: 'public-recursive', identifier: 'google' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'MX', ttl: 300, data: '10 mail.example.com.' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+      },
+    ];
+
+    const entries = allowlist.generateFromDnsResults('example.com', dnsResults, persistedExpiry);
+
+    expect(entries[0]?.expiresAt.getTime()).toBe(persistedExpiry.getTime());
+    expect(allowlist.getEntry('mail.example.com', 25)?.expiresAt.getTime()).toBe(
+      persistedExpiry.getTime()
+    );
+  });
+
+  it('should treat the persisted expiry boundary as expired', () => {
+    const persistedExpiry = new Date('2024-01-01T00:00:00Z');
+    const dnsResults: DNSQueryResult[] = [
+      {
+        query: { name: 'example.com', type: 'MX' },
+        vantage: { type: 'public-recursive', identifier: 'google' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'MX', ttl: 300, data: '10 mail.example.com.' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+      },
+    ];
+
+    allowlist.generateFromDnsResults('example.com', dnsResults, persistedExpiry);
+
+    expect(allowlist.isAllowed('mail.example.com', 25)).toBe(false);
+  });
+
   it('should track derivation info for audit', () => {
     const dnsResults: DNSQueryResult[] = [
       {
@@ -380,6 +421,33 @@ describe('Legacy ProbeAllowlist Canonicalization - Issue #67 review', () => {
 
     expect(allowlist.isAllowed('relay.example.org', 25)).toBe(true);
     expect(allowlist.isAllowed('RELAY.EXAMPLE.ORG', 25)).toBe(true);
+  });
+
+  it('should derive MTA-STS allowlist entries from a canonical TXT owner', () => {
+    const dnsResults: DNSQueryResult[] = [
+      {
+        query: { name: 'policy.provider.example', type: 'TXT' },
+        vantage: { type: 'public-recursive', identifier: 'google' },
+        success: true,
+        answers: [
+          {
+            name: 'policy.provider.example',
+            type: 'TXT',
+            ttl: 300,
+            data: 'v=STSv1; id=20240101',
+          },
+        ],
+        authority: [],
+        additional: [],
+        responseTime: 30,
+      },
+    ];
+
+    const entries = allowlist.generateFromDnsResults('example.com', dnsResults);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.hostname).toBe('mta-sts.example.com');
+    expect(allowlist.isAllowed('mta-sts.example.com', 443)).toBe(true);
   });
 
   it('should canonicalize MTA-STS entries from mixed-case domains', () => {

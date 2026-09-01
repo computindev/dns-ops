@@ -4,7 +4,7 @@
  * Repository pattern for domain operations using the database adapter.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import type * as schema from '../schema/index.js';
@@ -40,14 +40,11 @@ export class DomainRepository {
    * This is the preferred method for multi-tenant lookups.
    */
   async findByNameAndTenant(normalizedName: string, tenantId: string): Promise<Domain | undefined> {
-    const matches = await this.db.selectWhere(
-      domains,
-      eq(domains.normalizedName, normalizedName.toLowerCase())
-    );
-    const normalized = normalizedName.toLowerCase();
-    return matches.find(
-      (domain) => domain.normalizedName === normalized && domain.tenantId === tenantId
-    );
+    const normalized = normalizedName.trim().toLowerCase().replace(/\.$/, '');
+    const condition = and(eq(domains.normalizedName, normalized), eq(domains.tenantId, tenantId));
+    if (!condition) return undefined;
+    const matches = await this.db.selectWhere(domains, condition);
+    return matches[0];
   }
 
   /**
@@ -163,23 +160,14 @@ export class DomainRepository {
 
     // Conflict occurred - another caller inserted first
     // Query for the existing record using normalizedName (not data.name)
-    if (data.tenantId) {
-      const existing = await this.findByNameAndTenant(normalizedName, data.tenantId);
-      if (existing) {
-        return existing;
-      }
-      // Fallback: query by normalized name directly (should exist after conflict)
-      const fallback = await this.findByName(normalizedName);
-      if (fallback) {
-        return fallback;
-      }
-    } else {
-      const existing = await this.findByName(normalizedName);
-      if (existing) {
-        return existing;
-      }
+    const existing = data.tenantId
+      ? await this.findByNameAndTenant(normalizedName, data.tenantId)
+      : await this.findByName(normalizedName);
+    if (existing) {
+      return existing;
     }
-    // This shouldn't happen if insert failed due to conflict
+
+    // This shouldn't happen if insert failed due to conflict.
     throw new Error(`Domain ${data.name} not found after conflict resolution`);
   }
 

@@ -30,11 +30,19 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
+function getConditionParams(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
   const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    constructor?: { name?: string };
+    value?: unknown;
+    queryChunks?: unknown[];
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  if (sql.constructor?.name === 'Param') return [sql.value];
+  return (sql.queryChunks ?? []).flatMap(getConditionParams);
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -51,8 +59,11 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       const tableName = getTableName(table);
       const param = getConditionParam(condition);
       if (tableName === 'domains') {
+        const params = getConditionParams(condition);
         return state.domains.filter(
-          (row) => row.id === param || row.normalizedName === param || row.name === param
+          (row) =>
+            (row.id === params[0] || row.normalizedName === params[0] || row.name === params[0]) &&
+            (params.length < 2 || row.tenantId === params[1])
         );
       }
       if (tableName === 'monitored_domains') {

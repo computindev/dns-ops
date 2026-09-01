@@ -65,19 +65,21 @@ function fail(status: 400 | 403, error: string, reason: string): EvidenceFailure
   return { ok: false, status, error, reason };
 }
 
-interface TrustedChain {
+interface TrustedSnapshot {
   ok: true;
   domain: string;
   snapshot: Snapshot;
+}
+
+interface TrustedChain extends TrustedSnapshot {
   recordSet: RecordSet;
   ownerName: string;
 }
 
-async function loadTrustedRecordSet(
+async function loadTrustedSnapshot(
   db: IDatabaseAdapter,
-  input: { domain: string; tenantId: string },
-  recordType: 'MX' | 'TXT'
-): Promise<TrustedChain | EvidenceFailure> {
+  input: { domain: string; tenantId: string }
+): Promise<TrustedSnapshot | EvidenceFailure> {
   const normalized = tryNormalizeDomain(input.domain);
   if (!normalized) {
     return fail(400, 'Domain is invalid', 'invalid-domain');
@@ -97,15 +99,14 @@ async function loadTrustedRecordSet(
     return fail(403, 'Latest snapshot is not complete', 'incomplete-snapshot');
   }
 
-  const ownerName = recordType === 'MX' ? domain : `_mta-sts.${domain}`;
-  const recordSet = await new RecordSetRepository(db).findByNameAndType(
-    snapshot.id,
-    ownerName,
-    recordType
-  );
-  if (!recordSet) {
-    return fail(403, `No persisted ${recordType} record set for this domain`, 'missing-record-set');
-  }
+  return { ok: true, domain, snapshot };
+}
+
+function validateTrustedRecordSet(
+  context: TrustedSnapshot,
+  recordSet: RecordSet,
+  ownerName: string
+): TrustedChain | EvidenceFailure {
   if (recordSet.isConsistent !== true) {
     return fail(403, 'Record set is inconsistent across vantages', 'inconsistent-record-set');
   }
@@ -116,7 +117,28 @@ async function loadTrustedRecordSet(
     return fail(403, 'Record set has no source observations', 'missing-source-observations');
   }
 
-  return { ok: true, domain, snapshot, recordSet, ownerName };
+  return { ...context, recordSet, ownerName };
+}
+
+async function loadTrustedRecordSet(
+  db: IDatabaseAdapter,
+  input: { domain: string; tenantId: string },
+  recordType: 'MX' | 'TXT'
+): Promise<TrustedChain | EvidenceFailure> {
+  const context = await loadTrustedSnapshot(db, input);
+  if (!context.ok) return context;
+
+  const ownerName = recordType === 'MX' ? context.domain : `_mta-sts.${context.domain}`;
+  const recordSet = await new RecordSetRepository(db).findByNameAndType(
+    context.snapshot.id,
+    ownerName,
+    recordType
+  );
+  if (!recordSet) {
+    return fail(403, `No persisted ${recordType} record set for this domain`, 'missing-record-set');
+  }
+
+  return validateTrustedRecordSet(context, recordSet, ownerName);
 }
 
 interface RelevantObservation {
@@ -127,10 +149,12 @@ interface RelevantObservation {
 async function loadRelevantObservations(
   db: IDatabaseAdapter,
   chain: TrustedChain,
-  recordType: 'MX' | 'TXT'
+  recordType: 'CNAME' | 'MX' | 'TXT',
+  options: { answerNames?: ReadonlySet<string>; allowNoAnswers?: boolean } = {}
 ): Promise<RelevantObservation[] | EvidenceFailure> {
   const obsRepo = new ObservationRepository(db);
   const relevant: RelevantObservation[] = [];
+  const answerNames = options.answerNames ?? new Set([chain.ownerName]);
 
   for (const id of chain.recordSet.sourceObservationIds) {
     const obs = await obsRepo.findById(id);
@@ -151,7 +175,7 @@ async function loadRelevantObservations(
         'observation-query-mismatch'
       );
     }
-    if (obs.status !== 'success') {
+    if (obs.status !== 'success' && !(options.allowNoAnswers && obs.status === 'nodata')) {
       return fail(403, 'Source observation was not successful', 'unsuccessful-observation');
     }
     if (obs.responseCode !== DNS_RCODE.NOERROR) {
@@ -175,9 +199,9 @@ async function loadRelevantObservations(
     }
 
     const answers = (obs.answerSection ?? []).filter(
-      (a) => a.type === recordType && normalizeDNSDomain(a.name) === chain.ownerName
+      (a) => a.type === recordType && answerNames.has(normalizeDNSDomain(a.name))
     );
-    if (answers.length === 0) {
+    if (answers.length === 0 && !options.allowNoAnswers) {
       return fail(403, 'Observation carries no answer for this record set', 'missing-answer');
     }
 
@@ -227,13 +251,161 @@ function earliestFreshExpiry(relevant: RelevantObservation[], now: Date): Date |
   return earliest;
 }
 
+interface PersistedCnameChain {
+  ok: true;
+  canonicalOwnerName: string;
+  observations: RelevantObservation[];
+}
+
+/**
+ * Resolve only CNAME rows persisted in the same complete snapshot. The
+ * source observations are checked just like MX/TXT evidence, so a row cannot
+ * redirect authorization through an unrelated owner or an untrusted vantage.
+ */
+function normalizeCnameTarget(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = normalizeDNSDomain(value.trim());
+  if (
+    !normalized ||
+    normalized.length > 253 ||
+    normalized.includes('..') ||
+    normalized
+      .split('.')
+      .some(
+        (label) =>
+          !label ||
+          label.length > 63 ||
+          label.startsWith('-') ||
+          label.endsWith('-') ||
+          !/^[a-z0-9_-]+$/i.test(label)
+      )
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+async function loadPersistedCnameChain(
+  db: IDatabaseAdapter,
+  context: TrustedSnapshot,
+  initialOwnerName: string
+): Promise<PersistedCnameChain | EvidenceFailure> {
+  const recordSetRepo = new RecordSetRepository(db);
+  const visited = new Set<string>();
+  const observations: RelevantObservation[] = [];
+  let ownerName = initialOwnerName;
+
+  while (true) {
+    if (visited.has(ownerName)) {
+      return fail(403, 'Persisted CNAME chain contains a loop', 'cname-chain-loop');
+    }
+    visited.add(ownerName);
+
+    const cnameRecordSet = await recordSetRepo.findByNameAndType(
+      context.snapshot.id,
+      ownerName,
+      'CNAME'
+    );
+    if (!cnameRecordSet) {
+      return { ok: true, canonicalOwnerName: ownerName, observations };
+    }
+    if (
+      !Array.isArray(cnameRecordSet.sourceObservationIds) ||
+      cnameRecordSet.sourceObservationIds.length === 0
+    ) {
+      return fail(
+        403,
+        'CNAME record set has no source observations',
+        'missing-cname-source-observations'
+      );
+    }
+    if (!Array.isArray(cnameRecordSet.values)) {
+      return fail(403, 'CNAME record set has no target', 'missing-cname-target');
+    }
+
+    const cnameChain: TrustedChain = {
+      ...context,
+      recordSet: cnameRecordSet,
+      ownerName,
+    };
+    const relevant = await loadRelevantObservations(db, cnameChain, 'CNAME', {
+      allowNoAnswers: true,
+    });
+    if (!Array.isArray(relevant)) return relevant;
+
+    // A successful NODATA CNAME lookup proves that this owner is the terminal
+    // name. Do not require a target on the empty CNAME record set created for
+    // that observation; the terminal TXT record is checked by the caller.
+    if (cnameRecordSet.values.length === 0) {
+      if (relevant.some(({ observation }) => (observation.answerSection ?? []).length > 0)) {
+        return fail(
+          403,
+          'CNAME record set has answers but no stored target',
+          'unbacked-cname-target'
+        );
+      }
+      return { ok: true, canonicalOwnerName: ownerName, observations };
+    }
+
+    if (cnameRecordSet.isConsistent !== true) {
+      return fail(
+        403,
+        'CNAME record set is inconsistent across vantages',
+        'inconsistent-cname-record-set'
+      );
+    }
+    if (relevant.some(({ answers }) => answers.length === 0)) {
+      return fail(403, 'CNAME observation has no answer', 'missing-answer');
+    }
+
+    const targets: string[] = [];
+    for (const { answers } of relevant) {
+      for (const answer of answers) {
+        const target = normalizeCnameTarget(answer.data);
+        if (!target) {
+          return fail(403, 'Persisted CNAME target is malformed', 'malformed-cname-target');
+        }
+        targets.push(target);
+      }
+    }
+
+    const uniqueTargets = [...new Set(targets)];
+    if (uniqueTargets.length !== 1) {
+      return fail(403, 'Persisted CNAME chain has conflicting targets', 'conflicting-cname-target');
+    }
+
+    const storedTargets = cnameRecordSet.values.map((value) => normalizeCnameTarget(value));
+    if (
+      storedTargets.some((target) => !target) ||
+      storedTargets.length !== 1 ||
+      storedTargets[0] !== uniqueTargets[0]
+    ) {
+      return fail(
+        403,
+        'Persisted CNAME target is not backed by its source',
+        'unbacked-cname-target'
+      );
+    }
+
+    observations.push(...relevant);
+    const target = uniqueTargets[0];
+    if (visited.has(target)) {
+      return fail(403, 'Persisted CNAME chain contains a loop', 'cname-chain-loop');
+    }
+    ownerName = target;
+  }
+}
+
 function toDnsResults(
   relevant: RelevantObservation[],
   ownerName: string,
-  recordType: 'MX' | 'TXT'
+  recordType: 'CNAME' | 'MX' | 'TXT'
 ): DNSQueryResult[] {
   return relevant.map(({ observation, answers }) => ({
-    query: { name: ownerName, type: recordType },
+    query: {
+      name: recordType === 'CNAME' ? normalizeDNSDomain(observation.queryName) : ownerName,
+      type: recordType,
+    },
     vantage: {
       type: observation.vantageType === 'public-recursive' ? 'public-recursive' : 'authoritative',
       identifier: observation.vantageIdentifier ?? '',
@@ -303,7 +475,22 @@ export async function loadPersistedMtaStsEvidence(
   db: IDatabaseAdapter,
   input: { domain: string; tenantId: string }
 ): Promise<PersistedMtaStsEvidence | EvidenceFailure> {
-  const chain = await loadTrustedRecordSet(db, input, 'TXT');
+  const context = await loadTrustedSnapshot(db, input);
+  if (!context.ok) return context;
+
+  const initialOwnerName = `_mta-sts.${context.domain}`;
+  const cnameChain = await loadPersistedCnameChain(db, context, initialOwnerName);
+  if (!cnameChain.ok) return cnameChain;
+
+  const txtRecordSet = await new RecordSetRepository(db).findByNameAndType(
+    context.snapshot.id,
+    cnameChain.canonicalOwnerName,
+    'TXT'
+  );
+  if (!txtRecordSet) {
+    return fail(403, 'No persisted TXT record set for this domain', 'missing-record-set');
+  }
+  const chain = validateTrustedRecordSet(context, txtRecordSet, cnameChain.canonicalOwnerName);
   if (!chain.ok) return chain;
 
   const values = Array.isArray(chain.recordSet.values) ? chain.recordSet.values : [];
@@ -327,7 +514,7 @@ export async function loadPersistedMtaStsEvidence(
   }
 
   const now = new Date();
-  const expiresAt = earliestFreshExpiry(relevant, now);
+  const expiresAt = earliestFreshExpiry([...cnameChain.observations, ...relevant], now);
   if (!(expiresAt instanceof Date)) return expiresAt;
 
   const validation = await validateMTASTSTxtRecord(chain.domain, [txtRecord]);
@@ -341,6 +528,9 @@ export async function loadPersistedMtaStsEvidence(
     txtRecord,
     txtRecordId: validation.id ?? '',
     expiresAt,
-    dnsResults: toDnsResults(relevant, chain.ownerName, 'TXT'),
+    dnsResults: [
+      ...toDnsResults(relevant, chain.ownerName, 'TXT'),
+      ...toDnsResults(cnameChain.observations, initialOwnerName, 'CNAME'),
+    ],
   };
 }

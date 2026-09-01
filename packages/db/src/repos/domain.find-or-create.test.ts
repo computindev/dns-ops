@@ -49,14 +49,14 @@ const globalDomainData: NewDomain = {
  * Create a mock database adapter for testing findOrCreate.
  * The mock must provide:
  * - getDrizzle(): returns an object with insert() for the atomic upsert
- * - select(): used by findByNameAndTenant fallback after conflict
+ * - selectWhere(): used by tenant-scoped fallback after conflict
  */
 function createMockAdapter(config: {
   /** Domain returned by getDrizzle insert onConflictDoNothing (null = conflict) */
   upsertResult?: Domain | null;
-  /** Domain returned by select() in findByNameAndTenant fallback */
+  /** Rows returned by selectWhere() for fallback lookups */
   selectResult?: Domain[];
-  /** Domain returned by selectOne() in findByName fallback */
+  /** Domain returned by selectOne() for unscoped lookups */
   findByNameResult?: Domain | undefined;
 }) {
   return {
@@ -149,33 +149,33 @@ describe('DomainRepository.findOrCreate atomic upsert', () => {
 
       const mockAdapter = createMockAdapter({
         upsertResult: null, // onConflictDoNothing returns empty = conflict detected
-        selectResult: [existingDomain], // fallback findByNameAndTenant returns domain
+        selectResult: [existingDomain],
       });
 
       const repo = new DomainRepository(mockAdapter as never);
       const result = await repo.findOrCreate(newDomainData);
 
       expect(result.id).toBe(mockDomain.id);
-      expect(mockAdapter.selectWhere).toHaveBeenCalled(); // fallback query was called
+      expect(mockAdapter.selectWhere).toHaveBeenCalled(); // tenant-scoped fallback query was called
     });
 
     it('finds existing domain using normalizedName in fallback (not data.name)', async () => {
       // This test verifies the fix for the bug where data.name was used instead of
-      // normalizedName in fallback queries. The mock's select() returns the domain
+      // normalizedName in fallback queries. The mock's selectWhere() returns the domain
       // when called correctly, proving the fallback uses normalizedName.
       const existingDomain: Domain = { ...mockDomain };
 
       const mockAdapter = createMockAdapter({
         upsertResult: null, // conflict detected
-        selectResult: [existingDomain], // findByNameAndTenant returns domain
+        selectResult: [existingDomain],
       });
 
       const repo = new DomainRepository(mockAdapter as never);
       const result = await repo.findOrCreate(newDomainData);
 
-      // If bug existed (using data.name), select() wouldn't return domain → result would be undefined
+      // If bug existed (using data.name), selectWhere() would not return the domain → result undefined
       expect(result.id).toBe(mockDomain.id);
-      // select() was called as part of the fallback query
+      // selectWhere() was called as part of the tenant-scoped fallback query
       expect(mockAdapter.selectWhere).toHaveBeenCalled();
     });
   });
@@ -186,7 +186,7 @@ describe('DomainRepository.findOrCreate atomic upsert', () => {
       let callCount = 0;
 
       const mockAdapter = {
-        selectOne: vi.fn().mockResolvedValue(null),
+        selectOne: vi.fn().mockResolvedValue(createdDomain),
         selectWhere: vi.fn().mockResolvedValue([createdDomain]),
         select: vi.fn().mockResolvedValue([createdDomain]),
         insert: vi.fn(),
@@ -277,7 +277,7 @@ describe('DomainRepository.findOrCreate atomic upsert', () => {
 
       const mockAdapter = createMockAdapter({
         upsertResult: null, // conflict detected
-        selectResult: [existingDomain], // findByNameAndTenant returns domain
+        selectResult: [existingDomain],
       });
 
       const repo = new DomainRepository(mockAdapter as never);
@@ -363,16 +363,55 @@ describe('DomainRepository tenant-scoped lookup isolation', () => {
       id: 'domain-foreign-id',
       tenantId: 'tenant-2',
     };
-    const mockAdapter = createMockAdapter({
-      selectResult: [],
-      findByNameResult: foreignDomain,
-    });
+    const selectWhere = vi.fn().mockResolvedValue([]);
+    const selectOne = vi.fn();
+    const mockAdapter = {
+      ...createMockAdapter({ selectResult: [foreignDomain] }),
+      selectOne,
+      selectWhere,
+    };
 
     const repo = new DomainRepository(mockAdapter as never);
     const result = await repo.findByNameAndTenant('example.com', 'test-tenant');
 
     expect(result).toBeUndefined();
-    expect(mockAdapter.selectWhere).toHaveBeenCalled();
-    expect(mockAdapter.selectOne).not.toHaveBeenCalled();
+    expect(selectWhere).toHaveBeenCalledTimes(1);
+    expect(selectOne).not.toHaveBeenCalled();
+  });
+
+  it('constrains normalized name and tenant ID in the same query', async () => {
+    const selectWhere = vi.fn().mockResolvedValue([]);
+    const mockAdapter = {
+      ...createMockAdapter({}),
+      selectWhere,
+    };
+
+    const repo = new DomainRepository(mockAdapter as never);
+    await repo.findByNameAndTenant('  Example.COM. ', 'tenant-a');
+
+    const condition = selectWhere.mock.calls[0]?.[1] as {
+      queryChunks?: Array<{
+        queryChunks?: unknown[];
+        constructor?: { name?: string };
+        value?: unknown;
+      }>;
+    };
+    const values: unknown[] = [];
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      const part = value as {
+        queryChunks?: unknown[];
+        constructor?: { name?: string };
+        value?: unknown;
+      };
+      if (part.constructor?.name === 'Param') {
+        values.push(part.value);
+        return;
+      }
+      for (const chunk of part.queryChunks ?? []) visit(chunk);
+    };
+    visit(condition);
+
+    expect(values).toEqual(['example.com', 'tenant-a']);
   });
 });

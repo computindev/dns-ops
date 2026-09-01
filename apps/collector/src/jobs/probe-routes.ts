@@ -33,7 +33,7 @@
 import { normalizeDNSDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { getEnvConfig } from '../config/env.js';
-import type { AllowlistEntry } from '../probes/allowlist.js';
+import { type AllowlistEntry, isExpiryFresh } from '../probes/allowlist.js';
 import {
   fetchMTASTSPolicy,
   probeAllowlistManager,
@@ -169,16 +169,23 @@ probeRoutes.post('/mta-sts', async (c) => {
   // Allowlist entries are derived only from the persisted evidence.
   probeAllowlistManager
     .getTenantAllowlist(tenantId)
-    .generateFromDnsResults(evidence.domain, evidence.dnsResults);
+    .generateFromDnsResults(evidence.domain, evidence.dnsResults, evidence.expiresAt);
 
-  // Fetch policy — run under global semaphore to enforce PROBE_CONCURRENCY
+  // Fetch policy — run under global semaphore to enforce PROBE_CONCURRENCY.
+  // The evidence may expire while waiting for a permit, so the check must
+  // happen inside the semaphore callback immediately before the fetch starts.
   const config = getEnvConfig();
-  const result = await getProbeSemaphore().run(() =>
-    fetchMTASTSPolicy(evidence.domain, tenantId, {
+  const result = await getProbeSemaphore().run(async () => {
+    if (!isExpiryFresh(evidence.expiresAt)) return null;
+    return fetchMTASTSPolicy(evidence.domain, tenantId, {
       timeoutMs: config.probes.timeoutMs,
       checkAllowlist: true,
-    })
-  );
+      expiresAt: evidence.expiresAt,
+    });
+  });
+  if (!result) {
+    return c.json({ error: 'Persisted DNS evidence is stale', reason: 'stale-evidence' }, 403);
+  }
 
   return c.json({
     ...result,
@@ -257,28 +264,41 @@ probeRoutes.post('/smtp-starttls', async (c) => {
     // only once the request is fully authorized.
     probeAllowlistManager
       .getTenantAllowlist(tenantId)
-      .generateFromDnsResults(evidence.domain, evidence.dnsResults);
+      .generateFromDnsResults(evidence.domain, evidence.dnsResults, evidence.expiresAt);
 
-    // Run under global semaphore to enforce PROBE_CONCURRENCY
-    const result = await getProbeSemaphore().run(() =>
-      probeSMTPStarttls(target.hostname, tenantId, {
+    // Run under global semaphore to enforce PROBE_CONCURRENCY. Recheck after
+    // semaphore acquisition so delayed work cannot start with stale evidence.
+    const result = await getProbeSemaphore().run(async () => {
+      if (!isExpiryFresh(evidence.expiresAt)) return null;
+      return probeSMTPStarttls(target.hostname, tenantId, {
         port: 25,
         timeoutMs: config.probes.timeoutMs,
         checkAllowlist: true,
-      })
-    );
+        expiresAt: evidence.expiresAt,
+      });
+    });
+    if (!result) {
+      return c.json({ error: 'Persisted DNS evidence is stale', reason: 'stale-evidence' }, 403);
+    }
 
     return c.json(result);
   }
 
-  // Batch probe of every persisted MX target
+  // Batch probe of every persisted MX target. Check immediately before
+  // handing the targets to the probe runner; it also rechecks per host so
+  // later batches cannot start after the shared evidence expiry.
   probeAllowlistManager
     .getTenantAllowlist(tenantId)
-    .generateFromDnsResults(evidence.domain, evidence.dnsResults);
+    .generateFromDnsResults(evidence.domain, evidence.dnsResults, evidence.expiresAt);
+
+  if (!isExpiryFresh(evidence.expiresAt)) {
+    return c.json({ error: 'Persisted DNS evidence is stale', reason: 'stale-evidence' }, 403);
+  }
 
   const results = await probeMXHosts(evidence.hosts, tenantId, {
     timeoutMs: config.probes.timeoutMs,
     concurrency: config.probes.concurrency,
+    expiresAt: evidence.expiresAt,
   });
 
   return c.json({
@@ -328,10 +348,12 @@ probeRoutes.post('/allowlist/generate', async (c) => {
   const allowlist = probeAllowlistManager.getTenantAllowlist(tenantId);
   const entries: AllowlistEntry[] = [];
   if (mx.ok) {
-    entries.push(...allowlist.generateFromDnsResults(mx.domain, mx.dnsResults));
+    entries.push(...allowlist.generateFromDnsResults(mx.domain, mx.dnsResults, mx.expiresAt));
   }
   if (mtaSts.ok) {
-    entries.push(...allowlist.generateFromDnsResults(mtaSts.domain, mtaSts.dnsResults));
+    entries.push(
+      ...allowlist.generateFromDnsResults(mtaSts.domain, mtaSts.dnsResults, mtaSts.expiresAt)
+    );
   }
 
   return c.json({

@@ -1,6 +1,14 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import { type NewRecordSet, type RecordSet, recordSets } from '../schema/index.js';
+
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function normalizeType(type: string): string {
+  return type.trim().toUpperCase();
+}
 
 export class RecordSetRepository {
   constructor(private db: IDatabaseAdapter) {}
@@ -25,11 +33,15 @@ export class RecordSetRepository {
     name: string,
     type: string
   ): Promise<RecordSet | null> {
-    const results = await this.db.select(recordSets);
-    const match = results.find(
-      (r) => r.snapshotId === snapshotId && r.name === name && r.type === type
+    const condition = and(
+      eq(recordSets.snapshotId, snapshotId),
+      eq(recordSets.name, normalizeName(name)),
+      eq(recordSets.type, normalizeType(type))
     );
-    return match || null;
+    if (!condition) throw new Error('Expected record-set lookup predicates');
+
+    const result = await this.db.selectOne(recordSets, condition);
+    return result || null;
   }
 
   async create(data: NewRecordSet): Promise<RecordSet> {

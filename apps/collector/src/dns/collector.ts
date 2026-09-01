@@ -25,7 +25,7 @@ import {
   SnapshotRepository,
   SuggestionRepository,
 } from '@dns-ops/db';
-import { observationsToRecordSets } from '@dns-ops/parsing';
+import { observationsToRecordSets, tryNormalizeDomain } from '@dns-ops/parsing';
 import {
   authoritativeFailureRule,
   authoritativeMismatchRule,
@@ -61,6 +61,11 @@ import type {
 // Current ruleset version - keep in sync with web app findings.ts
 const CURRENT_RULESET_VERSION = '1.2.0';
 const CURRENT_RULESET_NAME = 'DNS and Mail Rules';
+const MAX_MTA_STS_CNAME_HOPS = 5;
+
+function normalizeDnsOwnerName(name: string): string {
+  return name.trim().replace(/\.+$/, '').toLowerCase();
+}
 
 const logger = getCollectorLogger();
 
@@ -205,8 +210,16 @@ export class DNSCollector {
       }
     }
 
+    // Collect bounded MTA-STS CNAME hops and terminal TXT evidence from the
+    // recursive vantage. External canonical owners are not served by the
+    // managed zone's authoritative nameservers, so follow-up queries remain
+    // recursive while the initial alias is still collected at every enabled
+    // vantage above.
+    const initialResults = [...recursiveResults, ...authoritativeResults];
+    const cnameResults = await this.collectMtaStsCnameChain(initialResults, errors);
+
     // Combine all results
-    const allResults = [...recursiveResults, ...authoritativeResults];
+    const allResults = [...initialResults, ...cnameResults];
 
     // Collect delegation data if enabled (Bead 12)
     let delegationData = null;
@@ -331,6 +344,64 @@ export class DNSCollector {
     });
 
     return mailResult.queries;
+  }
+
+  /**
+   * Follow persisted MTA-STS CNAME evidence far enough to collect each hop
+   * and the terminal TXT owner. The bound keeps a malicious or malformed DNS
+   * chain from expanding the collection indefinitely.
+   */
+  private async collectMtaStsCnameChain(
+    initialResults: DNSQueryResult[],
+    errors: CollectionError[]
+  ): Promise<DNSQueryResult[]> {
+    if (this.config.includeMailRecords === false) return [];
+
+    const initialOwner = normalizeDnsOwnerName(`_mta-sts.${this.config.domain}`);
+    const queriedNames = new Set([initialOwner]);
+    let pending = new Set(this.extractMtaStsCnameTargets(initialResults, new Set([initialOwner])));
+    const collected: DNSQueryResult[] = [];
+    const recursiveVantage: VantageInfo = {
+      type: 'public-recursive',
+      identifier: '8.8.8.8',
+      region: 'us-central',
+    };
+
+    for (let hop = 1; hop <= MAX_MTA_STS_CNAME_HOPS && pending.size > 0; hop++) {
+      const owners = [...pending].filter((owner) => !queriedNames.has(owner));
+      if (owners.length === 0) break;
+      for (const owner of owners) queriedNames.add(owner);
+
+      const queries = owners.flatMap((name) => [
+        { name, type: 'CNAME' },
+        { name, type: 'TXT' },
+      ]);
+      const results = await this.collectFromVantage(queries, recursiveVantage, errors);
+      collected.push(...results);
+      pending = new Set(this.extractMtaStsCnameTargets(results, new Set(owners)));
+    }
+
+    return collected;
+  }
+
+  private extractMtaStsCnameTargets(
+    results: DNSQueryResult[],
+    ownerNames: ReadonlySet<string>
+  ): string[] {
+    const targets: string[] = [];
+    for (const result of results) {
+      if (result.query.type !== 'CNAME' || !result.success) continue;
+      const queryName = normalizeDnsOwnerName(result.query.name);
+      if (!queryName || !ownerNames.has(queryName)) continue;
+      for (const answer of result.answers) {
+        if (answer.type !== 'CNAME' || normalizeDnsOwnerName(answer.name) !== queryName) {
+          continue;
+        }
+        const target = tryNormalizeDomain(answer.data)?.normalized;
+        if (target) targets.push(target);
+      }
+    }
+    return [...new Set(targets)];
   }
 
   /**

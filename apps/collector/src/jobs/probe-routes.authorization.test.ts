@@ -20,6 +20,7 @@ import {
   probeMXHosts,
   probeSMTPStarttls,
 } from '../probes/index.js';
+import { getProbeSemaphore, resetProbeSemaphore } from '../probes/semaphore.js';
 import type { Env } from '../types.js';
 import { probeRoutes } from './probe-routes.js';
 
@@ -57,11 +58,29 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
-  const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+function getConditionParams(condition: unknown): unknown[] {
+  const values: unknown[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    const record = value as {
+      constructor?: { name?: string };
+      queryChunks?: unknown[];
+      value?: unknown;
+    };
+    if (record.constructor?.name === 'Param') {
+      values.push(record.value);
+      return;
+    }
+    for (const chunk of record.queryChunks ?? []) visit(chunk);
   };
-  return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+  visit(condition);
+  return values;
+}
+
+function matches(row: Row, condition: unknown): boolean {
+  return getConditionParams(condition).every((value) =>
+    Object.values(row).some((field) => field === value)
+  );
 }
 
 function createMockDb(state: Record<string, Row[]>): IDatabaseAdapter {
@@ -70,14 +89,10 @@ function createMockDb(state: Record<string, Row[]>): IDatabaseAdapter {
     type: 'postgres',
     getDrizzle: () => undefined,
     select: async (table: unknown) => [...rows(getTableName(table))],
-    selectWhere: async (table: unknown, condition: unknown) => {
-      const param = getConditionParam(condition);
-      return rows(getTableName(table)).filter((r) => Object.values(r).some((v) => v === param));
-    },
-    selectOne: async (table: unknown, condition: unknown) => {
-      const param = getConditionParam(condition);
-      return rows(getTableName(table)).find((r) => Object.values(r).some((v) => v === param));
-    },
+    selectWhere: async (table: unknown, condition: unknown) =>
+      rows(getTableName(table)).filter((row) => matches(row, condition)),
+    selectOne: async (table: unknown, condition: unknown) =>
+      rows(getTableName(table)).find((row) => matches(row, condition)),
     insert: async () => ({}),
     insertMany: async () => [],
     update: async () => [],
@@ -260,6 +275,7 @@ const mockedProbeSMTPStarttls = vi.mocked(probeSMTPStarttls);
 const mockedProbeMXHosts = vi.mocked(probeMXHosts);
 
 beforeEach(() => {
+  resetProbeSemaphore(5);
   vi.clearAllMocks();
   process.env.ENABLE_ACTIVE_PROBES = 'true';
   probeAllowlistManager.clearAll();
@@ -288,6 +304,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
+  resetProbeSemaphore(5);
   probeAllowlistManager.clearAll();
 });
 
@@ -572,6 +590,72 @@ describe('Issue #67: probe authorization requires persisted DNS evidence', () =>
   });
 
   describe('stale evidence fails closed', () => {
+    it('does not fetch MTA-STS after semaphore wait crosses evidence expiry', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+      resetProbeSemaphore(1);
+
+      let release!: () => void;
+      const holder = getProbeSemaphore().run(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      const request = post(
+        createMockApp(evidenceState({ txtTtl: 0.1, queriedOffsetMs: 0 })),
+        '/mta-sts',
+        { domain: 'example.com' }
+      );
+
+      for (let i = 0; i < 200 && getProbeSemaphore().queued === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(getProbeSemaphore().queued).toBe(1);
+
+      vi.advanceTimersByTime(101);
+      release();
+      await holder;
+      const response = await request;
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ reason: 'stale-evidence' });
+      expect(mockedFetchMTASTSPolicy).not.toHaveBeenCalled();
+    });
+
+    it('does not start an SMTP probe after semaphore wait crosses evidence expiry', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+      resetProbeSemaphore(1);
+
+      let release!: () => void;
+      const holder = getProbeSemaphore().run(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      const request = post(
+        createMockApp(evidenceState({ mxTtl: 0.1, queriedOffsetMs: 0 })),
+        '/smtp-starttls',
+        { domain: 'example.com', hostname: 'mail.example.com' }
+      );
+
+      for (let i = 0; i < 200 && getProbeSemaphore().queued === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(getProbeSemaphore().queued).toBe(1);
+
+      vi.advanceTimersByTime(101);
+      release();
+      await holder;
+      const response = await request;
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ reason: 'stale-evidence' });
+      expect(mockedProbeSMTPStarttls).not.toHaveBeenCalled();
+    });
+
     it('rejects evidence older than the five-minute ceiling', async () => {
       const app = createMockApp(evidenceState({ queriedOffsetMs: 400_000 }));
       const res = await post(app, '/smtp-starttls', { domain: 'example.com' });

@@ -21,11 +21,19 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
+function getConditionParams(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
   const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    constructor?: { name?: string };
+    value?: unknown;
+    queryChunks?: unknown[];
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  if (sql.constructor?.name === 'Param') return [sql.value];
+  return (sql.queryChunks ?? []).flatMap(getConditionParams);
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -43,9 +51,13 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       const tableName = getTableName(table);
       const param = getConditionParam(condition);
       if (tableName === 'domains') {
+        const params = getConditionParams(condition);
         return state.domains.filter(
           (domain) =>
-            domain.id === param || domain.normalizedName === param || domain.name === param
+            (domain.id === params[0] ||
+              domain.normalizedName === params[0] ||
+              domain.name === params[0]) &&
+            (params.length < 2 || domain.tenantId === params[1])
         );
       }
       if (tableName === 'snapshots') {
@@ -69,7 +81,14 @@ function createMockDb(state: MockState): IDatabaseAdapter {
         );
       }
       if (tableName === 'snapshots') {
-        return state.snapshots.find((snapshot) => snapshot.id === param);
+        const byId = state.snapshots.find((snapshot) => snapshot.id === param);
+        if (byId) return byId;
+        return [...state.snapshots]
+          .filter((snapshot) => snapshot.domainId === param)
+          .sort(
+            (a, b) =>
+              new Date(b.createdAt as string).getTime() - new Date(a.createdAt as string).getTime()
+          )[0];
       }
       return undefined;
     }),
