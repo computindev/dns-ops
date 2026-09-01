@@ -297,15 +297,27 @@ patterns.
 
 ### Before enabling in untrusted-tenant environments
 
-Implement the `safeLookup` DNS rebinding mitigation described above. Until
-then, DNS rebinding remains a residual risk for deployments where tenants can
-import MX records from domains they do not fully control.
+The DNS rebinding residual is now limited to the **MTA-STS HTTPS fetch**
+(the SMTP probe pins the checked IP; see §DNS Rebinding / TOCTOU Residual
+Risk). `fetch()` re-resolves `mta-sts.{domain}` internally, so a TTL switch
+between `resolveAndCheck()` and the fetch's own resolution can still land the
+connection on a private address. A feasible mitigation exists without adding
+dependencies: fetch the policy over a connection pinned to the checked IP —
+resolve once, run the address through the SSRF guard, then `tls.connect` to
+the resolved IP literal with `servername: 'mta-sts.{domain}'` (preserving
+SNI and certificate validation) and issue the HTTP GET over that socket,
+mirroring the SMTP probe's checked-IP pinning. Node's global `fetch()` exposes
+no lookup override, which is why the pin has to happen below it. Until that
+lands, treat MTA-STS fetch destinations as a residual risk for deployments
+where tenants can import MX records from domains they do not fully control,
+and restrict collector egress to public unicast destinations at the network
+layer as a compensating control.
 
 ### Remaining gaps
 
 | Gap | Severity | Recommendation |
 |-----|----------|---------------|
-| DNS rebinding / TOCTOU | Medium | Implement `safeLookup` callback (documented above) |
+| MTA-STS fetch DNS re-resolution (TOCTOU) | Medium | SMTP is fixed via checked-IP pinning; pin the MTA-STS fetch the same way — `tls.connect` to the checked IP with `servername` for SNI, HTTP over that socket (documented above). Interim: network-layer egress restriction to public unicast |
 | `::` covers non-mapped IPv6 addresses broadly | Low | Acceptable — probe targets should be standard FQDN hostnames resolved from DNS, not raw IPv6 literals |
 
 ---

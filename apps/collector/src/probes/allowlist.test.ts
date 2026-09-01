@@ -333,6 +333,81 @@ describe('Allowlist Lookup - Bead 13.4', () => {
 });
 
 // =============================================================================
+// Legacy ProbeAllowlist Hostname Canonicalization (Issue #67 review)
+// =============================================================================
+
+describe('Legacy ProbeAllowlist Canonicalization - Issue #67 review', () => {
+  let allowlist: ProbeAllowlist;
+
+  beforeEach(() => {
+    allowlist = new ProbeAllowlist(60000);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    allowlist.clear();
+  });
+
+  it('should canonicalize mixed-case trailing-dot MX answers so lowercase probes are allowed', () => {
+    const dnsResults: DNSQueryResult[] = [
+      {
+        query: { name: 'example.com', type: 'MX' },
+        vantage: { type: 'public-recursive', identifier: 'google' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'MX', ttl: 300, data: '10 MAIL.EXAMPLE.COM.' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+      },
+    ];
+
+    const entries = allowlist.generateFromDnsResults('example.com', dnsResults);
+
+    // Entry is stored canonical, matching the lowercase hosts the
+    // persisted-evidence loader produces.
+    expect(entries[0].hostname).toBe('mail.example.com');
+
+    // Lookups are canonicalized too: raw-case and trailing-dot queries both hit.
+    expect(allowlist.isAllowed('mail.example.com', 25)).toBe(true);
+    expect(allowlist.isAllowed('MAIL.EXAMPLE.COM.', 25)).toBe(true);
+    expect(allowlist.getEntry('Mail.Example.Com', 25)).toBeDefined();
+  });
+
+  it('should canonicalize custom entries', () => {
+    allowlist.addCustomEntry('RELAY.Example.ORG.', 25, 'ops', 'break-glass');
+
+    expect(allowlist.isAllowed('relay.example.org', 25)).toBe(true);
+    expect(allowlist.isAllowed('RELAY.EXAMPLE.ORG', 25)).toBe(true);
+  });
+
+  it('should canonicalize MTA-STS entries from mixed-case domains', () => {
+    const dnsResults: DNSQueryResult[] = [
+      {
+        query: { name: '_mta-sts.Example.COM', type: 'TXT' },
+        vantage: { type: 'public-recursive', identifier: 'google' },
+        success: true,
+        answers: [
+          { name: '_mta-sts.Example.COM', type: 'TXT', ttl: 300, data: 'v=STSv1; id=20240101' },
+        ],
+        authority: [],
+        additional: [],
+        responseTime: 30,
+      },
+    ];
+
+    const entries = allowlist.generateFromDnsResults('Example.COM', dnsResults);
+
+    expect(entries[0].type).toBe('mta-sts');
+    expect(entries[0].hostname).toBe('mta-sts.example.com');
+
+    expect(allowlist.isAllowed('mta-sts.example.com', 443)).toBe(true);
+    expect(allowlist.isAllowed('MTA-STS.Example.COM', 443)).toBe(true);
+  });
+});
+
+// =============================================================================
 // Custom Entry Tests
 // =============================================================================
 
