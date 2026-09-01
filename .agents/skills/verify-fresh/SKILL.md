@@ -1,6 +1,7 @@
 ---
 name: verify-fresh
-description: Independent verification of a finished change by a fresh agent that did not implement it, at the exact committed sha, through the real surface, producing receipts with verifier=fresh. Use for any feature with profile critical or release (auth, money, permissions, tenant isolation, provider writes, irreversible data changes), whenever check-ci reports "requires verifier: fresh", when someone says "fresh verifier", "independent verification", "verify this PR", or before merging anything the builder self-verified. Must run with clean context — in pi, call the verify_fresh tool (it spawns an isolated pi in a worktree and follows this skill); elsewhere, a new session or subagent.
+description: >-
+  Independent verification of a finished change by a fresh agent that did not implement it, at the exact committed sha, through the real surface, producing receipts with verifier=fresh. Use for any feature with profile critical or release (auth, money, permissions, tenant isolation, provider writes, irreversible data changes), whenever check-ci reports "requires verifier: fresh", when someone says "fresh verifier", "independent verification", "verify this PR", or before merging anything the builder self-verified. Must run with clean context — in pi, call the verify_fresh tool (it spawns an isolated pi in a worktree and follows this skill); elsewhere, a new session or subagent.
 ---
 
 # Fresh verifier protocol
