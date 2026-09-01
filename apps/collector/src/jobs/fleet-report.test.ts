@@ -5,6 +5,9 @@
  * Verifies that DB context is properly available and routes work correctly.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../types.js';
@@ -597,7 +600,38 @@ describe('Fleet Report truth model (issue #65)', () => {
     const spf = json.results[0].checks.find((c: { check: string }) => c.check === 'spf');
     expect(spf.status).toBe('unknown');
     expect(json.summary.spfStats).toMatchObject({ pass: 0, fail: 0, warning: 0, unknown: 1 });
+    expect(json.summary.unknownChecks).toBe(1);
     expect(json.results[0].findingsCount).toBe(0);
+  });
+
+  it('returns unknown when a finding mixes current and foreign observation evidence', async () => {
+    const app = buildApp({
+      domains: [mockDomain('mixed-evidence.example')],
+      snapshots: [
+        mockSnapshot({
+          domainId: 'domain-mixed-evidence.example',
+          metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+        }),
+      ],
+      findings: [
+        mockFinding({
+          evidence: [
+            { observationId: 'obs-1', description: 'current snapshot' },
+            { observationId: 'obs-foreign', description: 'foreign snapshot' },
+          ],
+        }),
+      ],
+      observations: [mockObservation()],
+    });
+
+    const res = await runReport(app, ['mixed-evidence.example']);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+
+    expect(json.results[0].findingsCount).toBe(0);
+    expect(json.results[0].checks[0].status).toBe('unknown');
+    expect(json.results[0].issues).toEqual([]);
+    expect(json.summary).toMatchObject({ unknownChecks: 1, domainsWithIssues: 0 });
   });
 
   it('returns pass for a complete, correlated snapshot with an affirmative info finding', async () => {
@@ -668,6 +702,7 @@ describe('Fleet Report truth model (issue #65)', () => {
     expect(json.results[0].findingsCount).toBe(0);
     expect(json.results[0].issues).toEqual([]);
     expect(json.summary.spfStats).toMatchObject({ pass: 0, fail: 0, unknown: 1 });
+    expect(json.summary.unknownChecks).toBe(1);
     expect(json.summary.domainsWithIssues).toBe(0);
   });
 
@@ -694,7 +729,22 @@ describe('Fleet Report truth model (issue #65)', () => {
     expect(json.results[0].issues).toEqual([]);
     expect(json.summary.spfStats).toMatchObject({ pass: 0, fail: 0, unknown: 1 });
     expect(json.summary.domainsWithIssues).toBe(0);
+    expect(json.summary.unknownChecks).toBe(1);
     expect(json.highPriorityIssues).toEqual([]);
+  });
+
+  it('keeps every rule producer path in the critical fleet feature map', () => {
+    const featureMapPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../.agents/skills/verify-dns-ops/features/fleet.reports.md'
+    );
+    const featureMap = readFileSync(featureMapPath, 'utf8');
+
+    expect(featureMap).toContain('profile: critical');
+    expect(featureMap).toContain('  - apps/collector/src/dns/collector.ts');
+    expect(featureMap).toContain('  - apps/web/hono/routes/findings.ts');
+    expect(featureMap).toContain('  - packages/rules/src/mail/rules.ts');
+    expect(featureMap).toContain('  - packages/rules/src/dns/rules.ts');
   });
 });
 

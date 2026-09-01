@@ -19,6 +19,7 @@ function fleetReportResponse(results: Array<Record<string, unknown>>) {
     summary: {
       totalDomains: results.length,
       domainsWithIssues: 0,
+      unknownChecks: results.length,
       spfStats: { pass: 0, fail: 0, warning: 0, missing: 0, unknown: results.length },
     },
     results,
@@ -62,7 +63,11 @@ test('renders UNKNOWN, not a success badge, for checks without evidence', async 
   await page.getByLabel(/domain inventory/i).fill('stale.example');
   await page.getByRole('button', { name: /run report/i }).click();
 
+  // Unknown checks remain visible before either details disclosure is opened.
+  await expect(page.getByText('Unknown', { exact: true })).toBeVisible();
+
   await page.getByRole('button', { name: /show domain details/i }).click();
+  await expect(page.getByText('Unknown checks', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /show checks/i }).click();
 
   // UNKNOWN must surface: the no-evidence message renders and its badge carries
@@ -85,6 +90,7 @@ test('keeps affirmative pass badges distinct from unknown', async ({ page }) => 
         summary: {
           totalDomains: 1,
           domainsWithIssues: 0,
+          unknownChecks: 0,
           spfStats: { pass: 1, fail: 0, warning: 0, missing: 0, unknown: 0 },
         },
         results: [

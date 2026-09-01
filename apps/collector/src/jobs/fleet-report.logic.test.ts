@@ -371,6 +371,7 @@ describe('Fleet Report Logic - Bead 18', () => {
 
       expect(summary.spfStats).toMatchObject({ pass: 0, unknown: 1 });
       expect(summary.dmarcStats).toMatchObject({ pass: 1, unknown: 0 });
+      expect(summary.unknownChecks).toBe(1);
     });
 
     it('should calculate issue severity breakdown', () => {
@@ -407,6 +408,7 @@ describe('Fleet Report Logic - Bead 18', () => {
 
       expect(summary.totalDomains).toBe(0);
       expect(summary.domainsWithIssues).toBe(0);
+      expect(summary.unknownChecks).toBe(0);
       expect(summary.spfStats).toMatchObject({
         pass: 0,
         fail: 0,

@@ -1,16 +1,22 @@
 ---
 id: fleet.reports
 surface: web
-profile: changed
+profile: critical
 paths:
+  - apps/collector/src/dns/collector.ts
   - apps/collector/src/jobs/fleet-report.ts
   - apps/collector/src/jobs/fleet-report.logic.test.ts
   - apps/collector/src/jobs/fleet-report.test.ts
+  - apps/web/hono/routes/findings.ts
   - apps/web/hono/routes/fleet-report.ts
   - apps/web/hono/routes/fleet-report.test.ts
   - apps/web/app/components/FleetReportsPanel.tsx
   - apps/web/app/components/FleetReportsPanel.test.ts
   - apps/web/e2e/fleet-report.spec.ts
+  - packages/rules/src/mail/rules.ts
+  - packages/rules/src/mail/rules.test.ts
+  - packages/rules/src/dns/rules.ts
+  - packages/rules/src/dns/rules.test.ts
 always_with: []
 ---
 # Fleet reports
@@ -20,14 +26,14 @@ An operator runs bulk mail/infrastructure/delegation checks across a domain inve
 ## Sub-features
 
 - Route `/portfolio` shows the **Fleet Reports** panel with template cards (**Mail Security Baseline**, **Infrastructure Audit**, **Full Check**), a domain inventory textarea, CSV import, and **Run Report**.
-- `POST /api/fleet-report/run` (web → collector) returns per-domain checks with status `pass | fail | warning | unknown` and per-check summary stats including `unknown` counts.
+- `POST /api/fleet-report/run` (web → collector) returns per-domain checks with status `pass | fail | warning | unknown`, per-check summary stats including `unknown` counts, and a visible aggregate `unknownChecks` count.
 - `POST /api/fleet-report/import-csv` parses a `domain` column into an inventory.
 
 ## Truth model (what this feature promises)
 
-- `pass` requires affirmative persisted evidence: a complete snapshot, explicit `COMPLETE` evaluation coverage, a non-null snapshot ruleset, and findings from that same snapshot+ruleset whose evidence observation IDs belong to the snapshot.
+- `pass` requires affirmative persisted evidence: a complete snapshot, explicit `COMPLETE` evaluation coverage, a non-null snapshot ruleset, and findings from that same snapshot+ruleset whose every evidence observation ID belongs to the snapshot.
 - Zero relevant findings, missing/partial evaluation coverage, a snapshot without a ruleset version, or uncorrelated evidence (wrong ruleset, empty evidence, foreign observation ID) ⇒ `unknown`, never `pass`.
-- Unknown-status rows never count as `issues` (nor in `domainsWithIssues`), including unrecognized severities.
+- Unknown-status rows never count as `issues` (nor in `domainsWithIssues`), including unrecognized severities; `unknownChecks` remains visible in the collapsed report summary.
 - Unrecognized severities ⇒ `unknown`, never `pass`.
 - Affirmative info/low ⇒ `pass`, medium ⇒ `warning`, high/critical ⇒ `fail`.
 
@@ -52,7 +58,7 @@ await page.getByRole('button', { name: /show domain details/i }).waitFor({ timeo
 ## Proof
 
 ### Expected observations
-- For a domain whose latest snapshot lacks explicit `COMPLETE` evaluation coverage (or whose findings are uncorrelated), the SPF row badge renders UNKNOWN styling (`?` / unknown badge class), not a success badge.
+- For a domain whose latest snapshot lacks explicit `COMPLETE` evaluation coverage (or whose findings are uncorrelated), the collapsed summary shows a non-zero `Unknown` aggregate and the domain card is not neutral/green; the SPF row badge renders UNKNOWN styling (`?` / unknown badge class), not a success badge.
 - `POST /api/fleet-report/run` for that domain returns `checks[].status === 'unknown'` and summary stats `unknown >= 1`, `pass === 0`.
 - For a complete, correlated snapshot, a persisted info finding yields `pass` and a high finding yields `fail`.
 

@@ -232,6 +232,24 @@ describe('SPF Rule', () => {
     expect(result?.suggestions).toBeDefined();
   });
 
+  it('should preserve NODATA evidence for a missing SPF finding', () => {
+    const txtObs = createMockObservation({
+      id: 'obs-spf-nodata',
+      queryType: 'TXT',
+      queryName: 'example.com',
+      status: 'nodata',
+      answerSection: [],
+    });
+    const context = createMockContext({ observations: [txtObs] });
+
+    const result = spfRule.evaluate(context);
+
+    expect(result?.finding?.type).toBe('mail.no-spf-record');
+    expect(result?.finding?.evidence).toEqual([
+      expect.objectContaining({ observationId: 'obs-spf-nodata' }),
+    ]);
+  });
+
   it('should detect SPF with softfail (~all)', () => {
     const txtObs = createMockObservation({
       queryType: 'TXT',
@@ -371,6 +389,24 @@ describe('DMARC Rule', () => {
     expect(result).not.toBeNull();
     expect(result?.finding?.type).toBe('mail.no-dmarc-record');
     expect(result?.finding?.severity).toBe('high');
+  });
+
+  it('should preserve NODATA evidence for a missing DMARC finding', () => {
+    const txtObs = createMockObservation({
+      id: 'obs-dmarc-nodata',
+      queryType: 'TXT',
+      queryName: '_dmarc.example.com',
+      status: 'nodata',
+      answerSection: [],
+    });
+    const context = createMockContext({ observations: [txtObs] });
+
+    const result = dmarcRule.evaluate(context);
+
+    expect(result?.finding?.type).toBe('mail.no-dmarc-record');
+    expect(result?.finding?.evidence).toEqual([
+      expect.objectContaining({ observationId: 'obs-dmarc-nodata' }),
+    ]);
   });
 
   it('should detect malformed DMARC record', () => {
