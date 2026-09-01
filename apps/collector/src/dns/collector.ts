@@ -101,6 +101,8 @@ export interface ResolverLike {
   query(query: DNSQuery, vantage: VantageInfo): Promise<DNSQueryResult>;
 }
 
+type TimedDNSQueryResult = DNSQueryResult & { receivedAt: Date };
+
 /**
  * Run DNS queries bounded by `semaphore`, preserving input order in the output.
  *
@@ -114,11 +116,12 @@ export async function collectQueriesConcurrently(
   vantage: VantageInfo,
   semaphore: Semaphore,
   errors: CollectionError[]
-): Promise<DNSQueryResult[]> {
+): Promise<TimedDNSQueryResult[]> {
   const tasks = queries.map((query) =>
     semaphore.run(async () => {
       try {
-        return await resolver.query(query, vantage);
+        const result = await resolver.query(query, vantage);
+        return { ...result, receivedAt: new Date() };
       } catch (error) {
         errors.push({
           queryName: query.name,
@@ -131,7 +134,7 @@ export async function collectQueriesConcurrently(
     })
   );
   const settled = await Promise.all(tasks);
-  return settled.filter((r): r is DNSQueryResult => r !== null);
+  return settled.filter((r): r is TimedDNSQueryResult => r !== null);
 }
 
 export class DNSCollector {
@@ -185,7 +188,7 @@ export class DNSCollector {
     );
 
     // Collect from authoritative vantages (for managed zones or if NS discovered)
-    const authoritativeResults: DNSQueryResult[] = [];
+    const authoritativeResults: TimedDNSQueryResult[] = [];
     if (this.config.zoneManagement === 'managed') {
       // For managed zones, query authoritative directly
       const nsRecords = await this.discoverAuthoritativeServers();
@@ -337,7 +340,7 @@ export class DNSCollector {
     queries: DNSQuery[],
     vantage: VantageInfo,
     errors: CollectionError[]
-  ): Promise<DNSQueryResult[]> {
+  ): Promise<TimedDNSQueryResult[]> {
     // Run queries concurrently, bounded by this.semaphore (default 5,
     // overridable via DNS_QUERY_CONCURRENCY). Order is preserved in the output.
     const results = await collectQueriesConcurrently(
@@ -454,7 +457,7 @@ export class DNSCollector {
    * Store results in database
    */
   private async storeResults(
-    results: DNSQueryResult[],
+    results: TimedDNSQueryResult[],
     resultState: 'complete' | 'partial' | 'failed',
     delegationData?: import('../delegation/collector.js').DelegationSummary | null
   ): Promise<{
@@ -486,6 +489,7 @@ export class DNSCollector {
       triggeredBy: triggeredBy || 'system',
       // Store collection metadata including vantage identifiers and delegation data
       metadata: {
+        dnsQueryTimestampBasis: 'response-received-v1',
         // Vantage identifiers (IPs/hostnames) for detailed tracking
         vantageIdentifiers: [...new Set(results.map((r) => r.vantage.identifier))],
         authoritativeEvidence: this.getAuthoritativeEvidenceCoverage(results),
@@ -544,7 +548,7 @@ export class DNSCollector {
         answerCount: result.answers.length,
         truncated: result.flags?.tc,
       }),
-      queriedAt: new Date(),
+      queriedAt: result.receivedAt,
       responseTimeMs: result.responseTime,
       responseCode: result.responseCode ?? null,
       flags: result.flags

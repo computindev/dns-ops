@@ -112,27 +112,40 @@ function changedFiles(base, head) {
   const o = three !== null ? three : git(['diff', '--name-only', base, head]);
   return o.split('\n').map((s) => s.trim()).filter(Boolean);
 }
-/** Tree object of the current working tree (tracked + untracked-not-ignored), via a temp index. null if no commits. */
+/** Tree object of the current working tree (tracked + untracked-not-ignored), via a temp index.
+ *  The self-learning-memory gitlink may have no checked-out commit, so it is
+ *  the sole path excluded from temporary-index staging. Every other gitlink
+ *  must either stage its pointer or make digest construction fail. */
 function workingTree() {
   const tmp = path.join(os.tmpdir(), `verify-index-${process.pid}-${Date.now()}`);
   const env = { GIT_INDEX_FILE: tmp };
+  const memoryGitlink = '.pi/self-learning-memory';
   try {
-    if (git(['read-tree', 'HEAD'], { allowFail: true, env }) === null) return null;
-    if (git(['add', '-A'], { allowFail: true, env }) === null) return null;
-    return git(['write-tree'], { allowFail: true, env });
+    if (refExists('HEAD') && git(['read-tree', 'HEAD'], { allowFail: true, env }) === null) {
+      die('could not construct exact working-tree digest: git read-tree failed');
+    }
+    if (git(['add', '-A', '--', '.', `:(exclude)${memoryGitlink}`], { allowFail: true, env }) === null) {
+      die('could not construct exact working-tree digest: git add failed');
+    }
+    const tree = git(['write-tree'], { allowFail: true, env });
+    if (tree === null) die('could not construct exact working-tree digest: git write-tree failed');
+    return tree;
   } finally { try { fs.unlinkSync(tmp); } catch {} }
 }
 /** Tree object of what a commit would contain right now (the real index). */
 const indexTree = () => git(['write-tree'], { allowFail: true });
-/** Digest of a code tree (commit or tree object), excluding verification/receipts/ and policy.quick_paths.
- *  Committing receipts, docs or the kit never invalidates a receipt; changing code or harness does. */
+/** Digest of a code tree (commit or tree object), excluding verification/receipts/ and policy paths.
+ *  Valid gitlink pointers remain digest inputs; only the local memory gitlink is excluded. */
 function codeDigest(ref, policy) {
   if (!ref || ref === 'NO-GIT') return 'NO-GIT';
   const o = git(['ls-tree', '-r', ref], { allowFail: true });
   if (o === null) return 'NO-GIT';
   const keep = o.split('\n').filter((l) => {
     const p = l.split('\t')[1];
-    return p && !p.startsWith('verification/receipts/') && !matchAny(p, policy.quick_paths) && !matchAny(p, policy.digest_ignore);
+    const isGitlink = l.startsWith('160000 ');
+    const isMemoryGitlink = p === '.pi/self-learning-memory';
+    return p && !isMemoryGitlink && !p.startsWith('verification/receipts/') &&
+      (isGitlink || (!matchAny(p, policy.quick_paths) && !matchAny(p, policy.digest_ignore)));
   });
   return crypto.createHash('sha256').update(keep.join('\n')).digest('hex');
 }
@@ -422,9 +435,10 @@ function cmdReceipt(f) {
   const notes = f['notes-file'] ? fs.readFileSync(String(f['notes-file']), 'utf8').trim() : '';
   if (notes) { const leak = scanSecrets(notes); if (leak) die(`--notes-file contains what looks like a ${leak} — redact before embedding in a receipt`); }
   if (status === 'passed' && !notes) die('passed receipts require --notes-file with Observations / Forbidden / Read-back');
+  const tree = workingTree();
   const sha = headSha(); const dirty = isDirty();
   const fm = ['---', 'receipt: verification-receipt/v0', `run_id: ${runId}`, `feature_id: ${featureId}`, `profile: ${profile}`, `surface: ${surface}`,
-    `sha: ${sha}`, `code_digest: ${codeDigest(workingTree() || 'HEAD', policy)}`, `dirty: ${dirty}`, `untracked: ${untrackedCount()}`,
+    `sha: ${sha}`, `code_digest: ${codeDigest(tree, policy)}`, `dirty: ${dirty}`, `untracked: ${untrackedCount()}`,
     `status: ${status}`, `reason: ${JSON.stringify(reason)}`, `verifier: ${verifier}`, `verifier_session: ${JSON.stringify(f.session ? String(f.session) : '')}`,
     `evidence_dir: ${path.relative(ROOT, runDir)}`, `created_at: ${nowIso()}`, '---'].join('\n');
   const body = notes || ['## Observations (expected → seen)', '', '- ', '', '## Forbidden (must not happen → confirmed absent)', '', '- ', '', '## Read-back (side effects checked through an independent path)', '', '- '].join('\n');
@@ -439,7 +453,7 @@ function cmdReceipt(f) {
 function pendingStatus(policy) {
   const pending = readJson(PENDING_PATH, null);
   if (!pending) return { pending: null, ok: true, paused: null, results: [], blocks: 0 };
-  const digest = codeDigest(workingTree() || 'HEAD', policy);
+  const digest = codeDigest(workingTree(), policy);
   const results = evaluate({ feats: pending.features, receipts: loadReceipts(), policy, digest, strict: false });
   const blocks = parseInt(fs.existsSync(COUNTER_PATH) ? fs.readFileSync(COUNTER_PATH, 'utf8') : '0', 10) || 0;
   return { pending, digest, results, ok: results.every((r) => r.ok), paused: pending.paused || null, blocks };
@@ -542,7 +556,8 @@ function cmdCheckCommit(f) {
     tree = workingTree();
     note = `Mode: working tree (${staged.length} staged, ${unstaged.length} unstaged, ${untracked.length} untracked) — evaluated as if everything were committed`;
   } else { files = staged; tree = indexTree(); note = `Mode: staged (${files.length} file(s))`; }
-  if (!files.length || !tree) process.exit(0);
+  if (!files.length) process.exit(0);
+  if (!tree) die('could not construct exact working-tree digest');
   const receipts = mode === 'staged' ? loadReceipts().filter((r) => staged.includes(r.file)) : loadReceipts();
   const { lines, fail } = gate({ title: 'verify-kit commit gate', files, digest: codeDigest(tree, policy), policy, strict: false, extra: [note, ''], receipts });
   if (fail) lines.push('**Commit refused.** Verify exactly this content (receipt code_digest must equal the tree being committed), commit exactly what you verified (no stray edits or untracked scratch files), or `git commit --no-verify` and let CI say no.');

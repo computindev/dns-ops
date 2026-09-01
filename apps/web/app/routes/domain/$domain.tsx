@@ -1,7 +1,7 @@
 import type { Observation, Snapshot } from '@dns-ops/db/schema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { type KeyboardEvent, useCallback, useEffect, useId, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AuthPending } from '../../components/AuthPending.js';
 import { DelegationPanel } from '../../components/DelegationPanel.js';
 import { DiscoveredSelectors } from '../../components/DiscoveredSelectors.js';
@@ -16,6 +16,7 @@ import { ResultStateBadge, ZoneManagementBadge } from '../../components/StatusBa
 import { TagsPanel } from '../../components/TagsPanel.js';
 import { Button } from '../../components/ui/Button.js';
 import { isDelegationTabEnabled, isSimulationEnabled } from '../../config/features.js';
+import { createEvidenceClock, type EvidenceClock } from '../../lib/dns-ttl.js';
 
 type DomainTabId = 'overview' | 'dns' | 'mail' | 'history' | 'delegation';
 
@@ -53,6 +54,7 @@ import { invalidateDomainEvidenceQueries } from '../../lib/evidence-query-cache.
 
 export const Route = createFileRoute('/domain/$domain')({
   component: Domain360Page,
+  remountDeps: ({ params }) => params.domain,
   beforeLoad: async () => {
     await requireAuthGuard();
   },
@@ -84,14 +86,165 @@ const DOMAIN_TABS: { id: DomainTabId; label: string }[] = [
 interface DomainData {
   snapshot: Snapshot | null;
   observations: Observation[];
+  evidenceClock: EvidenceClock | null;
 }
 
-async function fetchDomainData(domain: string): Promise<DomainData> {
-  const snapshotResponse = await fetch(`/api/domain/${domain}/latest`, { credentials: 'include' });
+export const DOMAIN_COLLECTION_TIMEOUT_MS = 30_000;
+export type DomainCollectionAbortReason = 'timeout' | 'superseded' | 'unmount' | 'aborted';
+type ManualAbortReason = Exclude<DomainCollectionAbortReason, 'timeout'>;
+
+export interface DomainCollectionRequest {
+  readonly signal: AbortSignal;
+  readonly reason: DomainCollectionAbortReason | null;
+  abort(reason?: ManualAbortReason): void;
+  dispose(): void;
+}
+
+export function createCollectionRequest(
+  timeoutMs = DOMAIN_COLLECTION_TIMEOUT_MS
+): DomainCollectionRequest {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let abortReason: DomainCollectionAbortReason | null = null;
+
+  const clearTimer = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  const onAbort = () => clearTimer();
+  controller.signal.addEventListener('abort', onAbort, { once: true });
+
+  const request: DomainCollectionRequest = {
+    get reason() {
+      return abortReason;
+    },
+    signal: controller.signal,
+    abort(reason = 'aborted') {
+      if (controller.signal.aborted) return;
+      abortReason = reason;
+      controller.abort();
+    },
+    dispose() {
+      clearTimer();
+      controller.signal.removeEventListener('abort', onAbort);
+    },
+  };
+
+  timer = setTimeout(() => {
+    abortReason = 'timeout';
+    controller.abort();
+  }, timeoutMs);
+
+  return request;
+}
+
+export class DomainCollectionAbortError extends Error {
+  constructor(readonly reason: DomainCollectionAbortReason) {
+    super(
+      reason === 'timeout'
+        ? 'DNS collection timed out. Try Refresh again.'
+        : reason === 'superseded'
+          ? 'DNS collection was superseded by a newer refresh.'
+          : reason === 'unmount'
+            ? 'DNS collection was cancelled because the page was left.'
+            : 'DNS collection was cancelled. Try Refresh again.'
+    );
+    this.name = reason === 'timeout' ? 'TimeoutError' : 'AbortError';
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'AbortError'
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+export async function collectDomain(
+  domain: string,
+  addToPortfolio: boolean,
+  request: Pick<DomainCollectionRequest, 'signal' | 'reason'>
+): Promise<void> {
+  try {
+    if (request.signal.aborted) {
+      throw new DomainCollectionAbortError(request.reason ?? 'aborted');
+    }
+
+    const response = await fetch('/api/collect/domain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain, zoneManagement: 'unmanaged', addToPortfolio }),
+      credentials: 'include',
+      signal: request.signal,
+    });
+
+    if (request.signal.aborted) {
+      throw new DomainCollectionAbortError(request.reason ?? 'aborted');
+    }
+
+    if (!response.ok) {
+      const errorData = (await response.json().catch((error) => {
+        if (request.reason || request.signal.aborted || isAbortError(error)) throw error;
+        return { error: 'Refresh failed' };
+      })) as {
+        error?: string;
+        message?: string;
+      };
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Authentication failed. Please sign in again.');
+      }
+      if (response.status === 503) {
+        throw new Error(
+          'DNS collector is temporarily unavailable. The service may be restarting — try again in 30 seconds.'
+        );
+      }
+      if (response.status === 429) {
+        throw new Error(
+          errorData.message || 'Collection rate limit reached. Wait 60 seconds before retrying.'
+        );
+      }
+      throw new Error(
+        errorData.message || errorData.error || `Collection failed (${response.status})`
+      );
+    }
+  } catch (error) {
+    if (request.reason) throw new DomainCollectionAbortError(request.reason);
+    if (request.signal.aborted || isAbortError(error)) {
+      throw new DomainCollectionAbortError('aborted');
+    }
+    throw error;
+  }
+}
+
+function monotonicNow(): number | null {
+  if (typeof performance === 'undefined') return null;
+  const now = performance.now();
+  return Number.isFinite(now) ? now : null;
+}
+
+export async function fetchDomainData(domain: string, signal?: AbortSignal): Promise<DomainData> {
+  const snapshotStartedAt = monotonicNow();
+  const snapshotResponse = await fetch(`/api/domain/${domain}/latest`, {
+    credentials: 'include',
+    signal,
+  });
+  throwIfAborted(signal);
+  const snapshotReceivedAt = monotonicNow();
 
   if (!snapshotResponse.ok) {
     if (snapshotResponse.status === 404) {
-      return { snapshot: null, observations: [] };
+      return { snapshot: null, observations: [], evidenceClock: null };
     }
     throw new Error(
       `Failed to load domain data: ${snapshotResponse.status} ${snapshotResponse.statusText}`
@@ -99,20 +252,47 @@ async function fetchDomainData(domain: string): Promise<DomainData> {
   }
 
   const snap = (await snapshotResponse.json()) as { id: string } & Snapshot;
+  throwIfAborted(signal);
+  const snapshotClock =
+    snapshotStartedAt !== null && snapshotReceivedAt !== null
+      ? createEvidenceClock(
+          snapshotResponse.headers.get('Date'),
+          snapshotStartedAt,
+          snapshotReceivedAt
+        )
+      : null;
 
   let observations: Observation[] = [];
+  let evidenceClock: EvidenceClock | null = snapshotClock;
   try {
+    const observationStartedAt = monotonicNow();
     const obsResponse = await fetch(`/api/snapshot/${snap.id}/observations`, {
       credentials: 'include',
+      signal,
     });
+    throwIfAborted(signal);
+    const observationReceivedAt = monotonicNow();
     if (obsResponse.ok) {
       observations = (await obsResponse.json()) as Observation[];
+      evidenceClock =
+        observationStartedAt !== null && observationReceivedAt !== null
+          ? createEvidenceClock(
+              obsResponse.headers.get('Date'),
+              observationStartedAt,
+              observationReceivedAt
+            )
+          : null;
+    } else {
+      evidenceClock = null;
     }
-  } catch {
-    // Observation fetch failed but we still have snapshot - not critical
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    // Observation fetch failed but we still have snapshot - not critical.
+    // Without a response-calibrated clock any displayed TTL must be UNKNOWN.
+    evidenceClock = null;
   }
 
-  return { snapshot: snap, observations };
+  return { snapshot: snap, observations, evidenceClock };
 }
 
 function Domain360Page() {
@@ -130,7 +310,7 @@ function Domain360Page() {
     error,
   } = useQuery({
     queryKey: ['domain-data', domain],
-    queryFn: () => fetchDomainData(domain),
+    queryFn: ({ signal }) => fetchDomainData(domain, signal),
     enabled: !!domain,
   });
 
@@ -147,39 +327,30 @@ function Domain360Page() {
       }
     : undefined;
 
-  const refreshMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/collect/domain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, zoneManagement: 'unmanaged', addToPortfolio }),
-        credentials: 'include',
-      });
+  const refreshRequestRef = useRef<DomainCollectionRequest | null>(null);
+  const refreshSequenceRef = useRef(0);
+  const mountedRef = useRef(true);
 
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({ error: 'Refresh failed' }))) as {
-          error?: string;
-          message?: string;
-        };
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('Authentication failed. Please sign in again.');
-        }
-        if (response.status === 503) {
-          throw new Error(
-            'DNS collector is temporarily unavailable. The service may be restarting — try again in 30 seconds.'
-          );
-        }
-        if (response.status === 429) {
-          throw new Error(
-            errorData.message || 'Collection rate limit reached. Wait 60 seconds before retrying.'
-          );
-        }
-        throw new Error(
-          errorData.message || errorData.error || `Collection failed (${response.status})`
-        );
+  const abortActiveRefresh = useCallback((reason: ManualAbortReason) => {
+    const request = refreshRequestRef.current;
+    if (!request) return;
+    request.abort(reason);
+    request.dispose();
+    if (refreshRequestRef.current === request) refreshRequestRef.current = null;
+  }, []);
+
+  type RefreshVariables = { id: number; request: DomainCollectionRequest };
+  const refreshMutation = useMutation<void, Error, RefreshVariables>({
+    mutationFn: async ({ request }) => {
+      try {
+        await collectDomain(domain, addToPortfolio, request);
+      } finally {
+        request.dispose();
+        if (refreshRequestRef.current === request) refreshRequestRef.current = null;
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      if (!mountedRef.current || variables.id !== refreshSequenceRef.current) return;
       if (addToPortfolio && typeof window !== 'undefined') {
         const url = new URL(window.location.href);
         url.searchParams.delete('addToPortfolio');
@@ -191,7 +362,13 @@ function Domain360Page() {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     },
-    onError: (err) => {
+    onError: (err, variables) => {
+      if (!mountedRef.current || variables.id !== refreshSequenceRef.current) return;
+      if (err instanceof DomainCollectionAbortError) {
+        if (err.reason === 'superseded' || err.reason === 'unmount') return;
+        setRefreshError(err.message);
+        return;
+      }
       setRefreshError(err instanceof Error ? err.message : 'Refresh failed');
     },
   });
@@ -252,6 +429,24 @@ function Domain360Page() {
     }
   };
 
+  const startRefresh = useCallback(() => {
+    abortActiveRefresh('superseded');
+    const requestId = refreshSequenceRef.current + 1;
+    refreshSequenceRef.current = requestId;
+    const request = createCollectionRequest();
+    refreshRequestRef.current = request;
+    setRefreshError(null);
+    refreshMutation.mutate({ id: requestId, request });
+  }, [abortActiveRefresh, refreshMutation.mutate]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortActiveRefresh('unmount');
+    };
+  }, [abortActiveRefresh]);
+
   // Auto-trigger collection on first load when no snapshot exists
   useEffect(() => {
     const shouldAutoCollect =
@@ -261,10 +456,7 @@ function Domain360Page() {
       !refreshMutation.isPending &&
       !refreshMutation.isSuccess &&
       !refreshMutation.isError;
-    if (shouldAutoCollect) {
-      setRefreshError(null);
-      refreshMutation.mutate();
-    }
+    if (shouldAutoCollect) startRefresh();
   }, [
     isLoading,
     snapshot,
@@ -272,13 +464,12 @@ function Domain360Page() {
     refreshMutation.isPending,
     refreshMutation.isSuccess,
     refreshMutation.isError,
-    refreshMutation.mutate,
+    startRefresh,
   ]);
 
   const handleRefresh = useCallback(() => {
-    setRefreshError(null);
-    refreshMutation.mutate();
-  }, [refreshMutation.mutate]);
+    startRefresh();
+  }, [startRefresh]);
 
   return (
     <div className="domain-360" data-loaded={!isLoading || undefined}>
@@ -414,7 +605,13 @@ function Domain360Page() {
           hidden={activeTab !== 'dns'}
           data-testid="domain-tabpanel-dns"
         >
-          {activeTab === 'dns' && <DnsTab observations={observations} />}
+          {activeTab === 'dns' && (
+            <DnsTab
+              observations={observations}
+              snapshotMetadata={snapshot?.metadata}
+              evidenceClock={domainData?.evidenceClock}
+            />
+          )}
         </div>
 
         <div
@@ -586,7 +783,15 @@ function OverviewTab({
   );
 }
 
-function DnsTab({ observations }: { observations: Observation[] }) {
+function DnsTab({
+  observations,
+  snapshotMetadata,
+  evidenceClock,
+}: {
+  observations: Observation[];
+  snapshotMetadata?: Snapshot['metadata'];
+  evidenceClock?: EvidenceClock | null;
+}) {
   if (observations.length === 0) {
     return (
       <div className="text-center py-12">
@@ -605,7 +810,11 @@ function DnsTab({ observations }: { observations: Observation[] }) {
           View DNS evidence in Parsed, Raw, or Dig-style formats.
         </p>
       </div>
-      <DNSViews observations={observations} />
+      <DNSViews
+        observations={observations}
+        snapshotMetadata={snapshotMetadata}
+        evidenceClock={evidenceClock}
+      />
     </div>
   );
 }

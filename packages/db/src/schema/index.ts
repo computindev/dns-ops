@@ -200,6 +200,8 @@ export const snapshots = pgTable(
 
     // Collection and delegation metadata (Bead 12, dns-ops-1j4.5.5, dns-ops-1j4.6.4)
     metadata: jsonb('metadata').$type<{
+      // Query timestamps are response-received values, not query-start values.
+      dnsQueryTimestampBasis?: 'response-received-v1';
       // Vantage identifiers (IPs/hostnames) for detailed tracking
       vantageIdentifiers?: string[];
       // Delegation data

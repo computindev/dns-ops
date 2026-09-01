@@ -15,10 +15,23 @@ import {
   observationsToDigFormat,
   observationsToRecordSets,
 } from '@dns-ops/parsing';
-import { type KeyboardEvent, useId, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId, useMemo, useState } from 'react';
+import {
+  describeEstimate,
+  type EvidenceClock,
+  estimateLiveAt,
+  formatLiveAt,
+  indexObservationsById,
+  readEvidenceClock,
+  type TtlEstimate,
+  type TtlEvidenceMetadata,
+  toDateTimeAttribute,
+} from '../lib/dns-ttl.js';
 
 interface DNSViewsProps {
   observations: Observation[];
+  snapshotMetadata?: TtlEvidenceMetadata;
+  evidenceClock?: EvidenceClock | null;
 }
 
 type ViewMode = 'parsed' | 'raw' | 'dig';
@@ -29,7 +42,7 @@ const VIEW_MODES: { id: ViewMode; label: string; description: string }[] = [
   { id: 'dig', label: 'Dig', description: 'CLI-style output' },
 ];
 
-export function DNSViews({ observations }: DNSViewsProps) {
+export function DNSViews({ observations, snapshotMetadata, evidenceClock }: DNSViewsProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('parsed');
   const viewIdPrefix = useId();
 
@@ -93,7 +106,13 @@ export function DNSViews({ observations }: DNSViewsProps) {
           aria-labelledby={getTabId('parsed')}
           hidden={viewMode !== 'parsed'}
         >
-          {viewMode === 'parsed' && <ParsedView observations={observations} />}
+          {viewMode === 'parsed' && (
+            <ParsedView
+              observations={observations}
+              snapshotMetadata={snapshotMetadata}
+              evidenceClock={evidenceClock}
+            />
+          )}
         </div>
         <div
           role="tabpanel"
@@ -160,9 +179,39 @@ function ViewModeSelector({
 
 // ==================== PARSED VIEW ====================
 
-function ParsedView({ observations }: { observations: Observation[] }) {
+function getMonotonicNow(): number | null {
+  if (typeof performance === 'undefined') return null;
+  const now = performance.now();
+  return Number.isFinite(now) ? now : null;
+}
+
+function ParsedView({
+  observations,
+  snapshotMetadata,
+  evidenceClock,
+}: {
+  observations: Observation[];
+  snapshotMetadata?: TtlEvidenceMetadata;
+  evidenceClock?: EvidenceClock | null;
+}) {
   const recordSets = observationsToRecordSets(observations);
   const grouped = groupRecordsByType(recordSets);
+  const observationIndex = useMemo(() => indexObservationsById(observations), [observations]);
+
+  // One shared ticker drives every row's countdown without trusting the
+  // browser wall clock or accumulating interval drift.
+  const [monotonicNow, setMonotonicNow] = useState<number | null>(() => getMonotonicNow());
+  useEffect(() => {
+    if (typeof performance === 'undefined') return;
+    const timer = setInterval(() => {
+      const now = getMonotonicNow();
+      if (now !== null) setMonotonicNow(now);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const now =
+    evidenceClock && monotonicNow !== null ? readEvidenceClock(evidenceClock, monotonicNow) : null;
 
   if (recordSets.length === 0) {
     return (
@@ -185,6 +234,9 @@ function ParsedView({ observations }: { observations: Observation[] }) {
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
+              <caption className="sr-only">
+                {type} DNS records with remaining TTL and estimated cache expiry
+              </caption>
               <thead className="bg-gray-50">
                 <tr>
                   <th
@@ -198,6 +250,18 @@ function ParsedView({ observations }: { observations: Observation[] }) {
                     className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
                   >
                     TTL
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
+                  >
+                    Remaining TTL
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
+                  >
+                    Estimated live at
                   </th>
                   <th
                     scope="col"
@@ -221,11 +285,23 @@ function ParsedView({ observations }: { observations: Observation[] }) {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {records.map((record) => (
-                  <tr key={`${record.name}-${record.type}-${record.values.join(',')}`}>
+                  <tr
+                    key={`${record.name}-${record.type}-${record.values.join(',')}`}
+                    data-record-name={record.name}
+                    data-record-type={record.type}
+                  >
                     <td className="px-4 py-2 text-sm font-mono text-gray-900">{record.name}</td>
                     <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
                       {record.ttl !== null && record.ttl !== undefined ? `${record.ttl}s` : '—'}
                     </td>
+                    <TtlEstimateCells
+                      estimate={estimateLiveAt(
+                        record,
+                        observationIndex,
+                        now ?? Number.NaN,
+                        snapshotMetadata
+                      )}
+                    />
                     <td className="px-4 py-2 text-sm">
                       <div className="space-y-1">
                         {record.values.map((value) => {
@@ -271,6 +347,43 @@ function ParsedView({ observations }: { observations: Observation[] }) {
 }
 
 // ==================== RAW VIEW ====================
+
+/**
+ * Remaining TTL + estimated live-at cells for one parsed row.
+ *
+ * "Estimated live at" is the expiry of the latest observed public-recursive
+ * cache entry — not Internet-wide propagation. Missing, invalid, future-dated
+ * or expired evidence renders a visible UNKNOWN for both cells.
+ */
+function TtlEstimateCells({ estimate }: { estimate: TtlEstimate }) {
+  if (estimate.state === 'live') {
+    return (
+      <>
+        <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
+          <span title={describeEstimate(estimate)}>
+            {estimate.remainingSeconds}s<span className="sr-only"> remaining</span>
+          </span>
+        </td>
+        <td className="px-4 py-2 text-sm text-gray-600 tabular-nums">
+          <time dateTime={toDateTimeAttribute(estimate.deadline)}>
+            {formatLiveAt(estimate.deadline)}
+          </time>
+        </td>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <td className="px-4 py-2 text-sm text-gray-400" data-state="unknown">
+        <span title={describeEstimate(estimate)}>UNKNOWN</span>
+      </td>
+      <td className="px-4 py-2 text-sm text-gray-400" data-state="unknown">
+        <span title={describeEstimate(estimate)}>UNKNOWN</span>
+      </td>
+    </>
+  );
+}
 
 function RawView({ observations }: { observations: Observation[] }) {
   return (
