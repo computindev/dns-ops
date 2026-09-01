@@ -152,6 +152,56 @@ describe('validateEnv', () => {
     expect(result.errors[0].error).toContain('16 characters');
   });
 
+  it('rejects malformed API_PRINCIPALS_JSON (#66)', () => {
+    const result = validateEnv({
+      NODE_ENV: 'development',
+      DATABASE_URL: 'postgresql://localhost:5432/test',
+      API_PRINCIPALS_JSON: 'not-json',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].name).toBe('API_PRINCIPALS_JSON');
+  });
+
+  it('accepts a valid API_PRINCIPALS_JSON (#66)', () => {
+    const result = validateEnv({
+      NODE_ENV: 'development',
+      DATABASE_URL: 'postgresql://localhost:5432/test',
+      API_PRINCIPALS_JSON: JSON.stringify([
+        {
+          principalId: 'p1',
+          tokenSha256: 'a'.repeat(64),
+          tenantId: '550e8400-e29b-41d4-a716-446655440000',
+          actorId: 'actor-1',
+          enabled: true,
+        },
+      ]),
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects ENABLE_LEGACY_API_KEY_AUTH values other than literal true/false (#66)', () => {
+    for (const flagValue of ['True', 'TRUE', '1', 'yes', 'on']) {
+      const result = validateEnv({
+        NODE_ENV: 'development',
+        DATABASE_URL: 'postgresql://localhost:5432/test',
+        ENABLE_LEGACY_API_KEY_AUTH: flagValue,
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].name).toBe('ENABLE_LEGACY_API_KEY_AUTH');
+    }
+
+    for (const flagValue of ['true', 'false']) {
+      const result = validateEnv({
+        NODE_ENV: 'development',
+        DATABASE_URL: 'postgresql://localhost:5432/test',
+        ENABLE_LEGACY_API_KEY_AUTH: flagValue,
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
   it('validates COLLECTOR_URL format when provided', () => {
     const env = {
       NODE_ENV: 'development',

@@ -11,10 +11,15 @@ import { authMiddleware, requireAuthMiddleware } from '../middleware/auth.js';
 import type { Env } from '../types.js';
 import signupRoutes from './signup.js';
 
-// Mock getTenantUUID to return deterministic UUIDs
-vi.mock('@dns-ops/contracts', () => ({
-  getTenantUUID: vi.fn().mockImplementation(async (id: string) => `uuid-for-${id}`),
-}));
+// Mock getTenantUUID to return deterministic UUIDs; keep the real principal
+// authentication exports from '@dns-ops/contracts'.
+vi.mock('@dns-ops/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dns-ops/contracts')>();
+  return {
+    ...actual,
+    getTenantUUID: vi.fn().mockImplementation(async (id: string) => `uuid-for-${id}`),
+  };
+});
 
 type DrizzleCondition = { queryChunks?: unknown[] };
 
@@ -177,33 +182,42 @@ describe('Auth E2E — full lifecycle', () => {
     expect(res.status).toBe(401);
   });
 
-  it('API key auth populates context and allows protected access', async () => {
-    process.env.API_KEY_SECRET = 'super-secret';
+  it('API principal token populates context and allows protected access (#66)', async () => {
+    process.env.API_PRINCIPALS_JSON = JSON.stringify([
+      {
+        principalId: 'e2e-principal-1',
+        tokenSha256: '93bee9e2d26a376b34b532da58c126a6065ba557751b85ac183f036859ff7197',
+        tenantId: '550e8400-e29b-41d4-a716-446655440000',
+        actorId: 'my-actor',
+        enabled: true,
+      },
+    ]);
 
     const res = await app.request('/api/protected', {
       headers: {
-        'X-API-Key': 'my-tenant:my-actor:super-secret',
+        'X-API-Key': 'web-auth-test-token-0123456789abcdef0123456789',
       },
     });
 
-    delete process.env.API_KEY_SECRET;
+    delete process.env.API_PRINCIPALS_JSON;
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.tenantId).toBe('uuid-for-my-tenant');
+    // Stored canonical UUID, not a caller-asserted tenant.
+    expect(body.tenantId).toBe('550e8400-e29b-41d4-a716-446655440000');
     expect(body.actorId).toBe('my-actor');
   });
 
-  it('API key with wrong secret is rejected', async () => {
-    process.env.API_KEY_SECRET = 'super-secret';
+  it('unknown API token is rejected (#66)', async () => {
+    process.env.API_PRINCIPALS_JSON = JSON.stringify([]);
 
     const res = await app.request('/api/protected', {
       headers: {
-        'X-API-Key': 'my-tenant:my-actor:wrong-secret',
+        'X-API-Key': 'unknown-token-0123456789abcdef0123456789abcdef',
       },
     });
 
-    delete process.env.API_KEY_SECRET;
+    delete process.env.API_PRINCIPALS_JSON;
 
     expect(res.status).toBe(401);
   });

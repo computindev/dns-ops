@@ -4,66 +4,81 @@
  * Provides DNSKEY and DS query support using dns-packet library.
  * Node.js native dns module doesn't support these record types.
  */
+import dgram from 'node:dgram';
+import net from 'node:net';
 import { DNS_RCODE } from '@dns-ops/contracts';
 import * as dnsPacket from 'dns-packet';
-/**
- * DNS record types supported by dns-packet
- */
-const DNS_TYPES = {
-    DNSKEY: 48,
-    DS: 43,
-    RRSIG: 46,
-    NSEC: 47,
-    NSEC3: 50,
-    NSEC3PARAM: 51,
-    TLSA: 52,
-    CDS: 59,
-    CDNSKEY: 60,
-};
 /**
  * Default DNS servers for recursive queries
  */
 const DEFAULT_DNS_SERVERS = ['8.8.8.8', '1.1.1.1'];
 /**
- * Perform a DNS query using raw packet exchange
- * This allows querying for record types not supported by Node.js dns module
+ * dns-packet decodes the response code as a string name ('NOERROR', 'NXDOMAIN',
+ * ...). Map to the numeric DNS_RCODE values the rest of the codebase uses.
  */
-export async function queryWithDnsPacket(query, dnsServer = DEFAULT_DNS_SERVERS[0]) {
-    const packetOut = dnsPacket.encode({
+const RCODE_NAME_TO_NUMBER = {
+    NOERROR: DNS_RCODE.NOERROR,
+    FORMERR: DNS_RCODE.FORMERR,
+    SERVFAIL: DNS_RCODE.SERVFAIL,
+    NXDOMAIN: DNS_RCODE.NXDOMAIN,
+    NOTIMP: DNS_RCODE.NOTIMP,
+    REFUSED: DNS_RCODE.REFUSED,
+};
+/** Encode a DNS query without performing I/O so recursion policy is testable. */
+export function encodeDnsQuery(query, options = {}) {
+    const { recursionDesired = true } = options;
+    // dns-packet types.toType() requires string RR names (calls toUpperCase).
+    // Numeric codes (e.g. DNSKEY=48, DS=43) throw at encode time.
+    return dnsPacket.encode({
         type: 'query',
         id: Math.floor(Math.random() * 0xffff),
-        flags: dnsPacket.RECURSION_DESIRED,
+        flags: recursionDesired ? dnsPacket.RECURSION_DESIRED : 0,
         questions: [
             {
-                type: DNS_TYPES[query.type] || query.type,
+                type: query.type,
                 name: query.name,
                 class: 'IN',
             },
         ],
     });
-    // Send UDP query
-    const response = await sendDnsQuery(packetOut, dnsServer, 53);
-    // Parse response
+}
+export async function queryWithDnsPacket(query, dnsServer = DEFAULT_DNS_SERVERS[0], options = {}) {
+    const { transport = sendDnsQuery, recursionDesired } = options;
+    const response = await transport(encodeDnsQuery(query, { recursionDesired }), dnsServer, 53);
+    return decodeDnsResponse(response, query.type);
+}
+/**
+ * Decode a raw DNS wire-format response into typed sections.
+ *
+ * Pure (no I/O) so it can be unit-tested with dns-packet-encoded fixtures.
+ * Answer records carry the real TTL from the wire and are formatted per the
+ * requested queryType to match the string shapes downstream consumers expect
+ * (e.g. TXT -> joined string for SPF/DMARC matching). Authority/additional
+ * records preserve their real TTL and are formatted generically since their
+ * record types vary (e.g. SOA in a negative-response authority section).
+ */
+export function decodeDnsResponse(response, queryType) {
     const packetIn = dnsPacket.decode(response);
     const flags = packetIn.flags || 0;
-    // Extract answers
-    const answers = (packetIn.answers || []).map((r) => ({
+    const answers = (packetIn.answers || []).map((r) => {
+        const type = String(r.type ?? queryType);
+        return {
+            name: String(r.name || ''),
+            type,
+            ttl: Number(r.ttl || 0),
+            data: formatRecordData(r.data, type),
+        };
+    });
+    const mapOther = (records) => (records || []).map((r) => ({
         name: String(r.name || ''),
-        type: query.type,
+        type: String(r.type ?? queryType),
         ttl: Number(r.ttl || 0),
-        data: formatRecordData(r),
-    }));
-    // Extract authority records
-    const authority = (packetIn.authority || []).map((r) => ({
-        name: String(r.name || ''),
-        type: query.type,
-        ttl: Number(r.ttl || 0),
-        data: formatRecordData(r),
+        data: bufferToString(r.data),
     }));
     return {
         answers,
-        authority,
-        additional: [],
+        authority: mapOther(packetIn.authorities),
+        additional: mapOther(packetIn.additionals),
         flags: {
             aa: !!(flags & dnsPacket.AUTHORITATIVE_ANSWER),
             tc: !!(flags & dnsPacket.TRUNCATED_RESPONSE),
@@ -72,33 +87,137 @@ export async function queryWithDnsPacket(query, dnsServer = DEFAULT_DNS_SERVERS[
             ad: !!(flags & dnsPacket.AUTHENTICATED_DATA),
             cd: !!(flags & dnsPacket.CHECKING_DISABLED),
         },
-        responseCode: packetIn.rcode || 0,
+        responseCode: typeof packetIn.rcode === 'number'
+            ? packetIn.rcode
+            : (RCODE_NAME_TO_NUMBER[packetIn.rcode ?? 'NOERROR'] ?? DNS_RCODE.SERVFAIL),
     };
 }
 /**
- * Format record data based on type
+ * Stringify a dns-packet data value that has no type-specific formatter.
  */
-function formatRecordData(record) {
-    const data = record.data;
-    // DNSKEY record - data is typically a buffer or string
-    if (record.type === DNS_TYPES.DNSKEY || String(record.type) === '48') {
-        if (typeof data === 'string')
-            return data;
-        if (Buffer.isBuffer(data))
-            return data.toString('base64');
-        return JSON.stringify(data);
+function bufferToString(value) {
+    if (typeof value === 'string')
+        return value;
+    if (Buffer.isBuffer(value))
+        return value.toString('utf8');
+    return JSON.stringify(value);
+}
+/**
+ * Format record data based on the requested query type.
+ */
+function formatRecordData(data, queryType) {
+    switch (queryType) {
+        case 'MX':
+            return formatMx(data);
+        case 'TXT':
+            return formatTxt(data);
+        case 'SOA':
+            return formatSoa(data);
+        case 'CAA':
+            return formatCaa(data);
+        case 'DNSKEY':
+            return formatDnskey(data);
+        case 'DS':
+            return formatDs(data);
+        case 'NS':
+        case 'CNAME':
+        case 'PTR':
+            return bufferToString(data);
+        default:
+            return bufferToString(data);
     }
-    // DS record
-    if (record.type === DNS_TYPES.DS || String(record.type) === '43') {
-        if (typeof data === 'string')
-            return data;
-        if (Buffer.isBuffer(data))
-            return data.toString('hex');
-        return JSON.stringify(data);
+}
+/**
+ * TXT: dns-packet decodes data as an array of Buffer chunks (one per
+ * <character-string>). Concatenate them to match Node's resolveTxt behaviour
+ * of joining a record's strings into a single value.
+ */
+function formatTxt(data) {
+    if (Array.isArray(data)) {
+        return data.map((chunk) => bufferToString(chunk)).join('');
     }
-    // Generic record - stringify
+    return bufferToString(data);
+}
+/**
+ * MX: dns-packet decodes data as { exchange, preference } (RFC 1035 PREFERENCE).
+ * Node names the same field `priority`; accept either for safety.
+ */
+function formatMx(data) {
+    if (data && typeof data === 'object') {
+        const mx = data;
+        const pref = mx.preference ?? mx.priority ?? 0;
+        return `${pref} ${mx.exchange ?? ''}`;
+    }
+    return bufferToString(data);
+}
+/** SOA: dns-packet decodes data as the seven RDATA fields. */
+function formatSoa(data) {
+    if (data && typeof data === 'object') {
+        const soa = data;
+        return `${soa.mname ?? ''} ${soa.rname ?? ''} ${soa.serial ?? 0} ${soa.refresh ?? 0} ${soa.retry ?? 0} ${soa.expire ?? 0} ${soa.minimum ?? 0}`;
+    }
+    return bufferToString(data);
+}
+/** CAA: dns-packet decodes data as { critical/flag, tag, value }. */
+function formatCaa(data) {
+    if (data && typeof data === 'object') {
+        const caa = data;
+        const critical = caa.critical ?? caa.flag ?? 0;
+        const tag = caa.issue ?? caa.tag ?? '';
+        const value = caa.value ?? '';
+        return `${critical} ${tag} "${value}"`;
+    }
+    return bufferToString(data);
+}
+/**
+ * DNSKEY presentation: "flags protocol algorithm base64(key)".
+ * dns-packet decodes RDATA as { flags, algorithm, key: Buffer } (protocol is
+ * always 3 for DNSSEC and is not surfaced on the decoded object).
+ */
+function formatDnskey(data) {
     if (typeof data === 'string')
         return data;
+    if (Buffer.isBuffer(data))
+        return data.toString('base64');
+    if (data && typeof data === 'object') {
+        const dnskey = data;
+        const flags = dnskey.flags ?? 0;
+        const protocol = dnskey.protocol ?? 3;
+        const algorithm = dnskey.algorithm ?? 0;
+        let key = '';
+        if (Buffer.isBuffer(dnskey.key)) {
+            key = dnskey.key.toString('base64');
+        }
+        else if (typeof dnskey.key === 'string') {
+            key = dnskey.key;
+        }
+        return `${flags} ${protocol} ${algorithm} ${key}`;
+    }
+    return JSON.stringify(data);
+}
+/**
+ * DS presentation: "keyTag algorithm digestType hex(digest)".
+ * dns-packet decodes RDATA as { keyTag, algorithm, digestType, digest: Buffer }.
+ */
+function formatDs(data) {
+    if (typeof data === 'string')
+        return data;
+    if (Buffer.isBuffer(data))
+        return data.toString('hex');
+    if (data && typeof data === 'object') {
+        const ds = data;
+        const keyTag = ds.keyTag ?? 0;
+        const algorithm = ds.algorithm ?? 0;
+        const digestType = ds.digestType ?? 0;
+        let digest = '';
+        if (Buffer.isBuffer(ds.digest)) {
+            digest = ds.digest.toString('hex');
+        }
+        else if (typeof ds.digest === 'string') {
+            digest = ds.digest;
+        }
+        return `${keyTag} ${algorithm} ${digestType} ${digest}`;
+    }
     return JSON.stringify(data);
 }
 /**
@@ -107,7 +226,6 @@ function formatRecordData(record) {
 async function sendDnsQuery(packet, server, port, options = {}) {
     const { timeoutMs = 5000, fallbackToTcp = true } = options;
     return new Promise((resolve, reject) => {
-        const dgram = require('node:dgram');
         const client = dgram.createSocket('udp4');
         const timeout = setTimeout(() => {
             client.close();
@@ -143,7 +261,6 @@ async function sendDnsQuery(packet, server, port, options = {}) {
  */
 async function sendDnsQueryTcp(packet, server, port, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
-        const net = require('node:net');
         const client = new net.Socket();
         const timeout = setTimeout(() => {
             client.destroy();
@@ -164,7 +281,7 @@ async function sendDnsQueryTcp(packet, server, port, timeoutMs = 5000) {
                 return;
             }
             const responseLength = data.readUInt16BE(0);
-            const dnsResponse = data.slice(2);
+            const dnsResponse = data.subarray(2);
             if (dnsResponse.length < responseLength) {
                 // Handle case where data comes in multiple chunks
                 // For simplicity, return what we have - full response handling would need buffering

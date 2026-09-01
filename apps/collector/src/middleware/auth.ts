@@ -12,7 +12,13 @@
  * Note: tenantId is normalized to UUID format for database compatibility.
  */
 
-import { getTenantUUID } from '@dns-ops/contracts';
+import {
+  type ApiPrincipal,
+  authenticateApiKey,
+  getTenantUUID,
+  isLegacyApiKeyAuthEnabled,
+  parseApiPrincipals,
+} from '@dns-ops/contracts';
 import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types.js';
 import { getCollectorLogger } from './error-tracking.js';
@@ -74,50 +80,45 @@ function extractInternalSecret(
 /**
  * Extract auth from API key header
  *
- * Format: X-API-Key: tenantId:actorId:secret
+ * Bare opaque tokens authenticate against API_PRINCIPALS_JSON (SHA-256 hash
+ * match); tenant/actor come from the stored principal only (#66). The legacy
+ * tenantId:actorId:secret format is gated behind ENABLE_LEGACY_API_KEY_AUTH
+ * (literal "true", default off everywhere) for one release.
  */
-function extractApiKey(
+async function extractApiKey(
   c: Parameters<Parameters<typeof createMiddleware<Env>>[0]>[0]
-): AuthContext | null {
+): Promise<AuthContext | null> {
   const apiKey = c.req.header('X-API-Key');
 
   if (!apiKey) {
     return null;
   }
 
-  // Simple format: tenantId:actorId:secret
-  const parts = apiKey.split(':');
-  if (parts.length < 3) {
+  // Invalid principal configuration fails closed — never falls back to legacy.
+  let principals: ApiPrincipal[];
+  try {
+    principals = parseApiPrincipals(process.env.API_PRINCIPALS_JSON);
+  } catch {
+    logger.warn('Rejected API key auth because API principal configuration is invalid', {
+      method: c.req.method,
+      path: c.req.path,
+    });
     return null;
   }
 
-  const [tenantId, actorId, secret] = parts;
+  const auth = await authenticateApiKey(apiKey, principals, {
+    enabled: isLegacyApiKeyAuthEnabled(process.env.ENABLE_LEGACY_API_KEY_AUTH),
+    secret: getRuntimeSecret('API_KEY_SECRET'),
+  });
 
-  const expectedSecret = getRuntimeSecret('API_KEY_SECRET');
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  if (!expectedSecret) {
-    if (isProduction) {
-      logger.warn('Rejected API key auth because API_KEY_SECRET is not configured', {
-        tenantId,
-        method: c.req.method,
-        path: c.req.path,
-      });
-      return null;
-    }
-  } else if (secret !== expectedSecret) {
-    logger.warn('Invalid API key attempt', { tenantId, method: c.req.method, path: c.req.path });
-    return null;
-  }
-
-  // Validate tenantId and actorId format
-  if (!isValidIdentifier(tenantId) || !isValidIdentifier(actorId)) {
+  if (!auth) {
+    logger.warn('Invalid API key attempt', { method: c.req.method, path: c.req.path });
     return null;
   }
 
   return {
-    tenantId,
-    actorId,
+    tenantId: auth.tenantId,
+    actorId: auth.actorId,
   };
 }
 
@@ -148,17 +149,6 @@ function extractDevBypass(
 }
 
 /**
- * Validate identifier format
- */
-function isValidIdentifier(id: string): boolean {
-  // Allow UUIDs or alphanumeric with hyphens/underscores
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const simpleRegex = /^[a-zA-Z0-9_-]{1,64}$/;
-
-  return uuidRegex.test(id) || simpleRegex.test(id);
-}
-
-/**
  * Service auth middleware - populates auth context from various sources
  *
  * Priority:
@@ -169,7 +159,7 @@ function isValidIdentifier(id: string): boolean {
  * Note: tenantId is normalized to UUID format for database compatibility.
  */
 export const serviceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  const authContext = extractInternalSecret(c) || extractApiKey(c) || extractDevBypass(c);
+  const authContext = extractInternalSecret(c) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
 
   if (authContext) {
     // Normalize tenantId to UUID format for database compatibility
@@ -187,7 +177,7 @@ export const serviceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
  * Note: tenantId is normalized to UUID format for database compatibility.
  */
 export const requireServiceAuthMiddleware = createMiddleware<Env>(async (c, next) => {
-  const authContext = extractInternalSecret(c) || extractApiKey(c) || extractDevBypass(c);
+  const authContext = extractInternalSecret(c) ?? (await extractApiKey(c)) ?? extractDevBypass(c);
 
   if (!authContext) {
     return c.json(

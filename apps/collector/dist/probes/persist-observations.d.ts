@@ -4,14 +4,14 @@
  * Helper module for persisting probe results to database.
  * Used by probe routes after collecting probe results.
  */
-import { ProbeObservationRepository } from '@dns-ops/db';
+import { type ProbeData, ProbeObservationRepository } from '@dns-ops/db';
 import type { Env } from '../types.js';
 import type { MTASTSProbeResult } from './mta-sts.js';
 import type { SMTPProbeResult } from './smtp-starttls.js';
 /**
  * Probe observation status types
  */
-export type ProbeStatus = 'success' | 'timeout' | 'refused' | 'ssrf_blocked' | 'allowlist_denied' | 'error';
+export type ProbeStatus = 'success' | 'timeout' | 'refused' | 'ssrf_blocked' | 'allowlist_denied' | 'parse_error' | 'error';
 /**
  * Map SMTP probe result to probe observation format
  */
@@ -50,14 +50,14 @@ export declare function mtastsResultToObservation(snapshotId: string, hostname: 
  */
 export declare function persistProbeObservations(db: Env['Variables']['db'], snapshotId: string, _tenantId: string, observations: Array<{
     snapshotId: string;
-    probeType: 'smtp_starttls' | 'mta_sts';
+    probeType: 'smtp_starttls' | 'mta_sts' | 'tls_cert' | 'http' | 'rdap';
     status: string;
     hostname: string;
     port: number;
     success: boolean;
     errorMessage: string | null;
     responseTimeMs: number;
-    probeData: Record<string, unknown> | null;
+    probeData: ProbeData | null;
 }>): Promise<number>;
 /**
  * Get probe observations for a snapshot

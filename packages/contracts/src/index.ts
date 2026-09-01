@@ -6,6 +6,7 @@
 // See docs/architecture/runtime-topology.md for how these contracts
 // are used across web and collector runtimes.
 
+export * from './api-principal.js';
 export * from './dns.js';
 export * from './domain-profile.js';
 export * from './enums.js';

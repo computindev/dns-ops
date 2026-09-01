@@ -199,10 +199,15 @@ Authenticated collector API base URL: `http://localhost:3001/api`
 
 All protected endpoints require one of:
 - `X-Internal-Secret` header (service-to-service)
-- `X-API-Key` header (API key auth)
+- `X-API-Key` header — bare opaque token matched by SHA-256 hash against
+  `API_PRINCIPALS_JSON`; tenant/actor come from the stored principal (#66)
 - Session cookie (web UI)
 
-In development mode, `X-Dev-Tenant-Id` and `X-Dev-Actor-Id` headers can bypass auth.
+The legacy `tenantId:actorId:secret` `X-API-Key` format is accepted only when
+`ENABLE_LEGACY_API_KEY_AUTH=true` (literal, one release, default off) — see
+`docs/security/api-principal-migration.md`.
+
+In development mode, `X-Dev-Tenant` and `X-Dev-Actor` headers can bypass auth.
 
 ---
 

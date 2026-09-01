@@ -1,16 +1,4 @@
-/**
- * SSRF Guard - Bead 10
- *
- * Prevents Server-Side Request Forgery by blocking:
- * - Private/internal address space (RFC 1918, RFC 4193)
- * - Loopback addresses
- * - Link-local addresses
- * - Multicast addresses
- * - Reserved addresses
- * - IPv4-mapped IPv6 addresses that embed private/loopback IPv4
- *
- * Security review: docs/security/probe-sandbox-review.md
- */
+import { isIP } from 'node:net';
 // IPv4 private ranges (RFC 1918 + others)
 const BLOCKED_IPV4_RANGES = [
     { start: 0x00000000, end: 0x00ffffff, name: '0.0.0.0/8 (this network)' },
@@ -24,20 +12,6 @@ const BLOCKED_IPV4_RANGES = [
     { start: 0xc0000200, end: 0xc00002ff, name: '192.0.2.0/24 (TEST-NET-1)' },
     { start: 0xc6336400, end: 0xc63364ff, name: '198.51.100.0/24 (TEST-NET-2)' },
     { start: 0xcb007100, end: 0xcb0071ff, name: '203.0.113.0/24 (TEST-NET-3)' },
-];
-// IPv6 blocked ranges (prefix-based).
-//
-// fc00::/7 (unique local, RFC 4193) spans fc00:: through fdff::.
-// In hex, the first byte is 0xfc or 0xfd — so we need BOTH 'fc' and 'fd'
-// as prefixes. The original 'fc00:' prefix only covered the first /12 and
-// missed fc01::, fc10::, fd00::, etc. Fixed in PR-06.
-const BLOCKED_IPV6_PREFIXES = [
-    { prefix: '::1', name: '::1/128 (loopback)' },
-    { prefix: 'fe80:', name: 'fe80::/10 (link-local)' },
-    { prefix: 'fc', name: 'fc00::/7 part fc (unique local)' },
-    { prefix: 'fd', name: 'fc00::/7 part fd (unique local)' },
-    { prefix: 'ff00:', name: 'ff00::/8 (multicast)' },
-    { prefix: '::', name: '::/128 (unspecified)' },
 ];
 /**
  * Check if an IPv4 address is in a blocked range
@@ -92,23 +66,35 @@ function checkIPv4(ip) {
  * @returns The dotted-decimal IPv4 string, or null if not IPv4-mapped.
  */
 function extractIPv4FromMapped(normalized) {
-    // ::ffff:a.b.c.d  (most common notation)
-    const dotDecimalMatch = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (dotDecimalMatch) {
-        return dotDecimalMatch[1];
+    let address = normalized;
+    const dottedTail = address.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (dottedTail) {
+        const octets = dottedTail.slice(1).map(Number);
+        if (octets.some((octet) => octet < 0 || octet > 255))
+            return null;
+        const high = ((octets[0] << 8) | octets[1]).toString(16);
+        const low = ((octets[2] << 8) | octets[3]).toString(16);
+        address = `${address.slice(0, dottedTail.index)}${high}:${low}`;
     }
-    // ::ffff:hhhh:hhhh  (hex notation, e.g. ::ffff:7f00:0001 = ::ffff:127.0.0.1)
-    const hexMatch = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-    if (hexMatch) {
-        const high = parseInt(hexMatch[1], 16);
-        const low = parseInt(hexMatch[2], 16);
-        const a = (high >> 8) & 0xff;
-        const b = high & 0xff;
-        const c = (low >> 8) & 0xff;
-        const d = low & 0xff;
-        return `${a}.${b}.${c}.${d}`;
-    }
-    return null;
+    const compressedParts = address.split('::');
+    if (compressedParts.length > 2)
+        return null;
+    const left = compressedParts[0] ? compressedParts[0].split(':') : [];
+    const right = compressedParts.length === 2 && compressedParts[1] ? compressedParts[1].split(':') : [];
+    const missing = compressedParts.length === 2 ? 8 - left.length - right.length : 0;
+    const parts = compressedParts.length === 2
+        ? [...left, ...Array(Math.max(0, missing)).fill('0'), ...right]
+        : left;
+    if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part)))
+        return null;
+    const hextets = parts.map((part) => Number.parseInt(part, 16));
+    const mappedPrefix = hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
+    const compatiblePrefix = hextets.slice(0, 6).every((part) => part === 0);
+    if (!mappedPrefix && !compatiblePrefix)
+        return null;
+    const high = hextets[6];
+    const low = hextets[7];
+    return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 }
 /**
  * Normalize and check IPv6 address.
@@ -124,6 +110,21 @@ function checkIPv6(ip) {
         .toLowerCase()
         .trim()
         .replace(/^\[|\]$/g, '');
+    // Zone identifiers are meaningful only in a local interface context and are
+    // never valid outbound probe targets. Reject rather than normalize them.
+    if (normalized.includes('%')) {
+        return {
+            allowed: false,
+            reason: 'IPv6 zone identifier is not allowed',
+            blockedCategory: 'invalid',
+        };
+    }
+    if (normalized === '::1') {
+        return { allowed: false, reason: 'Blocked: ::1/128 (loopback)', blockedCategory: 'loopback' };
+    }
+    if (normalized === '::') {
+        return { allowed: false, reason: 'Blocked: ::/128 (unspecified)', blockedCategory: 'reserved' };
+    }
     // --- IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) ---
     // Must be checked BEFORE the generic prefix list because ::ffff: starts
     // with :: and would otherwise be caught as "unspecified" with wrong category.
@@ -141,23 +142,36 @@ function checkIPv6(ip) {
         // Embedded IPv4 is public — allow the mapped address
         return { allowed: true };
     }
-    // --- Standard IPv6 prefix checks ---
-    for (const blocked of BLOCKED_IPV6_PREFIXES) {
-        if (normalized.startsWith(blocked.prefix)) {
-            return {
-                allowed: false,
-                reason: `Blocked: ${blocked.name}`,
-                blockedCategory: blocked.name.includes('loopback')
-                    ? 'loopback'
-                    : blocked.name.includes('link-local')
-                        ? 'link-local'
-                        : blocked.name.includes('multicast')
-                            ? 'multicast'
-                            : blocked.name.includes('local')
-                                ? 'private'
-                                : 'reserved',
-            };
-        }
+    if (isIP(normalized) !== 6) {
+        return { allowed: false, reason: 'Invalid IPv6 address', blockedCategory: 'invalid' };
+    }
+    // Classify the complete CIDR range from the first 16-bit hextet rather than
+    // matching one textual spelling. This covers compressed and expanded forms.
+    const firstHextetText = normalized.split(':').find((part) => part.length > 0);
+    const firstHextet = firstHextetText ? Number.parseInt(firstHextetText, 16) : Number.NaN;
+    if (!Number.isFinite(firstHextet) || firstHextet < 0 || firstHextet > 0xffff) {
+        return { allowed: false, reason: 'Invalid IPv6 address', blockedCategory: 'invalid' };
+    }
+    if ((firstHextet & 0xffc0) === 0xfe80) {
+        return {
+            allowed: false,
+            reason: 'Blocked: fe80::/10 (link-local)',
+            blockedCategory: 'link-local',
+        };
+    }
+    if ((firstHextet & 0xfe00) === 0xfc00) {
+        return {
+            allowed: false,
+            reason: 'Blocked: fc00::/7 (unique local)',
+            blockedCategory: 'private',
+        };
+    }
+    if ((firstHextet & 0xff00) === 0xff00) {
+        return {
+            allowed: false,
+            reason: 'Blocked: ff00::/8 (multicast)',
+            blockedCategory: 'multicast',
+        };
     }
     return { allowed: true };
 }

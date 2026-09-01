@@ -55,6 +55,8 @@ Collector:
 | `INTERNAL_SECRET` | Generate: `openssl rand -hex 16` | ✅ |
 | `WORKER_ENABLED` | `true` | ✅ starts workers/schedules |
 | `ENABLE_ACTIVE_PROBES` | `false` | Default |
+| `API_PRINCIPALS_JSON` | JSON array of hash-only API principals (#66) | Optional |
+| `ENABLE_LEGACY_API_KEY_AUTH` | `true` only to keep legacy API keys one release; default off | Optional |
 
 Web:
 
@@ -65,8 +67,13 @@ Web:
 | `INTERNAL_SECRET` | Same value as collector | ✅ |
 | `NODE_ENV` | `production` | ✅ |
 | `DB_TLS_REJECT_UNAUTHORIZED` | `false` | ✅ Railway Postgres self-signed cert |
+| `API_PRINCIPALS_JSON` | Same array as collector (hashes only, #66) | Optional |
+| `ENABLE_LEGACY_API_KEY_AUTH` | Same value as collector; default off | Optional |
 
 Do not add `COLLECTOR_URL` to collector.
+
+See `docs/security/api-principal-migration.md` for token generation, rotation,
+and the legacy-format removal trigger.
 
 ## 4. Deploy
 

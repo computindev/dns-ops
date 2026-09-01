@@ -33,7 +33,9 @@
  * @see collect-mail.ts for the authoritative collection endpoint
  * @see MailEvidenceRepository for persisted evidence storage
  */
+import type { FirstLevelSpfAssessment } from '@dns-ops/contracts';
 import { type DMARCRecord, type SPFRecord } from '@dns-ops/parsing';
+import type { DmarcPolicyDiscoveryResult } from './dmarc-discovery.js';
 import { type MxRecord } from './dns.js';
 export interface MailCheckResult {
     domain: string;
@@ -50,6 +52,8 @@ export interface RecordCheckResult {
     valid: boolean;
     record?: string;
     parsed?: DMARCRecord | SPFRecord;
+    spfAssessment?: FirstLevelSpfAssessment;
+    dmarcDiscovery?: DmarcPolicyDiscoveryResult;
     errors?: string[];
 }
 export interface MxCheckResult {
@@ -94,9 +98,6 @@ export declare function performMailCheck(domain: string, options?: {
     preferredProvider?: string;
     explicitSelectors?: string[];
 }): Promise<MailCheckResult>;
-/**
- * Check DMARC record
- */
 export declare function checkDMARC(domain: string): Promise<RecordCheckResult>;
 /**
  * Check DKIM record with selector discovery

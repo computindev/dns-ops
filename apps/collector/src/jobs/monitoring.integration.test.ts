@@ -39,7 +39,19 @@ const OTHER_TENANT_ID = 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e';
 const ACTOR_ID = 'actor-123';
 
 beforeEach(() => {
-  process.env = { ...ORIGINAL_ENV, INTERNAL_SECRET: 'test-internal-secret' };
+  process.env = {
+    ...ORIGINAL_ENV,
+    INTERNAL_SECRET: 'test-internal-secret',
+    API_PRINCIPALS_JSON: JSON.stringify([
+      {
+        principalId: 'monitoring-principal-1',
+        tokenSha256: '5b9a79e08f9713894a7104c96dc95e3901437acfbb75a6a1b7c097804c7aa8ab',
+        tenantId: NORMALIZED_TENANT_ID,
+        actorId: ACTOR_ID,
+        enabled: true,
+      },
+    ]),
+  };
   vi.clearAllMocks();
   // Default: fetch succeeds (so /check doesn't try to create alerts)
   mockFetch.mockResolvedValue({ ok: true, status: 200 });
@@ -840,12 +852,12 @@ describe('Monitoring Routes Auth Level Consistency', () => {
     const app = new Hono<Env>();
     app.route('/api/monitoring', monitoringRoutes);
 
-    // Try to access internal route with API key (not internal secret)
+    // Try to access internal route with API principal token (not internal secret)
     const res = await app.request('/api/monitoring/check', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': 'test-tenant:actor:test-api-secret',
+        'X-API-Key': 'collector-auth-test-token-0123456789abcdef01234',
       },
       body: JSON.stringify({ schedule: 'daily' }),
     });
@@ -873,10 +885,10 @@ describe('Monitoring Routes Auth Level Consistency', () => {
     });
     expect(res1.status).toBe(200);
 
-    // With API key (service auth)
+    // With API principal token (service auth)
     const res2 = await app.request('/api/monitoring/reports/shared', {
       headers: {
-        'X-API-Key': 'test-tenant:actor:test-api-secret',
+        'X-API-Key': 'collector-auth-test-token-0123456789abcdef01234',
       },
     });
     // API key format check... if format is wrong, 401. If format is right but env not set, might be 403

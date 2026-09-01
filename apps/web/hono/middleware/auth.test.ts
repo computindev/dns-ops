@@ -18,13 +18,18 @@ import type { Env } from '../types.js';
 // Helper to type json response bodies
 type JsonBody = Record<string, unknown>;
 
-// Mock the getTenantUUID function
-vi.mock('@dns-ops/contracts', () => ({
-  getTenantUUID: vi.fn().mockImplementation(async (id: string) => {
-    // Return a deterministic UUID for testing
-    return `uuid-for-${id}`;
-  }),
-}));
+// Mock getTenantUUID to return deterministic UUIDs; keep the real principal
+// authentication exports from '@dns-ops/contracts'.
+vi.mock('@dns-ops/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dns-ops/contracts')>();
+  return {
+    ...actual,
+    getTenantUUID: vi.fn().mockImplementation(async (id: string) => {
+      // Return a deterministic UUID for testing
+      return `uuid-for-${id}`;
+    }),
+  };
+});
 
 // Import after mocking
 import { getTenantUUID } from '@dns-ops/contracts';
@@ -32,12 +37,36 @@ import { authMiddleware, internalOnlyMiddleware, requireAuthMiddleware } from '.
 
 const originalEnv = process.env;
 
+// Principal fixture: bare opaque token mapped by SHA-256 hash to a stored identity.
+const PRINCIPAL_TOKEN = 'web-auth-test-token-0123456789abcdef0123456789';
+const PRINCIPAL_TOKEN_SHA256 = '93bee9e2d26a376b34b532da58c126a6065ba557751b85ac183f036859ff7197';
+const PRINCIPAL_TENANT_UUID = '550e8400-e29b-41d4-a716-446655440000';
+const PRINCIPAL_ACTOR = 'stored-web-actor';
+
+function principalsJson(overrides: Record<string, unknown>[] = []): string {
+  return JSON.stringify([
+    {
+      principalId: 'web-principal-1',
+      tokenSha256: PRINCIPAL_TOKEN_SHA256,
+      tenantId: PRINCIPAL_TENANT_UUID,
+      actorId: PRINCIPAL_ACTOR,
+      enabled: true,
+    },
+    ...overrides,
+  ]);
+}
+
 describe('Auth Middleware', () => {
   let app: Hono<Env>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env = { ...originalEnv, API_KEY_SECRET: 'secret' };
+    process.env = {
+      ...originalEnv,
+      API_KEY_SECRET: 'secret',
+      API_PRINCIPALS_JSON: principalsJson(),
+    };
+    delete process.env.ENABLE_LEGACY_API_KEY_AUTH;
     app = new Hono<Env>();
   });
 
@@ -93,7 +122,7 @@ describe('Auth Middleware', () => {
       expect(body.tenantId).toBeUndefined();
     });
 
-    it('should extract auth from API key header', async () => {
+    it('should extract auth from a bare API key token via stored principal (#66)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => {
         return c.json({
@@ -104,14 +133,73 @@ describe('Auth Middleware', () => {
 
       const res = await app.request('/test', {
         headers: {
-          'X-API-Key': 'my-tenant:my-actor:secret',
+          'X-API-Key': PRINCIPAL_TOKEN,
         },
       });
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-my-tenant');
-      expect(body.actorId).toBe('my-actor');
+      // Tenant/actor come from the stored principal, not from the credential.
+      expect(body.tenantId).toBe(PRINCIPAL_TENANT_UUID);
+      expect(body.actorId).toBe(PRINCIPAL_ACTOR);
+    });
+
+    it('rejects an unknown bare API key token', async () => {
+      app.use('*', authMiddleware);
+      app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
+
+      const res = await app.request('/test', {
+        headers: {
+          'X-API-Key': 'unknown-token-0123456789abcdef0123456789abcdef',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBeUndefined();
+    });
+
+    it('rejects a disabled principal token', async () => {
+      // Only the disabled principal is configured, with the same token hash as
+      // PRINCIPAL_TOKEN — so the token matches it and is rejected because it is
+      // disabled, not because of duplicate-hash or unknown-token rejection.
+      process.env.API_PRINCIPALS_JSON = JSON.stringify([
+        {
+          principalId: 'web-principal-1',
+          tokenSha256: PRINCIPAL_TOKEN_SHA256,
+          tenantId: PRINCIPAL_TENANT_UUID,
+          actorId: PRINCIPAL_ACTOR,
+          enabled: false,
+        },
+      ]);
+      app.use('*', authMiddleware);
+      app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
+
+      const res = await app.request('/test', {
+        headers: {
+          'X-API-Key': PRINCIPAL_TOKEN,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBeUndefined();
+    });
+
+    it('fails closed on malformed principal configuration without legacy fallback (#66)', async () => {
+      process.env.API_PRINCIPALS_JSON = 'not-json';
+      process.env.ENABLE_LEGACY_API_KEY_AUTH = 'true';
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      // Even with the legacy flag on and a matching secret, malformed config must reject.
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': 'my-tenant:my-actor:secret',
+        },
+      });
+
+      expect(res.status).toBe(401);
     });
 
     it('should reject malformed API key', async () => {
@@ -183,7 +271,7 @@ describe('Auth Middleware', () => {
       expect(body.actorId).toBeUndefined();
     });
 
-    it('ignores CF Access headers and falls back to API key (TB-1)', async () => {
+    it('falls back to a bare principal token alongside CF Access headers (TB-1)', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => {
         return c.json({
@@ -197,14 +285,14 @@ describe('Auth Middleware', () => {
         headers: {
           'CF-Access-Authenticated-User-Email': 'user@priority.com',
           'CF-Access-Authenticated-User-Id': 'cf-priority',
-          'X-API-Key': 'other-tenant:other-actor:secret',
+          'X-API-Key': PRINCIPAL_TOKEN,
         },
       });
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as JsonBody;
-      expect(body.tenantId).toBe('uuid-for-other-tenant');
-      expect(body.actorId).toBe('other-actor');
+      expect(body.tenantId).toBe(PRINCIPAL_TENANT_UUID);
+      expect(body.actorId).toBe(PRINCIPAL_ACTOR);
     });
 
     it('should allow requests without auth (sets nothing)', async () => {
@@ -251,7 +339,20 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(401);
     });
 
-    it('should allow requests with valid API key', async () => {
+    it('should allow requests with a valid bare principal token', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': PRINCIPAL_TOKEN,
+        },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject requests with a legacy-format key when the flag is off (#66)', async () => {
       app.use('*', requireAuthMiddleware);
       app.get('/protected', (c) => c.json({ ok: true }));
 
@@ -261,7 +362,7 @@ describe('Auth Middleware', () => {
         },
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     });
 
     it('should allow requests with dev headers in development', async () => {
@@ -374,7 +475,54 @@ describe('Auth Middleware', () => {
     });
   });
 
-  describe('Identifier Validation', () => {
+  describe('Legacy API key compatibility (one release, explicit flag)', () => {
+    beforeEach(() => {
+      process.env.ENABLE_LEGACY_API_KEY_AUTH = 'true';
+    });
+
+    it('accepts the legacy tenantId:actorId:secret format only when enabled', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': 'my-tenant:my-actor:secret',
+        },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('rejects the legacy format when the flag is anything but literal true', async () => {
+      for (const flagValue of ['false', 'True', '1', 'yes']) {
+        process.env.ENABLE_LEGACY_API_KEY_AUTH = flagValue;
+        const probe = new Hono<Env>();
+        probe.use('*', requireAuthMiddleware);
+        probe.get('/protected', (c) => c.json({ ok: true }));
+
+        const res = await probe.request('/protected', {
+          headers: {
+            'X-API-Key': 'my-tenant:my-actor:secret',
+          },
+        });
+
+        expect(res.status).toBe(401);
+      }
+    });
+
+    it('rejects the legacy format with a wrong secret', async () => {
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': 'my-tenant:my-actor:wrong',
+        },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
     it('should accept valid UUID format', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
@@ -420,9 +568,7 @@ describe('Auth Middleware', () => {
       // Invalid format should result in no auth
       expect(body.tenantId).toBeUndefined();
     });
-  });
 
-  describe('Tenant UUID Normalization', () => {
     it('should normalize tenant ID to UUID format', async () => {
       app.use('*', authMiddleware);
       app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
@@ -437,6 +583,23 @@ describe('Auth Middleware', () => {
       const body = (await res.json()) as JsonBody;
       // Should be normalized via getTenantUUID mock
       expect(body.tenantId).toBe('uuid-for-my-tenant');
+    });
+  });
+
+  describe('Tenant UUID Normalization', () => {
+    it('uses the stored principal tenant UUID directly (#66)', async () => {
+      app.use('*', authMiddleware);
+      app.get('/test', (c) => c.json({ tenantId: c.get('tenantId') }));
+
+      const res = await app.request('/test', {
+        headers: {
+          'X-API-Key': PRINCIPAL_TOKEN,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      expect(body.tenantId).toBe(PRINCIPAL_TENANT_UUID);
     });
 
     it('does not derive a tenant from CF Access headers (TB-1)', async () => {
@@ -474,6 +637,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should return 401 in authMiddleware when getTenantUUID throws', async () => {
+      process.env.ENABLE_LEGACY_API_KEY_AUTH = 'true';
       vi.mocked(getTenantUUID).mockRejectedValueOnce(new Error('tenant not found'));
 
       app.use('*', authMiddleware);
@@ -491,6 +655,7 @@ describe('Auth Middleware', () => {
     });
 
     it('should return 401 in requireAuthMiddleware when getTenantUUID throws', async () => {
+      process.env.ENABLE_LEGACY_API_KEY_AUTH = 'true';
       vi.mocked(getTenantUUID).mockRejectedValueOnce(new Error('tenant not found'));
 
       app.use('*', requireAuthMiddleware);
@@ -572,6 +737,47 @@ describe('Auth Middleware', () => {
       const body = (await res.json()) as JsonBody;
       expect(body.tenantId).toBeUndefined();
       expect(body.actorEmail).toBeUndefined();
+    });
+  });
+
+  describe('API key principal authentication (#66)', () => {
+    it('rejects forged legacy API key identity when legacy auth is not enabled', async () => {
+      // Shared-secret holder must not be able to assert an arbitrary tenant/actor.
+      delete process.env.ENABLE_LEGACY_API_KEY_AUTH;
+
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) => c.json({ ok: true }));
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': 'forged-tenant:forged-actor:secret',
+        },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('ignores X-Tenant-Id/X-Actor-Id headers on the API key path', async () => {
+      delete process.env.ENABLE_LEGACY_API_KEY_AUTH;
+
+      app.use('*', requireAuthMiddleware);
+      app.get('/protected', (c) =>
+        c.json({ tenantId: c.get('tenantId'), actorId: c.get('actorId') })
+      );
+
+      const res = await app.request('/protected', {
+        headers: {
+          'X-API-Key': PRINCIPAL_TOKEN,
+          'X-Tenant-Id': 'forged-tenant',
+          'X-Actor-Id': 'forged-actor',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as JsonBody;
+      // Identity comes from the stored principal, never from request headers.
+      expect(body.tenantId).toBe(PRINCIPAL_TENANT_UUID);
+      expect(body.actorId).toBe(PRINCIPAL_ACTOR);
     });
   });
 });

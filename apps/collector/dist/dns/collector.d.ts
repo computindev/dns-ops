@@ -5,9 +5,26 @@
  * Evaluates rules and persists findings immediately after collection.
  */
 import type { IDatabaseAdapter } from '@dns-ops/db';
-import type { CollectionConfig, CollectionResult } from './types.js';
+import { Semaphore } from '../probes/semaphore.js';
+import type { CollectionConfig, CollectionError, CollectionResult, DNSQuery, DNSQueryResult, VantageInfo } from './types.js';
+/**
+ * Minimal resolver contract DNSCollector depends on. Lets tests inject a fake
+ * resolver that records in-flight concurrency without touching real DNS.
+ */
+export interface ResolverLike {
+    query(query: DNSQuery, vantage: VantageInfo): Promise<DNSQueryResult>;
+}
+/**
+ * Run DNS queries bounded by `semaphore`, preserving input order in the output.
+ *
+ * Errors thrown by the resolver are recorded in `errors` and yield no result
+ * entry (matching the previous sequential behaviour). Failed-but-returned
+ * results (success:false) are kept; collectFromVantage records their error.
+ */
+export declare function collectQueriesConcurrently(resolver: ResolverLike, queries: DNSQuery[], vantage: VantageInfo, semaphore: Semaphore, errors: CollectionError[]): Promise<DNSQueryResult[]>;
 export declare class DNSCollector {
     private resolver;
+    private readonly semaphore;
     private config;
     private domainRepo;
     private snapshotRepo;
@@ -16,7 +33,10 @@ export declare class DNSCollector {
     private findingRepo;
     private suggestionRepo;
     private rulesetVersionRepo;
-    constructor(config: CollectionConfig, db: IDatabaseAdapter);
+    constructor(config: CollectionConfig, db: IDatabaseAdapter, options?: {
+        resolver?: ResolverLike;
+        queryConcurrency?: number;
+    });
     /**
      * Execute full DNS collection for the domain
      */
@@ -41,6 +61,7 @@ export declare class DNSCollector {
      * Calculate overall result state based on query results
      */
     private calculateResultState;
+    private getAuthoritativeEvidenceCoverage;
     /**
      * Store results in database
      */

@@ -6,6 +6,11 @@
  */
 export declare function resolveTXT(hostname: string): Promise<string[]>;
 /**
+ * Determine whether a domain exists without treating a NOERROR/NODATA answer as
+ * non-existence. Only NXDOMAIN (ENOTFOUND) proves absence.
+ */
+export declare function resolveDomainExists(domain: string): Promise<boolean>;
+/**
  * MX record structure
  */
 export interface MxRecord {

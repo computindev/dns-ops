@@ -1,29 +1,15 @@
 /**
  * DNS Resolver
  *
- * Performs actual DNS queries using Node.js dns module.
- * Supports both recursive and authoritative resolution.
- *
- * Error mapping uses standardized DNS_RCODE constants from @dns-ops/contracts
- * for consistent status classification across the codebase.
+ * Performs wire-format DNS queries for every supported record type so answer
+ * TTLs, response codes, and flags are preserved exactly. Authoritative targets
+ * are queried with recursion disabled; recursive vantages request recursion.
  */
 import type { DNSQuery, DNSQueryResult, VantageInfo } from './types.js';
 export declare class DNSResolver {
-    /**
-     * Perform a DNS query
-     */
+    /** Perform a DNS query and preserve real wire evidence. */
     query(query: DNSQuery, vantage: VantageInfo): Promise<DNSQueryResult>;
-    /**
-     * Perform the actual DNS query based on record type
-     */
-    private performQuery;
-    private queryA;
-    private queryAAAA;
-    private queryMX;
-    private queryTXT;
-    private queryNS;
-    private queryCNAME;
-    private querySOA;
-    private queryCAA;
+    /** Build a failure result while preserving the query's recursion policy. */
+    private errorResult;
 }
 //# sourceMappingURL=resolver.d.ts.map

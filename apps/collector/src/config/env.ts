@@ -5,6 +5,7 @@
  * The collector requires DATABASE_URL since it always uses PostgreSQL.
  */
 
+import { parseApiPrincipals } from '@dns-ops/contracts';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 
 const logger = getCollectorLogger();
@@ -82,13 +83,38 @@ const ENV_VARS: EnvVarDef[] = [
   {
     name: 'API_KEY_SECRET',
     required: false,
-    description: 'Secret for external API key validation',
+    description:
+      'Legacy shared secret for tenantId:actorId:secret API keys; only consulted when ENABLE_LEGACY_API_KEY_AUTH=true',
     validate: (v) => {
       if (v.length < 16) {
         return 'Must be at least 16 characters for security';
       }
       return null;
     },
+  },
+  {
+    name: 'API_PRINCIPALS_JSON',
+    required: false,
+    description:
+      'JSON array of API principals (principalId, tokenSha256, tenantId UUID, actorId, enabled); hashes only, never raw tokens (#66)',
+    validate: (v) => {
+      try {
+        parseApiPrincipals(v);
+        return null;
+      } catch {
+        return 'Must be a JSON array of API principals with 64-hex SHA-256 token hashes and canonical tenant UUIDs';
+      }
+    },
+  },
+  {
+    name: 'ENABLE_LEGACY_API_KEY_AUTH',
+    required: false,
+    description:
+      'One-release compatibility gate for legacy tenantId:actorId:secret API keys. Default off in every environment; literal "true" enables it (#66)',
+    validate: (v) => {
+      return v === 'true' || v === 'false' ? null : 'Must be exactly "true" or "false"';
+    },
+    default: 'false',
   },
   {
     name: 'COLLECTOR_URL',

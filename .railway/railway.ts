@@ -21,9 +21,11 @@ export default defineRailway(() => {
     healthcheckTimeout: 60,
     env: {
       API_KEY_SECRET: preserve(),
+      API_PRINCIPALS_JSON: preserve(),
       DATABASE_URL: preserve(),
       DB_TLS_REJECT_UNAUTHORIZED: "false",
       ENABLE_ACTIVE_PROBES: preserve(),
+      ENABLE_LEGACY_API_KEY_AUTH: preserve(),
       INTERNAL_SECRET: preserve(),
       NODE_ENV: preserve(),
       PORT: preserve(),
@@ -44,9 +46,11 @@ export default defineRailway(() => {
     healthcheckTimeout: 60,
     env: {
       API_KEY_SECRET: preserve(),
+      API_PRINCIPALS_JSON: preserve(),
       COLLECTOR_URL: preserve(),
       DATABASE_URL: preserve(),
       DB_TLS_REJECT_UNAUTHORIZED: "false",
+      ENABLE_LEGACY_API_KEY_AUTH: preserve(),
       INTERNAL_SECRET: preserve(),
       NODE_ENV: preserve(),
     },

@@ -13,7 +13,9 @@ import { Worker } from 'bullmq';
 import { DNSCollector } from '../dns/collector.js';
 import { getCollectorLogger, trackJobComplete, trackJobError, trackJobStart, } from '../middleware/error-tracking.js';
 import { getJobMetrics } from '../middleware/job-metrics.js';
+import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import { generateAndSendFindingAlerts } from './alert-from-findings.js';
+import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
 import { getRedisConnection, QUEUE_NAMES, } from './queue.js';
 const logger = getCollectorLogger();
 // =============================================================================
@@ -55,6 +57,41 @@ export async function processCollectDomain(job) {
         };
         const collector = new DNSCollector(config, db);
         const result = await collector.collect();
+        const evidenceDomain = await new DomainRepository(db).findByNameForTenant(domain, tenantId);
+        if (evidenceDomain) {
+            try {
+                await collectAndPersistDomainEvidence(db, {
+                    snapshotId: result.snapshotId,
+                    tenantId,
+                    domainId: evidenceDomain.id,
+                    domain: evidenceDomain.normalizedName,
+                });
+            }
+            catch (evidenceError) {
+                logger.warn('External evidence collection failed (non-fatal)', {
+                    snapshotId: result.snapshotId,
+                    error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+                });
+            }
+        }
+        if (evidenceDomain) {
+            try {
+                await finalizePersistedCanonicalConditions(db, {
+                    snapshotId: result.snapshotId,
+                    tenantId,
+                    domainId: evidenceDomain.id,
+                    domainName: evidenceDomain.normalizedName,
+                });
+            }
+            catch (finalizationError) {
+                logger.warn('Canonical condition finalization failed (non-fatal)', {
+                    snapshotId: result.snapshotId,
+                    error: finalizationError instanceof Error
+                        ? finalizationError.message
+                        : String(finalizationError),
+                });
+            }
+        }
         // JOB-002: Generate alerts from high-severity findings and deliver via webhook
         // Alerts only apply to monitored domains — the function handles the lookup
         try {
@@ -216,8 +253,11 @@ export async function processMonitoringRefresh(job) {
         const domainRepo = new DomainRepository(db);
         // Get domain to check zone management
         const domain = await domainRepo.findById(domainId);
-        if (!domain) {
-            throw new Error(`Domain ${domainId} not found`);
+        if (!domain || domain.tenantId !== tenantId) {
+            throw new Error(`Domain ${domainId} is outside the monitoring tenant`);
+        }
+        if (domain.normalizedName !== domainName.toLowerCase()) {
+            throw new Error('Monitoring job domain name does not match the registered domain');
         }
         const config = {
             tenantId: job.data.tenantId,
@@ -229,6 +269,37 @@ export async function processMonitoringRefresh(job) {
         };
         const collector = new DNSCollector(config, db);
         const result = await collector.collect();
+        try {
+            await collectAndPersistDomainEvidence(db, {
+                snapshotId: result.snapshotId,
+                tenantId,
+                domainId: domain.id,
+                domain: domain.normalizedName,
+            });
+        }
+        catch (evidenceError) {
+            logger.warn('External evidence collection failed (non-fatal)', {
+                snapshotId: result.snapshotId,
+                error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+            });
+        }
+        try {
+            await finalizePersistedCanonicalConditions(db, {
+                snapshotId: result.snapshotId,
+                tenantId,
+                domainId: domain.id,
+                domainName: domain.normalizedName,
+            });
+        }
+        catch (finalizationError) {
+            logger.error('Canonical condition finalization failed; monitoring refresh will retry', {
+                snapshotId: result.snapshotId,
+                error: finalizationError instanceof Error
+                    ? finalizationError.message
+                    : String(finalizationError),
+            });
+            throw finalizationError;
+        }
         await job.updateProgress(100);
         trackJobComplete({
             jobId: job.id || 'unknown',

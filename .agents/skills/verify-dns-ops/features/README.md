@@ -8,6 +8,7 @@ One file per user-facing feature, from the user's point of view: what it is, how
 |---|---|---|---|
 | health.public | api | changed | health.public.md |
 | auth.login | web | critical | auth.login.md |
+| auth.api-principal | api | critical | auth.api-principal.md |
 | domain.overview | web | changed | domain.overview.md |
 | portfolio.search | web | critical | portfolio.search.md |
 | fleet.reports | web | critical | fleet.reports.md |
