@@ -170,7 +170,15 @@ Authenticated collector API base URL: `http://localhost:3001/api`
 ### Probes (`/api/probe`)
 
 > **Note:** Probes are for programmatic use only (collector, monitoring jobs).
-> No operator UI is provided. Results are integrated into snapshot evidence.
+> No operator UI is provided.
+>
+> **SMTP STARTTLS result semantics (issue #74):** HTTP `200` means the probe
+> request completed — it is not a statement about the target's TLS. In the
+> result body, `success: true` means **trusted TLS** (STARTTLS advertised,
+> TLS negotiated, chain authorized, and hostname authorized). An invalid,
+> expired, hostname-mismatched, or untrusted-chain certificate yields
+> `success: false`, `tlsNegotiated: true`, `tlsTrusted: false`, with the
+> certificate retained as diagnostic evidence (`certificate.authorizationError`).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

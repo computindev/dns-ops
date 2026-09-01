@@ -11,6 +11,7 @@ import {
   type NewProbeObservation,
   type ProbeObservation,
   probeObservations,
+  type SMTPProbeData,
 } from '../schema/index.js';
 
 export class ProbeObservationRepository {
@@ -69,13 +70,20 @@ export class ProbeObservationRepository {
 
   /**
    * Find successful SMTP STARTTLS probes for a snapshot
+   *
+   * Requires explicit TLS trust in the persisted probe data (issue #74):
+   * legacy rows without `tlsTrusted === true` fail closed and are excluded.
    */
   async findSuccessfulSmtpProbes(snapshotId: string): Promise<ProbeObservation[]> {
     const results = await this.db.selectWhere(
       probeObservations,
       eq(probeObservations.snapshotId, snapshotId)
     );
-    return results.filter((p) => p.probeType === 'smtp_starttls' && p.success);
+    return results.filter((p) => {
+      if (p.probeType !== 'smtp_starttls' || !p.success) return false;
+      const probeData = p.probeData as SMTPProbeData | null;
+      return probeData?.tlsTrusted === true;
+    });
   }
 
   /**

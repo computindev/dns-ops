@@ -15,6 +15,7 @@ interface FixtureTlsSocketView {
   writes: string[];
   destroyed: boolean;
   ended: boolean;
+  authorized: boolean;
 }
 
 const fixtureState = vi.hoisted(() => ({
@@ -98,6 +99,7 @@ vi.mock('node:tls', async (importOriginal) => {
 
   class FixtureTlsSocket extends EventEmitter {
     readonly options: Record<string, unknown>;
+    readonly authorized = true;
     writes: string[] = [];
     timeoutMs: number | undefined;
     destroyed = false;
@@ -122,6 +124,7 @@ vi.mock('node:tls', async (importOriginal) => {
       return {
         subject: { CN: 'mail.fixture.example' },
         issuer: { CN: 'fixture-ca' },
+        subjectaltname: 'DNS:mail.fixture.example',
         valid_from: 'Jan 1 00:00:00 2026 GMT',
         valid_to: 'Jan 1 00:00:00 2027 GMT',
         fingerprint: 'AA:BB:CC',
@@ -161,7 +164,7 @@ beforeEach(() => {
 });
 
 describe('SMTP STARTTLS deterministic fixture', () => {
-  it('negotiates fragmented multiline EHLO and cleans up pinned sockets', async () => {
+  it('negotiates trusted STARTTLS over a pinned socket and cleans up', async () => {
     const result = await probeSMTPStarttls('mail.fixture.example', 'tenant-fixture', {
       timeoutMs: 1000,
       checkAllowlist: false,
@@ -173,22 +176,45 @@ describe('SMTP STARTTLS deterministic fixture', () => {
       hostname: 'mail.fixture.example',
       port: 25,
       supportsStarttls: true,
+      tlsNegotiated: true,
+      tlsTrusted: true,
       tlsVersion: 'TLSv1.3',
       tlsCipher: 'TLS_AES_128_GCM_SHA256',
     });
+    expect(result.certificate).toMatchObject({
+      subject: 'mail.fixture.example',
+      issuer: 'fixture-ca',
+      fingerprint: 'AA:BB:CC',
+      chainAuthorized: true,
+      hostnameAuthorized: true,
+    });
+    expect(result.error).toBeUndefined();
     expect(fixtureState.lookup).toHaveBeenCalledWith('mail.fixture.example');
 
     const socket = fixtureState.sockets[0];
     expect(socket?.connectArgs).toEqual({ port: 25, host: '93.184.216.34' });
+
+    // Exact command transcript: capability negotiation only, never any
+    // credential-bearing SMTP command (no AUTH, MAIL FROM, RCPT TO, DATA).
     expect(socket?.writes).toEqual(['EHLO fixture-client.example\r\n', 'STARTTLS\r\n']);
-    expect(fixtureState.tlsConnect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        socket,
-        servername: 'mail.fixture.example',
-      })
-    );
+    const allCommands = [...(socket?.writes ?? []), ...(fixtureState.tlsSockets[0]?.writes ?? [])];
+    expect(allCommands.some((command) => /AUTH|MAIL FROM|RCPT TO|DATA/i.test(command))).toBe(false);
+
+    const tlsOptions = fixtureState.tlsConnect.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(tlsOptions.socket).toBe(socket);
+    expect(tlsOptions).toMatchObject({
+      servername: 'mail.fixture.example',
+      rejectUnauthorized: false,
+    });
+    expect(
+      (tlsOptions.checkServerIdentity as (h: string, c: unknown) => undefined | Error)?.(
+        'mail.fixture.example',
+        {}
+      )
+    ).toBeUndefined();
 
     const tlsSocket = fixtureState.tlsSockets[0];
+    expect(tlsSocket?.authorized).toBe(true);
     expect(tlsSocket?.writes).toEqual(['QUIT\r\n']);
     expect(socket?.destroyed).toBe(true);
     expect(tlsSocket?.destroyed).toBe(true);

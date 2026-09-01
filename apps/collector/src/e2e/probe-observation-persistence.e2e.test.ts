@@ -24,12 +24,14 @@ import type { SMTPProbeResult } from '../probes/smtp-starttls.js';
 
 describe('Probe Observation Persistence E2E', () => {
   describe('SMTP Result Mapping - Status Types', () => {
-    it('should map successful STARTTLS result to success status', () => {
+    it('should map a trusted STARTTLS result to success status', () => {
       const result: SMTPProbeResult = {
         success: true,
         hostname: 'mail.example.com',
         port: 25,
         supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: true,
         tlsVersion: 'TLSv1.3',
         tlsCipher: 'AES256-GCM-SHA384',
         certificate: {
@@ -38,6 +40,8 @@ describe('Probe Observation Persistence E2E', () => {
           validFrom: '2024-01-01',
           validTo: '2025-01-01',
           fingerprint: 'AA:BB:CC:DD:EE:FF',
+          chainAuthorized: true,
+          hostnameAuthorized: true,
         },
         smtpBanner: '220 mail.example.com ESMTP',
         responseTimeMs: 150,
@@ -54,7 +58,59 @@ describe('Probe Observation Persistence E2E', () => {
       expect(observation.errorMessage).toBeNull();
       expect(observation.responseTimeMs).toBe(150);
       expect(observation.probeData?.supportsStarttls).toBe(true);
+      expect(observation.probeData?.tlsNegotiated).toBe(true);
+      expect(observation.probeData?.tlsTrusted).toBe(true);
       expect(observation.probeData?.tlsVersion).toBe('TLSv1.3');
+      expect(observation.probeData?.certificate).toEqual({
+        subject: 'mail.example.com',
+        issuer: 'DigiCert SHA2 Extended Validation Server CA',
+        validFrom: '2024-01-01',
+        validTo: '2025-01-01',
+        fingerprint: 'AA:BB:CC:DD:EE:FF',
+        chainAuthorized: true,
+        hostnameAuthorized: true,
+      });
+    });
+
+    it('should never persist a negotiated-but-untrusted TLS result as successful (issue #74)', () => {
+      const result: SMTPProbeResult = {
+        success: true, // forged caller-asserted success must not survive
+        hostname: 'expired.example.com',
+        port: 25,
+        supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: false,
+        tlsVersion: 'TLSv1.3',
+        tlsCipher: 'AES256-GCM-SHA384',
+        certificate: {
+          subject: 'expired.example.com',
+          issuer: 'DigiCert SHA2 Extended Validation Server CA',
+          validFrom: '2023-01-01',
+          validTo: '2024-01-01',
+          fingerprint: 'FF:EE:DD:CC:BB:AA',
+          chainAuthorized: false,
+          hostnameAuthorized: true,
+          authorizationError: 'certificate has expired',
+        },
+        smtpBanner: '220 expired.example.com ESMTP',
+        error: 'TLS certificate not trusted: certificate has expired',
+        responseTimeMs: 150,
+      };
+
+      const observation = smtpResultToObservation('snap-untrusted', result);
+
+      expect(observation.status).not.toBe('success');
+      expect(observation.success).toBe(false);
+      expect(observation.errorMessage).toBe('TLS certificate not trusted: certificate has expired');
+      // Diagnostic certificate evidence is preserved for the failed observation.
+      expect(observation.probeData?.tlsNegotiated).toBe(true);
+      expect(observation.probeData?.tlsTrusted).toBe(false);
+      expect(observation.probeData?.certificate).toMatchObject({
+        fingerprint: 'FF:EE:DD:CC:BB:AA',
+        chainAuthorized: false,
+        hostnameAuthorized: true,
+        authorizationError: 'certificate has expired',
+      });
     });
 
     it('should map SMTP result with timeout error to timeout status', () => {
@@ -63,6 +119,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'slow.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Connection timeout after 30000ms',
         responseTimeMs: 30000,
       };
@@ -72,7 +130,12 @@ describe('Probe Observation Persistence E2E', () => {
       expect(observation.status).toBe('timeout');
       expect(observation.success).toBe(false);
       expect(observation.errorMessage).toBe('Connection timeout after 30000ms');
-      expect(observation.probeData).toEqual({ supportsStarttls: false, smtpBanner: undefined });
+      expect(observation.probeData).toEqual({
+        supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
+        smtpBanner: undefined,
+      });
     });
 
     it('should map SMTP result with connection refused to refused status', () => {
@@ -81,6 +144,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'blocked.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Connection refused',
         responseTimeMs: 500,
       };
@@ -97,6 +162,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'error.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'SSL certificate verification failed',
         responseTimeMs: 2000,
       };
@@ -110,10 +177,12 @@ describe('Probe Observation Persistence E2E', () => {
 
     it('should map SMTP result without STARTTLS support to error status', () => {
       const result: SMTPProbeResult = {
-        success: true,
+        success: false,
         hostname: 'legacy.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner: '220 legacy.example.com ESMTP',
         responseTimeMs: 100,
       };
@@ -137,6 +206,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: '10.0.0.1',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'SSRF blocked: Private IP address',
         responseTimeMs: 5,
       };
@@ -153,6 +224,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: '192.168.1.1',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'ssrf blocked: private ip',
         responseTimeMs: 3,
       };
@@ -168,6 +241,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: '127.0.0.1',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Ssrf Blocked: Localhost Detected',
         responseTimeMs: 1,
       };
@@ -188,6 +263,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'unlisted.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Destination not in allowlist',
         responseTimeMs: 5,
       };
@@ -203,6 +280,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'not-allowed.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Host not in allowlist: unauthorized destination',
         responseTimeMs: 3,
       };
@@ -218,6 +297,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'cross-tenant.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'allowlist denied: tenant-b cannot probe tenant-a resources',
         responseTimeMs: 2,
       };
@@ -239,6 +320,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: '10.0.0.1',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'SSRF blocked: Internal error occurred',
         responseTimeMs: 5,
       };
@@ -256,6 +339,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'blocked.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Allowlist denied: Connection refused',
         responseTimeMs: 5,
       };
@@ -342,6 +427,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'secure.example.com',
         port: 465,
         supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: true,
         tlsVersion: 'TLSv1.2',
         tlsCipher: 'ECDHE-RSA-AES256-SHA',
         certificate: {
@@ -350,6 +437,8 @@ describe('Probe Observation Persistence E2E', () => {
           validFrom: '2024-01-15',
           validTo: '2024-04-15',
           fingerprint: 'FINGERPRINT',
+          chainAuthorized: true,
+          hostnameAuthorized: true,
         },
         smtpBanner: '220 secure.example.com ESMTP',
         responseTimeMs: 100,
@@ -359,12 +448,19 @@ describe('Probe Observation Persistence E2E', () => {
 
       expect(observation.probeData).toEqual({
         supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: true,
         tlsVersion: 'TLSv1.2',
         tlsCipher: 'ECDHE-RSA-AES256-SHA',
-        certificateSubject: 'secure.example.com',
-        certificateIssuer: "Let's Encrypt Authority X3",
-        certificateValidFrom: '2024-01-15',
-        certificateValidTo: '2024-04-15',
+        certificate: {
+          subject: 'secure.example.com',
+          issuer: "Let's Encrypt Authority X3",
+          validFrom: '2024-01-15',
+          validTo: '2024-04-15',
+          fingerprint: 'FINGERPRINT',
+          chainAuthorized: true,
+          hostnameAuthorized: true,
+        },
         smtpBanner: '220 secure.example.com ESMTP',
       });
     });
@@ -375,6 +471,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'nocert.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Connection refused',
         responseTimeMs: 50,
       };
@@ -383,6 +481,8 @@ describe('Probe Observation Persistence E2E', () => {
 
       expect(observation.probeData).toEqual({
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner: undefined,
       });
     });
@@ -400,6 +500,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'empty.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: '',
         responseTimeMs: 0,
       };
@@ -416,6 +518,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'whitespace.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: '   ',
         responseTimeMs: 0,
       };
@@ -431,6 +535,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'newline.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: '\n\t  \r',
         responseTimeMs: 0,
       };
@@ -446,6 +552,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'single-char.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'x',
         responseTimeMs: 0,
       };
@@ -583,6 +691,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: longHostname,
         port: 25,
         supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: true,
         responseTimeMs: 100,
       };
 
@@ -597,6 +707,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'special.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Error with "quotes" and \'apostrophes\' and <brackets>',
         responseTimeMs: 100,
       };
@@ -614,6 +726,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'slow.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Timeout',
         responseTimeMs: 300000, // 5 minutes
       };
@@ -629,6 +743,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'instant.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Connection refused',
         responseTimeMs: 0,
       };
@@ -644,6 +760,8 @@ describe('Probe Observation Persistence E2E', () => {
         hostname: 'whitespace.example.com',
         port: 25,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: '  Error message  ',
         responseTimeMs: 100,
       };

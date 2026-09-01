@@ -290,6 +290,8 @@ beforeEach(() => {
     hostname: 'mail.example.com',
     port: 25,
     supportsStarttls: true,
+    tlsNegotiated: true,
+    tlsTrusted: true,
     responseTimeMs: 1,
   });
   mockedProbeMXHosts.mockResolvedValue([
@@ -298,6 +300,8 @@ beforeEach(() => {
       hostname: 'mail.example.com',
       port: 25,
       supportsStarttls: true,
+      tlsNegotiated: true,
+      tlsTrusted: true,
       responseTimeMs: 1,
     },
   ]);
@@ -452,6 +456,48 @@ describe('Issue #67: probe authorization requires persisted DNS evidence', () =>
       );
       const json = await res.json();
       expect(json.summary.total).toBe(1);
+    });
+
+    it('/smtp-starttls batch summary counts only trusted TLS as successful (issue #74)', async () => {
+      mockedProbeMXHosts.mockResolvedValue([
+        {
+          success: true,
+          hostname: 'mail.example.com',
+          port: 25,
+          supportsStarttls: true,
+          tlsNegotiated: true,
+          tlsTrusted: true,
+          responseTimeMs: 1,
+        },
+        {
+          // Negotiated but untrusted (expired certificate): never successful.
+          success: false,
+          hostname: 'mx2.example.com',
+          port: 25,
+          supportsStarttls: true,
+          tlsNegotiated: true,
+          tlsTrusted: false,
+          responseTimeMs: 1,
+        },
+        {
+          // No STARTTLS advertised: not successful, not counted as supporting.
+          success: false,
+          hostname: 'mx3.example.com',
+          port: 25,
+          supportsStarttls: false,
+          tlsNegotiated: false,
+          tlsTrusted: false,
+          responseTimeMs: 1,
+        },
+      ]);
+      const app = createMockApp(evidenceState());
+      const res = await post(app, '/smtp-starttls', { domain: 'example.com' });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.summary.total).toBe(3);
+      expect(json.summary.successful).toBe(1);
+      expect(json.summary.supportsStarttls).toBe(2);
     });
 
     it('/smtp-starttls allowlists mixed-case persisted MX data canonically', async () => {

@@ -3,6 +3,12 @@
  *
  * Checks SMTP server for STARTTLS capability.
  * Performs limited SMTP handshake to detect TLS support.
+ *
+ * Trust contract (issue #74): the STARTTLS handshake is a diagnostic
+ * observation made with one permissive TLS connection so invalid
+ * certificates are retained as evidence. `success` is true only for
+ * negotiated, chain-authorized, hostname-authorized TLS; it must never be
+ * true for an untrusted certificate.
  */
 
 import * as dns from 'node:dns';
@@ -16,7 +22,12 @@ export interface SMTPProbeResult {
   success: boolean;
   hostname: string;
   port: number;
+  /** EHLO advertised STARTTLS. */
   supportsStarttls: boolean;
+  /** The diagnostic TLS handshake completed. */
+  tlsNegotiated: boolean;
+  /** Chain and hostname authorization both passed for the negotiated session. */
+  tlsTrusted: boolean;
   tlsVersion?: string;
   tlsCipher?: string;
   certificate?: {
@@ -25,6 +36,12 @@ export interface SMTPProbeResult {
     validFrom: string;
     validTo: string;
     fingerprint: string;
+    /** Runtime trust store accepted the certificate chain. */
+    chainAuthorized: boolean;
+    /** Certificate matches the probe hostname (SAN/CN). */
+    hostnameAuthorized: boolean;
+    /** First authorization failure, retained as diagnostic evidence. */
+    authorizationError?: string;
   };
   smtpBanner?: string;
   error?: string;
@@ -350,6 +367,9 @@ export async function probeSMTPStarttls(
   const { signal } = controller;
   let rawSocket: net.Socket | undefined;
   let tlsSocket: tls.TLSSocket | undefined;
+  // Retained through later failures so an advertised capability survives a
+  // TLS handshake error.
+  let advertisedStarttls = false;
   const destroyActiveSockets = () => {
     rawSocket?.destroy();
     tlsSocket?.destroy();
@@ -363,6 +383,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Persisted DNS evidence expired before probe start',
         responseTimeMs: Date.now() - startTime,
       };
@@ -378,6 +400,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: `SSRF blocked: ${ssrfCheck.reason}`,
         responseTimeMs: Date.now() - startTime,
       };
@@ -389,6 +413,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: 'Destination not in allowlist. Generate allowlist from DNS results first.',
         responseTimeMs: Date.now() - startTime,
       };
@@ -401,6 +427,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: resolved.error,
         responseTimeMs: Date.now() - startTime,
       };
@@ -412,6 +440,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         error: signal.aborted
           ? `Timeout after ${timeoutMs}ms`
           : 'Persisted DNS evidence expired before socket start',
@@ -430,6 +460,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner,
         error: `Unexpected banner: ${banner.message}`,
         responseTimeMs: Date.now() - startTime,
@@ -444,6 +476,8 @@ export async function probeSMTPStarttls(
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner,
         error: `EHLO rejected: ${ehloResponse.message}`,
         responseTimeMs: Date.now() - startTime,
@@ -451,12 +485,15 @@ export async function probeSMTPStarttls(
     }
 
     const supportsStarttls = ehloResponse.message.toUpperCase().includes('STARTTLS');
+    advertisedStarttls = supportsStarttls;
     if (!supportsStarttls) {
       return {
-        success: true,
+        success: false,
         hostname,
         port,
         supportsStarttls: false,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner,
         responseTimeMs: Date.now() - startTime,
       };
@@ -466,25 +503,88 @@ export async function probeSMTPStarttls(
     const starttlsResponse = await readResponse(rawSocket, signal, deadline);
     if (starttlsResponse.code !== 220) {
       return {
-        success: true,
+        success: false,
         hostname,
         port,
         supportsStarttls: true,
+        tlsNegotiated: false,
+        tlsTrusted: false,
         smtpBanner,
         error: `STARTTLS rejected: ${starttlsResponse.message}`,
         responseTimeMs: Date.now() - startTime,
       };
     }
 
+    // One permissive diagnostic handshake (issue #74): hostname and chain
+    // evaluation are disabled here so invalid-certificate evidence survives;
+    // trust is decided explicitly below from the exact peer certificate.
     tlsSocket = tls.connect({
       socket: rawSocket,
       servername: hostname,
       rejectUnauthorized: false,
+      checkServerIdentity: () => undefined,
     });
     await waitForTls(tlsSocket, signal, deadline);
 
     const tlsInfo = tlsSocket.getCipher();
-    const cert = tlsSocket.getPeerCertificate();
+    const cert = tlsSocket.getPeerCertificate(true);
+    if (!cert || !cert.subject) {
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: true,
+        tlsNegotiated: false,
+        tlsTrusted: false,
+        smtpBanner,
+        error: 'TLS handshake completed without a usable peer certificate',
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
+
+    const chainAuthorized = tlsSocket.authorized;
+    const hostnameError = tls.checkServerIdentity(hostname, cert);
+    const hostnameAuthorized = hostnameError === undefined;
+    const tlsTrusted = chainAuthorized && hostnameAuthorized;
+    const certificate = {
+      subject: String(cert.subject.CN || cert.subject.O || 'Unknown'),
+      issuer: String(cert.issuer.CN || cert.issuer.O || 'Unknown'),
+      validFrom: cert.valid_from,
+      validTo: cert.valid_to,
+      fingerprint: cert.fingerprint,
+      chainAuthorized,
+      hostnameAuthorized,
+      authorizationError:
+        [
+          chainAuthorized
+            ? undefined
+            : (tlsSocket.authorizationError?.message ?? 'certificate chain is not authorized'),
+          hostnameError?.message,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join('; ') || undefined,
+    };
+
+    if (!tlsTrusted) {
+      // Never complete an SMTP session over an untrusted TLS connection;
+      // destroy it once the diagnostic evidence is captured.
+      tlsSocket.destroy();
+      return {
+        success: false,
+        hostname,
+        port,
+        supportsStarttls: true,
+        tlsNegotiated: true,
+        tlsTrusted: false,
+        tlsVersion: tlsInfo.version,
+        tlsCipher: tlsInfo.name,
+        certificate,
+        smtpBanner,
+        error: `TLS certificate not trusted: ${certificate.authorizationError ?? 'unknown authorization failure'}`,
+        responseTimeMs: Date.now() - startTime,
+      };
+    }
+
     tlsSocket.write('QUIT\r\n');
     tlsSocket.end();
 
@@ -493,17 +593,11 @@ export async function probeSMTPStarttls(
       hostname,
       port,
       supportsStarttls: true,
+      tlsNegotiated: true,
+      tlsTrusted: true,
       tlsVersion: tlsInfo.version,
       tlsCipher: tlsInfo.name,
-      certificate: cert.subject
-        ? {
-            subject: String(cert.subject.CN || cert.subject.O || 'Unknown'),
-            issuer: String(cert.issuer.CN || cert.issuer.O || 'Unknown'),
-            validFrom: cert.valid_from,
-            validTo: cert.valid_to,
-            fingerprint: cert.fingerprint,
-          }
-        : undefined,
+      certificate,
       smtpBanner,
       responseTimeMs: Date.now() - startTime,
     };
@@ -519,7 +613,9 @@ export async function probeSMTPStarttls(
       success: false,
       hostname,
       port,
-      supportsStarttls: false,
+      supportsStarttls: advertisedStarttls,
+      tlsNegotiated: false,
+      tlsTrusted: false,
       error: isTimeout ? `Timeout after ${timeoutMs}ms` : errorMessage,
       responseTimeMs: Date.now() - startTime,
     };
@@ -563,6 +659,8 @@ export async function probeMXHosts(
             hostname: host.hostname,
             port: 25,
             supportsStarttls: false,
+            tlsNegotiated: false,
+            tlsTrusted: false,
             error: 'Persisted DNS evidence expired before probe start',
             responseTimeMs: 0,
           };
