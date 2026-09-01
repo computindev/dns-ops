@@ -5,6 +5,10 @@ profile: changed
 paths:
   - apps/web/hono/routes/api.ts
   - apps/collector/src/index.ts
+  - apps/collector/package.json
+  - package.json
+  - scripts/verify-collector-start.mjs
+  - .github/workflows/ci.yml
   - .railway/railway.ts
 always_with: []
 ---
@@ -17,6 +21,7 @@ Operators and Railway need an unauthenticated answer that the web process can ta
 - Web `GET /api/health` — 200 `{"status":"healthy","service":"dns-ops-web"}` when the DB ping succeeds; 503 `{"status":"degraded"}` when it does not. Optional `revision` is `GIT_SHA` or `RAILWAY_GIT_COMMIT_SHA` when set.
 - Collector `GET /healthz` — liveness, process only.
 - Collector `GET /readyz` — dependency-aware; 503 when DB/queues are not ready.
+- CI clean-start verification — serially removes only ignored collector/dependency outputs, then runs the dependency-aware collector start with listening disabled and confirms a stale entry is not executed.
 
 ## How to get to it (user POV)
 

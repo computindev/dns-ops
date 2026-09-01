@@ -30,7 +30,15 @@ describe('Shared Reports Authentication - Bead 12.7', () => {
 
   beforeEach(() => {
     process.env.INTERNAL_SECRET = 'test-internal-secret';
-    process.env.API_KEY_SECRET = 'test-api-secret';
+    process.env.API_PRINCIPALS_JSON = JSON.stringify([
+      {
+        principalId: 'reports-principal-1',
+        tokenSha256: '5b9a79e08f9713894a7104c96dc95e3901437acfbb75a6a1b7c097804c7aa8ab',
+        tenantId: '660e8400-e29b-41d4-a716-446655440000',
+        actorId: 'test-actor',
+        enabled: true,
+      },
+    ]);
 
     appWithAuth = new Hono<Env>();
     appWithAuth.use('*', requireServiceAuthMiddleware);
@@ -39,7 +47,7 @@ describe('Shared Reports Authentication - Bead 12.7', () => {
 
   afterEach(() => {
     delete process.env.INTERNAL_SECRET;
-    delete process.env.API_KEY_SECRET;
+    delete process.env.API_PRINCIPALS_JSON;
   });
 
   it('GET /reports/shared should return 401 without authentication', async () => {
@@ -88,15 +96,29 @@ describe('Shared Reports Authentication - Bead 12.7', () => {
     expect(res.status).toBe(503);
   });
 
-  it('GET /reports/shared should proceed with valid API key', async () => {
+  it('GET /reports/shared should proceed with a valid API principal token (#66)', async () => {
     const res = await appWithAuth.request('/api/monitoring/reports/shared', {
       headers: {
-        'X-API-Key': 'test-tenant:test-actor:test-api-secret',
+        'X-API-Key': 'collector-auth-test-token-0123456789abcdef01234',
       },
     });
 
     expect(res.status).not.toBe(401);
     expect(res.status).toBe(503); // No db
+  });
+
+  it('GET /reports/shared should reject forged legacy API key identity (#66)', async () => {
+    process.env.API_KEY_SECRET = 'test-api-secret';
+
+    const res = await appWithAuth.request('/api/monitoring/reports/shared', {
+      headers: {
+        'X-API-Key': 'forged-tenant:forged-actor:test-api-secret',
+      },
+    });
+
+    delete process.env.API_KEY_SECRET;
+
+    expect(res.status).toBe(401);
   });
 });
 

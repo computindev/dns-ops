@@ -167,12 +167,12 @@ describe('Probe Routes Authentication - Bead 13.1', () => {
       expect(json.target).toBe('example.com');
     });
 
-    it('should accept API key authentication', async () => {
+    it('should accept API principal token authentication (#66)', async () => {
       const app = createAppWithAuth();
 
       const res = await app.request('/api/probe/health', {
         headers: {
-          'X-API-Key': 'test-tenant:test-actor:test-api-secret',
+          'X-API-Key': 'collector-auth-test-token-0123456789abcdef01234',
         },
       });
 
@@ -259,10 +259,20 @@ describe('Probe Routes Without Auth (baseline)', () => {
 function createAppWithAuth(): Hono<Env> {
   // Set up test environment variables
   const _originalInternalSecret = process.env.INTERNAL_SECRET;
+  const _originalApiPrincipals = process.env.API_PRINCIPALS_JSON;
   const _originalApiKeySecret = process.env.API_KEY_SECRET;
 
   process.env.INTERNAL_SECRET = 'test-internal-secret';
-  process.env.API_KEY_SECRET = 'test-api-secret';
+  // API principal configuration: bare opaque token mapped by hash (#66).
+  process.env.API_PRINCIPALS_JSON = JSON.stringify([
+    {
+      principalId: 'probe-principal-1',
+      tokenSha256: '5b9a79e08f9713894a7104c96dc95e3901437acfbb75a6a1b7c097804c7aa8ab',
+      tenantId: '660e8400-e29b-41d4-a716-446655440000',
+      actorId: 'probe-actor',
+      enabled: true,
+    },
+  ]);
 
   const app = new Hono<Env>();
 

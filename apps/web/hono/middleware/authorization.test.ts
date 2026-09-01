@@ -199,6 +199,17 @@ describe('Authorization Middleware', () => {
       expect(res.status).toBe(403);
     });
 
+    it('should reject requests with an empty internal secret', async () => {
+      process.env.INTERNAL_SECRET = '';
+      app.get('/admin', requireAdminAccess, (c) => c.json({ ok: true }));
+
+      const res = await app.request('/admin', {
+        headers: { 'X-Internal-Secret': 'test-secret-123' },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
     it('rejects allowlisted CF-Access headers without session-backed identity (TB-1)', async () => {
       process.env.ADMIN_EMAILS = 'user@example.com';
 

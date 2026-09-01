@@ -5,6 +5,7 @@
  * Ensures only authenticated users can access or mutate operational data.
  */
 
+import { compareSecret } from '@dns-ops/contracts';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types.js';
@@ -99,7 +100,7 @@ export const requireAdminAccess = createMiddleware<Env>(async (c, next) => {
   // Internal service credentials are self-contained and must not depend on user context.
   const internalSecret = c.req.header('X-Internal-Secret');
   const expectedSecret = getRuntimeSecret(c, 'INTERNAL_SECRET');
-  if (expectedSecret && internalSecret === expectedSecret) {
+  if (await compareSecret(internalSecret, expectedSecret)) {
     return next();
   }
 

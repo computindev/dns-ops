@@ -1,3 +1,4 @@
+import { parseApiPrincipals } from '@dns-ops/contracts';
 import { createLogger } from '@dns-ops/logging';
 import type { Env } from '../types.js';
 
@@ -11,6 +12,8 @@ interface EnvVarDef {
     | 'COLLECTOR_URL'
     | 'INTERNAL_SECRET'
     | 'API_KEY_SECRET'
+    | 'API_PRINCIPALS_JSON'
+    | 'ENABLE_LEGACY_API_KEY_AUTH'
     | 'ADMIN_EMAILS';
   required: boolean | 'development' | 'production';
   description: string;
@@ -91,9 +94,33 @@ const ENV_VARS: EnvVarDef[] = [
   {
     name: 'API_KEY_SECRET',
     required: false,
-    description: 'Shared secret for service API key authentication',
+    description:
+      'Legacy shared secret for tenantId:actorId:secret API keys; only consulted when ENABLE_LEGACY_API_KEY_AUTH=true',
     validate: (value) =>
       value.length >= 16 ? null : 'Must be at least 16 characters for security',
+  },
+  {
+    name: 'API_PRINCIPALS_JSON',
+    required: false,
+    description:
+      'JSON array of API principals (principalId, tokenSha256, tenantId UUID, actorId, enabled); hashes only, never raw tokens (#66)',
+    validate: (value) => {
+      try {
+        parseApiPrincipals(value);
+        return null;
+      } catch {
+        return 'Must be a JSON array of API principals with 64-hex SHA-256 token hashes and canonical tenant UUIDs';
+      }
+    },
+  },
+  {
+    name: 'ENABLE_LEGACY_API_KEY_AUTH',
+    required: false,
+    description:
+      'One-release compatibility gate for legacy tenantId:actorId:secret API keys. Default off in every environment; literal "true" enables it (#66)',
+    validate: (value) =>
+      value === 'true' || value === 'false' ? null : 'Must be exactly "true" or "false"',
+    default: 'false',
   },
   {
     name: 'ADMIN_EMAILS',
@@ -137,6 +164,10 @@ function readEnvValue(
       return bindings?.INTERNAL_SECRET ?? processEnv.INTERNAL_SECRET;
     case 'API_KEY_SECRET':
       return bindings?.API_KEY_SECRET ?? processEnv.API_KEY_SECRET;
+    case 'API_PRINCIPALS_JSON':
+      return bindings?.API_PRINCIPALS_JSON ?? processEnv.API_PRINCIPALS_JSON;
+    case 'ENABLE_LEGACY_API_KEY_AUTH':
+      return bindings?.ENABLE_LEGACY_API_KEY_AUTH ?? processEnv.ENABLE_LEGACY_API_KEY_AUTH;
     case 'ADMIN_EMAILS':
       return bindings?.ADMIN_EMAILS ?? processEnv.ADMIN_EMAILS;
     case 'NODE_ENV':
@@ -256,6 +287,8 @@ export function getEnvConfig(
   collectorUrl: string;
   internalSecret: string | undefined;
   apiKeySecret: string | undefined;
+  apiPrincipalsJson: string | undefined;
+  legacyApiKeyAuthEnabled: boolean;
   isDevelopment: boolean;
   isProduction: boolean;
 } {
@@ -270,6 +303,9 @@ export function getEnvConfig(
     collectorUrl: readEnvValue('COLLECTOR_URL', bindings, processEnv) || 'http://localhost:3001',
     internalSecret: readEnvValue('INTERNAL_SECRET', bindings, processEnv),
     apiKeySecret: readEnvValue('API_KEY_SECRET', bindings, processEnv),
+    apiPrincipalsJson: readEnvValue('API_PRINCIPALS_JSON', bindings, processEnv),
+    legacyApiKeyAuthEnabled:
+      readEnvValue('ENABLE_LEGACY_API_KEY_AUTH', bindings, processEnv) === 'true',
     isDevelopment: nodeEnv === 'development',
     isProduction: nodeEnv === 'production',
   };

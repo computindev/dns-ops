@@ -7,6 +7,10 @@ export type Env = {
     COLLECTOR_URL?: string;
     INTERNAL_SECRET?: string;
     API_KEY_SECRET?: string;
+    /** JSON array of static API principals containing only SHA-256 token hashes. */
+    API_PRINCIPALS_JSON?: string;
+    /** One-release legacy tenantId:actorId:secret gate; literal "true" only. */
+    ENABLE_LEGACY_API_KEY_AUTH?: string;
     ADMIN_EMAILS?: string;
     /** JSON array of static MCP principals containing only SHA-256 token hashes. */
     MCP_PRINCIPALS_JSON?: string;

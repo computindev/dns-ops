@@ -156,7 +156,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
 
     // Get current ruleset and ensure version exists
     const ruleset = createCombinedRuleset();
-    const actorId = c.req.header('X-Actor-Id') || 'system';
+    const actorId = c.get('actorId') || 'system';
     const rulesetVersionId = await ensureRulesetVersion(rulesetVersionRepo, ruleset, actorId);
 
     // Check for existing findings for the current ruleset version (idempotent)
@@ -507,7 +507,7 @@ findingsRoutes.post('/snapshot/:snapshotId/evaluate', requireAuth, async (c) => 
 
     // Get current ruleset version
     const ruleset = createCombinedRuleset();
-    const actorId = c.req.header('X-Actor-Id') || 'system';
+    const actorId = c.get('actorId') || 'system';
     const rulesetVersionId = await ensureRulesetVersion(rulesetVersionRepo, ruleset, actorId);
 
     // Delete findings for the current ruleset version only (preserves historical versions)
@@ -1058,7 +1058,7 @@ findingsRoutes.get('/findings/backfill/status', requireAuth, async (c) => {
 
     // Get current ruleset and ensure version exists
     const ruleset = createCombinedRuleset();
-    const actorId = c.req.header('X-Actor-Id') || 'system';
+    const actorId = c.get('actorId') || 'system';
     const rulesetVersionId = await ensureRulesetVersion(rulesetVersionRepo, ruleset, actorId);
 
     // Get backfill statistics

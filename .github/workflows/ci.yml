@@ -108,6 +108,9 @@ jobs:
           RUN_LIVE_DNS_TESTS: "0"
         run: pnpm test
 
+      - name: Verify clean collector start
+        run: bun run verify:collector-start
+
       - name: Build
         run: bun run build
 

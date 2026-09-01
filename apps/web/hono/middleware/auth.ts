@@ -4,7 +4,14 @@
  * Authentication for internal use with cookie-based sessions.
  */
 
-import { getTenantUUID } from '@dns-ops/contracts';
+import {
+  type ApiPrincipal,
+  authenticateApiKey,
+  compareSecret,
+  getTenantUUID,
+  isLegacyApiKeyAuthEnabled,
+  parseApiPrincipals,
+} from '@dns-ops/contracts';
 import { sessions } from '@dns-ops/db/schema';
 import { and, eq, gt } from 'drizzle-orm';
 import type { Context } from 'hono';
@@ -13,7 +20,7 @@ import type { Env } from '../types.js';
 
 function getRuntimeSecret(
   c: Context<Env>,
-  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET'
+  name: 'INTERNAL_SECRET' | 'API_KEY_SECRET' | 'API_PRINCIPALS_JSON' | 'ENABLE_LEGACY_API_KEY_AUTH'
 ): string | undefined {
   const bindingValue = c.env?.[name];
   return typeof bindingValue === 'string' && bindingValue.trim() ? bindingValue : process.env[name];
@@ -83,22 +90,30 @@ async function extractDatabaseSession(
 
 /**
  * Extract auth from API key header
+ *
+ * Bare opaque tokens authenticate against API_PRINCIPALS_JSON (SHA-256 hash
+ * match); tenant/actor come from the stored principal only (#66). The legacy
+ * tenantId:actorId:secret format is gated behind ENABLE_LEGACY_API_KEY_AUTH
+ * (literal "true", default off everywhere) for one release.
  */
-function extractApiKey(c: Context<Env>): { tenantId: string; actorId: string } | null {
+async function extractApiKey(
+  c: Context<Env>
+): Promise<{ tenantId: string; actorId: string } | null> {
   const apiKey = c.req.header('X-API-Key');
   if (!apiKey) return null;
 
-  const parts = apiKey.split(':');
-  if (parts.length < 3) return null;
+  // Invalid principal configuration fails closed — never falls back to legacy.
+  let principals: ApiPrincipal[];
+  try {
+    principals = parseApiPrincipals(getRuntimeSecret(c, 'API_PRINCIPALS_JSON'));
+  } catch {
+    return null;
+  }
 
-  const [tenantId, actorId, secret] = parts;
-  const expectedSecret = getRuntimeSecret(c, 'API_KEY_SECRET');
-
-  if (!expectedSecret || secret !== expectedSecret) return null;
-  if (!tenantId || !actorId) return null;
-  if (!isValidIdentifier(tenantId) || !isValidIdentifier(actorId)) return null;
-
-  return { tenantId, actorId };
+  return authenticateApiKey(apiKey, principals, {
+    enabled: isLegacyApiKeyAuthEnabled(getRuntimeSecret(c, 'ENABLE_LEGACY_API_KEY_AUTH')),
+    secret: getRuntimeSecret(c, 'API_KEY_SECRET'),
+  });
 }
 
 /**
@@ -125,7 +140,7 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext = extractApiKey(c) || extractDevBypass(c);
+    authContext = (await extractApiKey(c)) || extractDevBypass(c);
   }
 
   if (authContext) {
@@ -159,7 +174,7 @@ export const requireAuthMiddleware = createMiddleware<Env>(async (c, next) => {
   let authContext = await extractDatabaseSession(c);
 
   if (!authContext) {
-    authContext = extractApiKey(c) || extractDevBypass(c);
+    authContext = (await extractApiKey(c)) || extractDevBypass(c);
   }
 
   if (!authContext) {
@@ -191,7 +206,7 @@ export const internalOnlyMiddleware = createMiddleware<Env>(async (c, next) => {
   const internalSecret = c.req.header('X-Internal-Secret');
   const expectedSecret = getRuntimeSecret(c, 'INTERNAL_SECRET');
 
-  if (expectedSecret && internalSecret === expectedSecret) {
+  if (await compareSecret(internalSecret, expectedSecret)) {
     const systemTenantUUID = await getTenantUUID('system');
     c.set('tenantId', systemTenantUUID);
     c.set('actorId', 'internal-service');
