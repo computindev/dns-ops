@@ -26,7 +26,8 @@ An operator runs bulk mail/infrastructure/delegation checks across a domain inve
 ## Truth model (what this feature promises)
 
 - `pass` requires affirmative persisted evidence: a complete snapshot, explicit `COMPLETE` evaluation coverage, a non-null snapshot ruleset, and findings from that same snapshot+ruleset whose evidence observation IDs belong to the snapshot.
-- Zero relevant findings, missing/partial evaluation coverage, or uncorrelated evidence (wrong ruleset, empty evidence, foreign observation ID) ⇒ `unknown`, never `pass`.
+- Zero relevant findings, missing/partial evaluation coverage, a snapshot without a ruleset version, or uncorrelated evidence (wrong ruleset, empty evidence, foreign observation ID) ⇒ `unknown`, never `pass`.
+- Unknown-status rows never count as `issues` (nor in `domainsWithIssues`), including unrecognized severities.
 - Unrecognized severities ⇒ `unknown`, never `pass`.
 - Affirmative info/low ⇒ `pass`, medium ⇒ `warning`, high/critical ⇒ `fail`.
 
@@ -42,7 +43,7 @@ An operator runs bulk mail/infrastructure/delegation checks across a domain inve
 ```ts
 await page.goto(`${BASE_URL}/portfolio`);
 await page.getByRole('heading', { name: /fleet reports/i }).waitFor({ timeout: 15_000 });
-await page.getByLabelText(/domain inventory/i).fill('stale.example');
+await page.getByLabel(/domain inventory/i).fill('stale.example');
 await page.getByRole('button', { name: /mail security baseline/i }).click();
 await page.getByRole('button', { name: /run report/i }).click();
 await page.getByRole('button', { name: /show domain details/i }).waitFor({ timeout: 30_000 });
@@ -57,7 +58,7 @@ await page.getByRole('button', { name: /show domain details/i }).waitFor({ timeo
 
 ### Forbidden observations
 - Any check reporting `pass` without persisted, correlated findings evidence (false green).
-- Treating “No snapshots available / Findings not evaluated” errors as a `pass`.
+- Treating “No snapshots available” errors or unevaluated (null-ruleset) snapshots as a `pass`.
 - Class selectors, fixed sleeps.
 
 ### Read-back

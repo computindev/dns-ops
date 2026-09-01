@@ -108,28 +108,20 @@ fleetReportRoutes.post('/run', async (c) => {
           continue;
         }
 
-        // Check if findings were evaluated
-        const findingsEvaluated = snapshot.rulesetVersionId !== null;
-
-        if (!findingsEvaluated) {
-          errors.push({
-            domain: domainName,
-            error: 'Findings not evaluated. Re-collect to generate findings.',
-          });
-          continue;
-        }
-
         // Get persisted findings for this snapshot
         const snapshotFindings = await findingRepo.findBySnapshotId(snapshot.id);
 
         // Truth model: only explicit complete evaluation coverage on a complete
-        // snapshot may produce a PASS. Stale (missing/partial coverage) snapshots
-        // degrade every requested check to UNKNOWN even when findings exist.
+        // snapshot with a ruleset version may produce a PASS. Stale snapshots
+        // (missing/partial coverage, no ruleset version) degrade every requested
+        // check to UNKNOWN even when findings exist.
         // There is deliberately no elapsed-time freshness policy here — staleness
         // means missing explicit evaluation coverage, not age.
         const evaluationCoverage = evaluationCoverageOrUnknown(snapshot.metadata?.evaluation);
         const evaluationComplete =
-          snapshot.resultState === 'complete' && isEvaluationComplete(evaluationCoverage);
+          snapshot.rulesetVersionId !== null &&
+          snapshot.resultState === 'complete' &&
+          isEvaluationComplete(evaluationCoverage);
 
         // Correlation: findings must come from the same snapshot+ruleset and cite
         // evidence observations that belong to this snapshot.
@@ -147,7 +139,9 @@ fleetReportRoutes.post('/run', async (c) => {
           rulesetVersion: snapshot.rulesetVersionId,
           findingsCount: findings.length,
           checks: checkResults,
-          issues: checkResults.filter((r) => r.severity !== 'ok'),
+          // Unknown-status rows are not issues: an unrecognized severity must
+          // surface as unknown evidence, never as an actionable problem.
+          issues: checkResults.filter((r) => r.severity !== 'ok' && r.status !== 'unknown'),
         });
       } catch (err) {
         errors.push({

@@ -643,24 +643,58 @@ describe('Fleet Report truth model (issue #65)', () => {
     expect(json.summary.spfStats).toMatchObject({ fail: 1, unknown: 0 });
   });
 
-  it('still reports an error for a snapshot without any ruleset version', async () => {
+  it('emits requested unknown checks when the snapshot has no ruleset version', async () => {
+    // A snapshot without a ruleset version is stale, not an error: every
+    // requested check must degrade to unknown, never pass and never a
+    // per-domain error entry.
     const app = buildApp({
       domains: [mockDomain('never-evaluated.example')],
       snapshots: [
         mockSnapshot({ domainId: 'domain-never-evaluated.example', rulesetVersionId: null }),
       ],
-      findings: [],
-      observations: [],
+      // Findings exist but must not drive any verdict without a ruleset.
+      findings: [mockFinding()],
+      observations: [mockObservation()],
     });
 
     const res = await runReport(app, ['never-evaluated.example']);
+    expect(res.status).toBe(200);
     const json = await res.json();
 
-    expect(json.results).toHaveLength(0);
-    expect(json.errors[0]).toMatchObject({
-      domain: 'never-evaluated.example',
-      error: expect.stringContaining('Findings not evaluated'),
+    expect(json.errors).toBeUndefined();
+    expect(json.results).toHaveLength(1);
+    const spf = json.results[0].checks.find((c: { check: string }) => c.check === 'spf');
+    expect(spf.status).toBe('unknown');
+    expect(json.results[0].findingsCount).toBe(0);
+    expect(json.results[0].issues).toEqual([]);
+    expect(json.summary.spfStats).toMatchObject({ pass: 0, fail: 0, unknown: 1 });
+    expect(json.summary.domainsWithIssues).toBe(0);
+  });
+
+  it('never counts unknown-status checks as issues, including unrecognized severities', async () => {
+    // An unrecognized raw severity maps to status unknown; it must stay out
+    // of issues (and domainsWithIssues), not ride in on severity !== 'ok'.
+    const app = buildApp({
+      domains: [mockDomain('weird.example')],
+      snapshots: [
+        mockSnapshot({
+          domainId: 'domain-weird.example',
+          metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+        }),
+      ],
+      findings: [mockFinding({ severity: 'urgent' })],
+      observations: [mockObservation()],
     });
+
+    const res = await runReport(app, ['weird.example']);
+    const json = await res.json();
+
+    const spf = json.results[0].checks.find((c: { check: string }) => c.check === 'spf');
+    expect(spf.status).toBe('unknown');
+    expect(json.results[0].issues).toEqual([]);
+    expect(json.summary.spfStats).toMatchObject({ pass: 0, fail: 0, unknown: 1 });
+    expect(json.summary.domainsWithIssues).toBe(0);
+    expect(json.highPriorityIssues).toEqual([]);
   });
 });
 

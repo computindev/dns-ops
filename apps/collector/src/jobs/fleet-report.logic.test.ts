@@ -238,6 +238,15 @@ describe('Fleet Report Logic - Bead 18', () => {
       expect(mapSeverityToStatus('unknown')).toBe('unknown');
       expect(mapSeverityToStatus('')).toBe('unknown');
     });
+
+    it('should map unrecognized severities to unknown status rows', () => {
+      const findings = [createMockFinding({ type: 'mail.no-spf-record', severity: 'urgent' })];
+
+      const results = findingsToCheckResults(findings, ['spf']);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('unknown');
+    });
   });
 
   describe('generateSummary', () => {
