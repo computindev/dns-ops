@@ -354,16 +354,16 @@ export class DNSCollector {
    * chain from expanding the collection indefinitely.
    */
   private async collectMtaStsCnameChain(
-    initialResults: DNSQueryResult[],
+    initialResults: TimedDNSQueryResult[],
     errors: CollectionError[]
-  ): Promise<DNSQueryResult[]> {
+  ): Promise<TimedDNSQueryResult[]> {
     if (this.config.includeMailRecords === false) return [];
 
     const initialOwner = tryNormalizeDNSOwner(`_mta-sts.${this.config.domain}`)?.normalized;
     if (!initialOwner) return [];
     const queriedNames = new Set([initialOwner]);
     let pending = new Set(this.extractMtaStsCnameTargets(initialResults, new Set([initialOwner])));
-    const collected: DNSQueryResult[] = [];
+    const collected: TimedDNSQueryResult[] = [];
     const recursiveVantage: VantageInfo = {
       type: 'public-recursive',
       identifier: '8.8.8.8',
