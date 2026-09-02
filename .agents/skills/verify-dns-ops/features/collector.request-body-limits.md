@@ -10,6 +10,7 @@ paths:
   - apps/collector/src/jobs/fleet-report.test.ts
   - apps/collector/src/jobs/probe-routes.ts
   - apps/collector/src/middleware/request-body-limit.routes.test.ts
+  - .agents/skills/verify-dns-ops/harness/collector.mts
 always_with: []
 ---
 # Collector request-body limits
