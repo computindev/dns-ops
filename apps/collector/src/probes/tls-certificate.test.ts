@@ -29,7 +29,7 @@ function evidence(overrides: Partial<TLSCertificateEvidence> = {}): TLSCertifica
 
 function fakeSocket(options: {
   authorized: boolean;
-  authorizationError?: Error;
+  authorizationError?: string | Error | null;
   subjectaltname?: string;
 }) {
   const emitter = new EventEmitter();
@@ -103,6 +103,30 @@ describe('collectTlsCertificateEvidence', () => {
     const connectionOptions = vi.mocked(socketFactory).mock.calls[0][0];
     expect(connectionOptions.checkServerIdentity?.('example.com', {} as never)).toBeUndefined();
     expect(destroy).toHaveBeenCalledWith();
+  });
+
+  it.each([
+    ['string', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'DEPTH_ZERO_SELF_SIGNED_CERT'],
+    ['Error', new Error('certificate has expired'), 'certificate has expired'],
+  ] as const)('preserves %s-valued socket authorization diagnostics', async (_label, authorizationError, expected) => {
+    const { socket, emitter } = fakeSocket({
+      authorized: false,
+      authorizationError,
+    });
+    const socketFactory = vi.fn(() => {
+      queueMicrotask(() => emitter.emit('secureConnect'));
+      return socket;
+    }) as TLSSocketFactory;
+
+    const result = await collectTlsCertificateEvidence('example.com', {
+      resolveHostname: async () => ['1.1.1.1'],
+      socketFactory,
+    });
+
+    expect(result).toMatchObject({
+      status: 'OBSERVED',
+      evidence: { chainAuthorized: false, hostnameAuthorized: true, authorizationError: expected },
+    });
   });
 
   it('preserves observed invalid-certificate authorization evidence', async () => {
