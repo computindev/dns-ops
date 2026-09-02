@@ -2,6 +2,7 @@
 // Run: VERIFY_RUN_DIR=verification/runs/<run> bun .agents/skills/verify-dns-ops/harness/collector.mts
 // The imported app is the production collector app; no test/debug route is added.
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 const MAX_BYTES = 1_048_576;
@@ -17,6 +18,70 @@ process.env.NODE_ENV = 'development';
 process.env.DATABASE_URL = COLLECTOR_DB_URL;
 process.env.ENABLE_ACTIVE_PROBES = 'true';
 process.env.COLLECTOR_SKIP_LISTEN = 'true';
+
+type ProviderAttempt = {
+  kind: 'fetch' | 'socket';
+  host: string;
+  target: string;
+};
+
+const providerAttempts: ProviderAttempt[] = [];
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function rejectExternalAttempt(
+  kind: ProviderAttempt['kind'],
+  host: string,
+  target: string
+): never {
+  providerAttempts.push({ kind, host, target });
+  throw new Error(`Blocked non-loopback ${kind} attempt: ${target}`);
+}
+
+const originalFetch = globalThis.fetch;
+const guardedFetch: typeof globalThis.fetch = async (input, init) => {
+  const target = new URL(
+    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  );
+  if (!isLoopbackHost(target.hostname)) {
+    rejectExternalAttempt('fetch', target.hostname, target.href);
+  }
+  return originalFetch(input, init);
+};
+globalThis.fetch = guardedFetch;
+
+function socketTarget(args: unknown[]): { host: string; target: string } {
+  const [first, second] = args;
+  if (typeof first === 'number') {
+    const host = typeof second === 'string' ? second : 'localhost';
+    return { host, target: `socket://${host}:${first}` };
+  }
+  if (typeof first === 'object' && first !== null) {
+    const options = first as {
+      host?: string;
+      hostname?: string;
+      path?: string;
+      port?: number | string;
+    };
+    const host = options.host || options.hostname || 'localhost';
+    const target =
+      options.path !== undefined && options.port === undefined
+        ? `socket:${options.path}`
+        : `socket://${host}:${options.port ?? ''}`;
+    return { host, target };
+  }
+  return { host: 'localhost', target: `socket:${String(first)}` };
+}
+
+const originalSocketConnect = (net.Socket.prototype as any).connect as (...args: any[]) => net.Socket;
+(net.Socket.prototype as any).connect = function (this: net.Socket, ...args: any[]): net.Socket {
+  const { host, target } = socketTarget(args);
+  if (!isLoopbackHost(host)) rejectExternalAttempt('socket', host, target);
+  return originalSocketConnect.apply(this, args);
+};
 
 const { default: collectorApp } = await import('../../../../apps/collector/src/index.ts');
 
@@ -312,6 +377,11 @@ async function main(): Promise<void> {
   for (const routePath of POST_PATHS) await exactBoundary(routePath);
   for (const routePath of POST_PATHS) await malformedUnderLimit(routePath);
 
+  assert(
+    providerAttempts.length === 0,
+    `Enforced outbound guard recorded ${providerAttempts.length} external attempts: ${JSON.stringify(providerAttempts)}`
+  );
+
   // Read the written HTTP exchanges back from disk before producing the matrix;
   // this catches truncated evidence rather than trusting only in-memory values.
   const persisted = exchanges.map((exchange) => {
@@ -354,6 +424,10 @@ async function main(): Promise<void> {
         maxBytes: MAX_BYTES,
         endpoints: POST_PATHS,
         cases: matrix,
+        providerAttempts: {
+          count: providerAttempts.length,
+          details: providerAttempts,
+        },
         noUnboundedBuffering: {
           declaredOverflowPulls: matrix
             .filter((x) => x.mode === 'content-length-overflow')
@@ -380,7 +454,8 @@ async function main(): Promise<void> {
     '',
     '## Forbidden (must not happen → confirmed absent)',
     '',
-    '- No route-specific size error, alternate max value, successful overflow, provider request, or post-overflow sentinel read was observed.',
+    `- The enforced outbound guard recorded zero external attempts (providerAttempts count=${providerAttempts.length}; details=${JSON.stringify(providerAttempts)}).`,
+    '- No route-specific size error, alternate max value, successful overflow, or post-overflow sentinel read was observed.',
     '- Declared overflow pull counts were at most one runtime-prefetched chunk; chunked overflow pull counts were at most two.',
     '',
     '## Read-back (side effects checked through an independent path)',
