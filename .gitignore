@@ -58,3 +58,5 @@ verification/runs/
 verification/pending.json
 verification/.hook-blocks
 verification/registry.json
+
+/.verify-fresh-worktree

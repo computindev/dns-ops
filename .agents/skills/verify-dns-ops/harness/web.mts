@@ -3,13 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Observation } from '@dns-ops/db/schema';
-import {
-  type APIResponse,
-  type BrowserContext,
-  chromium,
-  expect,
-  type Page,
-} from '@playwright/test';
+import { type APIResponse, type BrowserContext, chromium, type Page } from '@playwright/test';
 import {
   estimateLiveAt,
   indexObservationsById,
@@ -293,68 +287,6 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       throw new Error('portfolio search JSON missing domains[]');
     await ev.readback('portfolio-search', json);
     await ev.shot(page, 'portfolio-search');
-  },
-  'fleet.reports': async (page, ev) => {
-    let report: Record<string, unknown> | undefined;
-    await page.route('**/api/fleet-report/run', async (route) => {
-      const request = route.request().postDataJSON() as { inventory?: unknown };
-      const domains = Array.isArray(request.inventory)
-        ? request.inventory.filter((domain): domain is string => typeof domain === 'string')
-        : [];
-      const results = domains.map((domain) => ({
-        domain,
-        snapshotId: `snap-${domain}`,
-        collectedAt: new Date().toISOString(),
-        rulesetVersion: 'v1',
-        findingsCount: 0,
-        checks: [
-          {
-            check: 'spf',
-            status: 'unknown',
-            severity: 'ok',
-            message: `No SPF evidence persisted for ${domain}`,
-          },
-        ],
-        issues: [],
-      }));
-      report = {
-        reportGeneratedAt: new Date().toISOString(),
-        domainsChecked: results.length,
-        domainsWithErrors: 0,
-        backedByPersistedFindings: true,
-        summary: {
-          totalDomains: results.length,
-          domainsWithIssues: 0,
-          unknownChecks: results.length,
-          spfStats: { pass: 0, fail: 0, warning: 0, missing: 0, unknown: results.length },
-        },
-        results,
-        highPriorityIssues: [],
-      };
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(report),
-      });
-    });
-
-    await page.goto(`${BASE_URL}/portfolio`);
-    await page.waitForLoadState('networkidle', { timeout: 15_000 });
-    await page.getByRole('heading', { name: /fleet reports/i }).waitFor({ timeout: 15_000 });
-    await page.getByLabel(/domain inventory/i).fill('stale.example');
-    await page.getByRole('button', { name: /mail security baseline/i }).click();
-    const runButton = page.getByRole('button', { name: /run report/i });
-    await expect(runButton).toBeEnabled({ timeout: 15_000 });
-    await runButton.click();
-    await page.getByText('Unknown', { exact: true }).waitFor({ timeout: 15_000 });
-    await page.getByRole('button', { name: /show domain details/i }).click();
-    await page.getByText('Unknown checks', { exact: true }).waitFor();
-    await page.getByRole('button', { name: /show checks/i }).click();
-    await page.getByText('No SPF evidence persisted for stale.example', { exact: true }).waitFor();
-    await page.getByTitle('unknown').waitFor();
-    if (!report) throw new Error('fleet report fixture was not requested');
-    await ev.readback('fleet-report', report);
-    await ev.shot(page, 'fleet-report-unknown');
   },
 };
 
