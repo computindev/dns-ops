@@ -4,16 +4,16 @@ run_id: 20260902-143549Z-d6a4195-smtp-starttls-trust-final
 feature_id: smtp.starttls-trust
 profile: critical
 surface: api
-sha: d6a41951584cc2f19796d76e9d5ddd0571585e60
+sha: 335e27d8b926f5c10fb1aa25a5e1b0a9638c3b03
 code_digest: 0f13a8092a42e9ecc969bb1c81e4bd16be4962829f3eac538d7bbf5cab0886d5
-dirty: true
+dirty: false
 untracked: 0
 status: passed
 reason: ""
 verifier: builder
 verifier_session: "harness:smtp-starttls-trust-final"
 evidence_dir: verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final
-created_at: 2026-09-02T14:37:41.054Z
+created_at: 2026-09-02T14:39:09.466Z
 ---
 
 # Receipt: smtp.starttls-trust — passed
