@@ -62,8 +62,7 @@ interface FindingSimulationResult {
   guidanceOnlySuggestions: GuidanceOnlySuggestion[];
 }
 
-const GUIDANCE_RESPONSE_ERROR =
-  'Simulation response rejected: guidance-only results are required.';
+const GUIDANCE_RESPONSE_ERROR = 'Simulation response rejected: guidance-only results are required.';
 const ACTIONABLE_TYPES_ERROR = 'Per-finding guidance is unavailable.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
