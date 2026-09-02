@@ -1,26 +1,26 @@
 ---
 receipt: verification-receipt/v0
-run_id: 20260902-143400Z-173de4c-smtp-starttls-trust
+run_id: 20260902-143549Z-d6a4195-smtp-starttls-trust-final
 feature_id: smtp.starttls-trust
 profile: critical
 surface: api
-sha: 173de4c62f485550cc143a95be30408bf43ff3b3
+sha: d6a41951584cc2f19796d76e9d5ddd0571585e60
 code_digest: 0f13a8092a42e9ecc969bb1c81e4bd16be4962829f3eac538d7bbf5cab0886d5
 dirty: true
-untracked: 2
+untracked: 0
 status: passed
 reason: ""
 verifier: builder
-verifier_session: "harness:smtp-starttls-trust"
-evidence_dir: verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust
-created_at: 2026-09-02T14:35:04.761Z
+verifier_session: "harness:smtp-starttls-trust-final"
+evidence_dir: verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final
+created_at: 2026-09-02T14:37:41.054Z
 ---
 
 # Receipt: smtp.starttls-trust — passed
 
 ## Observations (expected → seen)
 
-- The deterministic SMTP fixture passed with negotiated TLS, `success:true`, `tlsTrusted:true`, and certificate chain/hostname authorization both true; the fixture command transcript contained only EHLO/STARTTLS/QUIT and no credential or message commands.
+- The deterministic SMTP fixture passed with negotiated TLS, `success:true`, `tlsTrusted:true`, and certificate chain/hostname authorization both true; its command transcript contained only EHLO/STARTTLS/QUIT and no credential or message commands.
 - Expired, hostname-mismatch, and untrusted-chain fixtures passed with `success:false`, negotiated evidence retained, trust false, authorization diagnostics preserved, and no QUIT on untrusted sessions. String `DEPTH_ZERO_SELF_SIGNED_CERT` and `Error` certificate messages were both preserved.
 - Repository and persistence fixtures passed for forged/legacy rows and contradictory timeout status; trusted and non-SMTP controls remained successful. SSRF, checked-IP pinning, cumulative DNS/connect/banner/EHLO/STARTTLS/TLS deadlines, and socket cleanup all passed. The collector route authorization suite passed persisted-evidence, no-credential, stale, tenant, host, and port-denial cases.
 
@@ -36,8 +36,8 @@ created_at: 2026-09-02T14:35:04.761Z
 
 | path | kind | check | sha256 |
 |---|---|---|---|
-| verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust/cli-built-repository-proof.txt | transcript | evidence | 5458d042eca017afce0481ca226933c9b619aacde5cdc3f985e8c44de19f68d3 |
-| verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust/cli-collector-trust-tests.txt | transcript | evidence | e5b8cbf9857f646db65ceaea15adde67431bc8c44f682c8eb775c118a948f80e |
-| verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust/env.txt | env | aux | 76713a88f6ecac7bb49a121c68910a56fa3c233546c0a2853fef7bb6988d4289 |
-| verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust/observations.md | md | aux · unrecognized .md | 46b6134e5b8f103316e55aa876c167041c0bc1242e7fea4ab7d27c2c8872966a |
-| verification/runs/20260902-143400Z-173de4c-smtp-starttls-trust/readback/verification-boundaries.json | readback | evidence | 49c2c77d3281a6068044ada6ec5b970c64fe78f3cda960112e7510212a798829 |
+| verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final/cli-built-repository-proof.txt | transcript | evidence | a019aa3c954c412b75e520c7007e9e9057dfb14f7229baa3dc5de2a7240aa203 |
+| verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final/cli-collector-trust-tests.txt | transcript | evidence | 19e7b98aba0ad4f07d96cf858d6c3aaf866962dab46d351bc08340e859308481 |
+| verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final/env.txt | env | aux | 4273c558d0120683f0aabd33ee01610afd410297caecfccaf4bc4ea1d0d81fea |
+| verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final/observations.md | md | aux · unrecognized .md | 30293e6a6df37aad1065d40f17eb51b5994819f545f352d037af60e57a24f88e |
+| verification/runs/20260902-143549Z-d6a4195-smtp-starttls-trust-final/readback/verification-boundaries.json | readback | evidence | 49c2c77d3281a6068044ada6ec5b970c64fe78f3cda960112e7510212a798829 |
