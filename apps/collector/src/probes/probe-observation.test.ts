@@ -535,6 +535,56 @@ describe('Probe Observation Persistence', () => {
       return { repo: new ProbeObservationRepository(mockDb), selectWhere, selectOne, select };
     };
 
+    it('fails closed when trusted SMTP evidence has a contradictory failure status', async () => {
+      const contradictory = smtpRow(
+        'smtp-contradictory-timeout',
+        {
+          supportsStarttls: true,
+          tlsNegotiated: true,
+          tlsTrusted: true,
+          certificate: trustedCertificate,
+        },
+        { status: 'timeout', errorMessage: 'Connection timed out' }
+      );
+      const before = structuredClone(contradictory);
+      const { repo } = makeRepo([contradictory]);
+
+      const byId = await repo.findById(contradictory.id);
+      expect(byId).toMatchObject({
+        success: false,
+        status: 'timeout',
+        errorMessage: 'Connection timed out',
+        probeData: contradictory.probeData,
+      });
+
+      expect(await repo.findSuccessfulSmtpProbes('snapshot-1')).toEqual([]);
+
+      const failed = await repo.findFailedProbes('snapshot-1');
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({
+        id: contradictory.id,
+        success: false,
+        status: 'timeout',
+        errorMessage: 'Connection timed out',
+        probeData: contradictory.probeData,
+      });
+
+      await expect(repo.getSummary('snapshot-1')).resolves.toMatchObject({
+        total: 1,
+        successful: 0,
+        failed: 1,
+      });
+      await expect(repo.countByStatus('snapshot-1')).resolves.toEqual({
+        success: 0,
+        timeout: 1,
+        refused: 0,
+        error: 0,
+        other: 0,
+      });
+
+      expect(contradictory).toEqual(before);
+    });
+
     it('findBySnapshotId reads untrusted SMTP success as error without mutating rows', async () => {
       const fixtures = makeFixtures();
       const before = structuredClone(fixtures);

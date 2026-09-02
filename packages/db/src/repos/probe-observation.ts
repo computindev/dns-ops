@@ -27,16 +27,17 @@ type SMTPTrustProbeData = SMTPProbeData & {
  * Effective success under the SMTP trust contract (issue #74).
  *
  * Non-SMTP probes keep their persisted success bit. An SMTP STARTTLS probe
- * is successful only when the row itself succeeded and the persisted probe
- * data proves every trust condition: STARTTLS advertised, TLS negotiated,
- * `tlsTrusted === true`, and both certificate chain and hostname
- * authorization explicitly `true`. Absent or contradictory trust fields fail
- * closed (legacy and forged rows read as unsuccessful).
+ * is successful only when `status === 'success'`, `success === true`, and the
+ * persisted probe data proves every trust condition: STARTTLS advertised, TLS
+ * negotiated, `tlsTrusted === true`, and both certificate chain and hostname
+ * authorization explicitly `true`. Absent or contradictory status or trust
+ * fields fail closed (legacy and forged rows read as unsuccessful).
  */
 function isEffectivelySuccessful(probe: ProbeObservation): boolean {
   if (probe.probeType !== 'smtp_starttls') return probe.success === true;
   const probeData = probe.probeData as SMTPTrustProbeData | null;
   return (
+    probe.status === 'success' &&
     probe.success === true &&
     probeData?.supportsStarttls === true &&
     probeData.tlsNegotiated === true &&

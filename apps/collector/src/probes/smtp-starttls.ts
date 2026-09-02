@@ -543,6 +543,7 @@ export async function probeSMTPStarttls(
     }
 
     const chainAuthorized = tlsSocket.authorized;
+    const chainAuthorizationError: unknown = tlsSocket.authorizationError;
     const hostnameError = tls.checkServerIdentity(hostname, cert);
     const hostnameAuthorized = hostnameError === undefined;
     const tlsTrusted = chainAuthorized && hostnameAuthorized;
@@ -558,7 +559,11 @@ export async function probeSMTPStarttls(
         [
           chainAuthorized
             ? undefined
-            : (tlsSocket.authorizationError?.message ?? 'certificate chain is not authorized'),
+            : typeof chainAuthorizationError === 'string'
+              ? chainAuthorizationError
+              : chainAuthorizationError instanceof Error
+                ? chainAuthorizationError.message
+                : 'certificate chain is not authorized',
           hostnameError?.message,
         ]
           .filter((value): value is string => Boolean(value))

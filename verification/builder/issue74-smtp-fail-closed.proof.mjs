@@ -207,6 +207,47 @@ assert.equal(summary.successful, 2, 'summary counts only effective success');
 assert.equal(summary.failed, 9);
 assert.deepEqual(summary.byType, { smtp_starttls: 9, mta_sts: 2 });
 
+// Contradictory status control: complete trust evidence cannot override a
+// persisted failure status, and the raw status/diagnostics survive reads.
+const contradictoryStatus = row(
+  'contradictory-success-timeout',
+  {
+    supportsStarttls: true,
+    tlsNegotiated: true,
+    tlsTrusted: true,
+    certificate: trustedCert,
+  },
+  { status: 'timeout', errorMessage: 'Connection timed out' }
+);
+const contradictoryRepo = new ProbeObservationRepository(makeAdapter([contradictoryStatus]));
+const contradictoryById = await contradictoryRepo.findById(contradictoryStatus.id);
+assert.equal(contradictoryById.success, false);
+assert.equal(contradictoryById.status, 'timeout');
+assert.equal(contradictoryById.errorMessage, 'Connection timed out');
+assert.deepEqual(contradictoryById.probeData, contradictoryStatus.probeData);
+assert.deepEqual(
+  await contradictoryRepo.findSuccessfulSmtpProbes('snapshot-1'),
+  [],
+  'contradictory timeout must not appear as a successful SMTP probe'
+);
+const contradictoryFailed = await contradictoryRepo.findFailedProbes('snapshot-1');
+assert.deepEqual(contradictoryFailed.map((r) => r.id), [contradictoryStatus.id]);
+assert.equal(contradictoryFailed[0].status, 'timeout');
+assert.deepEqual(await contradictoryRepo.countByStatus('snapshot-1'), {
+  success: 0,
+  timeout: 1,
+  refused: 0,
+  error: 0,
+  other: 0,
+});
+assert.deepEqual(await contradictoryRepo.getSummary('snapshot-1'), {
+  total: 1,
+  successful: 0,
+  failed: 1,
+  byType: { smtp_starttls: 1 },
+  avgResponseTimeMs: 100,
+});
+
 // --- findById: single-row reads fail closed, missing stays null ---------
 const forgedById = await repo.findById('forged-chain-false');
 assert.equal(forgedById.id, 'forged-chain-false');

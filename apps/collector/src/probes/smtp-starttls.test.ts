@@ -119,7 +119,7 @@ vi.mock('node:tls', async (importOriginal) => {
     writes: string[] = [];
     destroyed = false;
     readonly authorized: boolean;
-    readonly authorizationError: Error | undefined;
+    readonly authorizationError: string | Error | undefined;
 
     constructor(options: Record<string, unknown>) {
       super();
@@ -182,7 +182,7 @@ let responseDelayMs = 0;
 let ehloAdvertisesStarttls = true;
 let starttlsRejected = false;
 let tlsChainAuthorized = true;
-let tlsAuthorizationError: Error | undefined;
+let tlsAuthorizationError: string | Error | undefined;
 let tlsHostnameAuthorized = true;
 let tlsProvidesCertificate = true;
 
@@ -621,6 +621,20 @@ describe('probeSMTPStarttls — diagnostic TLS trust contract (Issue #74)', () =
     expect(result.certificate?.authorizationError).toContain('certificate has expired');
     expect(result.error).toContain('TLS certificate not trusted');
     expect(result.error).toContain('certificate has expired');
+  });
+
+  it('preserves a string-valued chain authorization error exactly', async () => {
+    tlsChainAuthorized = false;
+    tlsAuthorizationError = 'DEPTH_ZERO_SELF_SIGNED_CERT';
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+
+    const result = await probeSMTPStarttls('mail.example.com', 'tenant-a', {
+      checkAllowlist: false,
+      timeoutMs: 1000,
+    });
+
+    expect(result.certificate?.authorizationError).toBe('DEPTH_ZERO_SELF_SIGNED_CERT');
+    expect(result.error).toBe('TLS certificate not trusted: DEPTH_ZERO_SELF_SIGNED_CERT');
   });
 
   it('preserves a hostname-mismatch certificate and never trusts it', async () => {
