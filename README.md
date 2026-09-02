@@ -41,7 +41,7 @@ dns-ops/
 - **DNS** — delegation evidence, snapshots, findings, selectors
 - **Mail** — mail findings (persisted), DKIM selectors with provider detection, preview badge, live diagnostics
 
-DNS change simulation UI is gated by `VITE_FEATURE_SIMULATION` (default `false`). The `/api/simulate` API may exist; it is not a default operator panel.
+The aggregate Domain 360 Overview simulation panel is gated by `VITE_FEATURE_SIMULATION` (default `false`). Existing actionable finding cards still expose an inline `Simulate` action for guidance-only results; the `/api/simulate` API does not apply DNS changes.
 
 ### Portfolio (`/portfolio`)
 
@@ -58,7 +58,7 @@ DNS change simulation UI is gated by `VITE_FEATURE_SIMULATION` (default `false`)
 
 Simulation is a **guidance-only API**. It does not emit executable mutations or dry-run provider-aware record changes. `packages/rules/src/simulation/index.ts` returns `mode: 'GUIDANCE_ONLY'`, `detectedProvider: 'unknown'`, and `proposedChanges: []`.
 
-The Domain 360 simulation panel stays off unless `VITE_FEATURE_SIMULATION=true`.
+The aggregate Domain 360 Overview simulation panel stays off unless `VITE_FEATURE_SIMULATION=true`; per-finding guidance on existing actionable cards is available independently of that gate.
 
 - `POST /api/simulate` — returns non-executable guidance for supported finding types
 - `GET /api/simulate/actionable-types` — lists finding types that have guidance
@@ -173,7 +173,7 @@ Live DNS fixture env vars:
 | Snapshots | `/api/snapshots` | Required | DNS snapshot CRUD, latest, diff |
 | Findings | `/api/findings` | Required | Rule evaluation, acknowledge, false-positive |
 | Selectors | `/api/selectors` | Required | Persisted DNS selectors |
-| Simulation | `/api/simulate` | Required | Guidance-only simulation; no executable mutations (UI flag off by default) |
+| Simulation | `/api/simulate` | Required | Guidance-only simulation; no executable mutations or provider writes |
 | Mail | `/api/mail` | Required | Mail diagnostics, remediation |
 | Monitoring | `/api/monitoring` | Required | Domain monitoring CRUD + toggle |
 | Alerts | `/api/alerts` | Required | Alert lifecycle (ack/resolve/suppress) |

@@ -7,10 +7,13 @@ paths:
   - apps/web/app/routes/domain/$domain.tsx
   - apps/web/app/components/DomainInput.tsx
   - apps/web/app/components/DNSViews.tsx
+  - apps/web/app/components/MailFindingsPanel.tsx
+  - apps/web/app/components/MailFindingsPanel.test.ts
   - apps/web/app/lib/dns-ttl.ts
   - apps/web/app/lib/dns-ttl.test.ts
   - apps/web/app/lib/domain-route.test.ts
   - apps/web/e2e/domain-states.spec.ts
+  - apps/web/e2e/finding-simulation.spec.ts
   - apps/collector/src/dns/collector.ts
   - apps/collector/src/dns/collector.concurrency.test.ts
   - apps/collector/src/dns/integration.test.ts
@@ -54,11 +57,16 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 - URL matches `/domain/google.com`.
 - Tabs Overview, DNS, Mail, and History are visible. Delegation is visible only when the product shows that tab.
 - DNS Parsed view renders `Remaining TTL` and `Estimated live at` column headers; every body row's two new cells are populated (`N s remaining` + `<time datetime>`, or `UNKNOWN` ×2) — never blank. Rendered live rows agree with persisted recursive evidence and the `dns-ttl-audit` read-back.
+- On the Mail tab, existing findings render as accessible named cards. After authenticated actionable-type discovery returns `supportedTypeIds`, each matching existing card shows a visible `Simulate` sibling primary button, including review-only findings; unsupported findings remain visible and expandable without that button.
+- Activating a finding's `Simulate` button sends only `{ findingId }` to the authenticated single-finding endpoint. A valid result renders `Guidance only`, its returned title, explanation, and playbook reference, plus `No DNS changes are applied.`; no Apply control, executable mutation, provider record value, or projected resolution appears.
+- Actionable-type or simulation failures preserve existing findings and fail closed. The aggregate Overview remediation panel remains controlled by `VITE_FEATURE_SIMULATION`; that gate does not hide per-finding guidance actions.
 
 ### Forbidden observations
 - Staying on `/` after Analyze with a valid domain.
 - Driving with CSS class selectors.
 - Deriving the estimate from the averaged record TTL instead of matching recursive answers; blank TTL cells.
+- Nesting `Simulate` inside the finding accordion button, guessing supported types, or hiding findings when actionable-type discovery fails.
+- Rendering a non-guidance response, proposed change, executable mutation, Apply/provider-write control, or projected-resolution claim.
 
 ### Read-back
 - The Domain 360 heading shows the submitted domain. Snapshot/findings JSON is optional; empty snapshot is allowed.

@@ -5,9 +5,11 @@
  * Includes security score and mail configuration summary.
  */
 
+import type { GuidanceOnlySuggestion } from '@dns-ops/contracts';
 import type { Finding, Suggestion } from '@dns-ops/db/schema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Button } from './ui/Button.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface MailFindingsPanelProps {
@@ -54,6 +56,112 @@ async function fetchMailFindings(snapshotId: string): Promise<MailFindingsData> 
   return (await res.json()) as MailFindingsData;
 }
 
+interface FindingSimulationResult {
+  mode: 'GUIDANCE_ONLY';
+  proposedChanges: [];
+  guidanceOnlySuggestions: GuidanceOnlySuggestion[];
+}
+
+const GUIDANCE_RESPONSE_ERROR =
+  'Simulation response rejected: guidance-only results are required.';
+const ACTIONABLE_TYPES_ERROR = 'Per-finding guidance is unavailable.';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function parseActionableTypeIds(value: unknown): string[] {
+  if (
+    !isRecord(value) ||
+    value.mode !== 'GUIDANCE_ONLY' ||
+    !Array.isArray(value.supportedTypeIds) ||
+    !value.supportedTypeIds.every((typeId) => typeof typeId === 'string')
+  ) {
+    throw new Error(ACTIONABLE_TYPES_ERROR);
+  }
+  return value.supportedTypeIds as string[];
+}
+
+async function fetchActionableFindingTypes(): Promise<string[]> {
+  const response = await fetch('/api/simulate/actionable-types', { credentials: 'include' });
+  if (!response.ok) throw new Error(ACTIONABLE_TYPES_ERROR);
+
+  try {
+    return parseActionableTypeIds(await response.json());
+  } catch {
+    throw new Error(ACTIONABLE_TYPES_ERROR);
+  }
+}
+
+function parseGuidanceSuggestion(value: unknown): GuidanceOnlySuggestion {
+  if (!isRecord(value)) throw new Error(GUIDANCE_RESPONSE_ERROR);
+
+  const { title, explanation, playbookId, requiresProviderConfirmation, executableMutation } =
+    value;
+  if (
+    value.kind !== 'GUIDANCE_ONLY' ||
+    typeof title !== 'string' ||
+    typeof explanation !== 'string' ||
+    typeof playbookId !== 'string' ||
+    typeof requiresProviderConfirmation !== 'boolean' ||
+    executableMutation !== null
+  ) {
+    throw new Error(GUIDANCE_RESPONSE_ERROR);
+  }
+
+  return {
+    kind: 'GUIDANCE_ONLY',
+    title,
+    explanation,
+    playbookId,
+    requiresProviderConfirmation,
+    executableMutation: null,
+  };
+}
+
+export function parseFindingSimulationResult(value: unknown): FindingSimulationResult {
+  if (!isRecord(value)) throw new Error(GUIDANCE_RESPONSE_ERROR);
+  if (
+    value.mode !== 'GUIDANCE_ONLY' ||
+    !Array.isArray(value.proposedChanges) ||
+    value.proposedChanges.length !== 0 ||
+    !Array.isArray(value.guidanceOnlySuggestions) ||
+    ('executableMutation' in value && value.executableMutation !== null)
+  ) {
+    throw new Error(GUIDANCE_RESPONSE_ERROR);
+  }
+
+  const summary = value.summary;
+  if (isRecord(summary) && summary.changesProposed !== undefined && summary.changesProposed !== 0) {
+    throw new Error(GUIDANCE_RESPONSE_ERROR);
+  }
+
+  return {
+    mode: 'GUIDANCE_ONLY',
+    proposedChanges: [],
+    guidanceOnlySuggestions: value.guidanceOnlySuggestions.map(parseGuidanceSuggestion),
+  };
+}
+
+async function runFindingSimulation(findingId: string): Promise<FindingSimulationResult> {
+  const response = await fetch('/api/simulate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ findingId }),
+    credentials: 'include',
+  });
+
+  if (!response.ok) throw new Error(`Simulation request failed (${response.status})`);
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(GUIDANCE_RESPONSE_ERROR);
+  }
+  return parseFindingSimulationResult(body);
+}
+
 export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['mail-findings', snapshotId],
@@ -62,6 +170,13 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
       return fetchMailFindings(snapshotId);
     },
     enabled: !!snapshotId,
+  });
+  const actionableTypesQuery = useQuery({
+    queryKey: ['simulation-actionable-types'],
+    queryFn: fetchActionableFindingTypes,
+    enabled: !!snapshotId,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   if (!snapshotId) {
@@ -105,6 +220,18 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {actionableTypesQuery.error && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          role="alert"
+        >
+          <span>Per-finding guidance is unavailable; findings remain available for review.</span>
+          <Button onClick={() => void actionableTypesQuery.refetch()} size="sm" variant="quiet">
+            Retry
+          </Button>
         </div>
       )}
 
@@ -203,6 +330,10 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
                   key={finding.id}
                   finding={finding}
                   domain={data.domain}
+                  isActionable={
+                    !actionableTypesQuery.error &&
+                    (actionableTypesQuery.data?.includes(finding.type) ?? false)
+                  }
                   suggestions={safeSuggestions.filter((s) => s.findingId === finding.id)}
                 />
               ))}
@@ -275,13 +406,19 @@ function ConfigStatusCard({
 function MailFindingCard({
   finding,
   domain,
+  isActionable,
   suggestions,
 }: {
   finding: Finding;
   domain: string;
+  isActionable: boolean;
   suggestions: Suggestion[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const headingId = `finding-${finding.id}`;
+  const simulationMutation = useMutation({
+    mutationFn: () => runFindingSimulation(finding.id),
+  });
 
   const severityColors: Record<string, string> = {
     critical: 'bg-red-600',
@@ -292,52 +429,109 @@ function MailFindingCard({
   };
 
   return (
-    <div
+    <article
+      aria-labelledby={headingId}
       className={`border rounded-lg overflow-hidden ${
         finding.reviewOnly ? 'border-amber-300 bg-amber-50' : 'border-gray-200'
       }`}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        aria-expanded={expanded}
-        className="focus-ring w-full px-4 py-3 text-left hover:bg-black/5 transition-colors duration-150"
-      >
-        <div className="flex items-start gap-3">
-          <span
-            className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
-              severityColors[finding.severity] || 'bg-gray-400'
-            }`}
-            aria-hidden="true"
-          />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h5 className="font-medium text-gray-900">{finding.title}</h5>
-              {finding.reviewOnly && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
-                  Review Required
-                </span>
-              )}
+      <div className="flex items-stretch">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="focus-ring flex-1 min-w-0 px-4 py-3 text-left hover:bg-black/5 transition-colors duration-150"
+        >
+          <div className="flex items-start gap-3">
+            <span
+              className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
+                severityColors[finding.severity] || 'bg-gray-400'
+              }`}
+              aria-hidden="true"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h5 id={headingId} className="font-medium text-gray-900">
+                  {finding.title}
+                </h5>
+                {finding.reviewOnly && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                    Review Required
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-gray-600 mt-1 line-clamp-2">{finding.description}</p>
+              <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                <span className="capitalize">{finding.confidence} confidence</span>
+                {suggestions.length > 0 && <span>{suggestions.length} suggestion(s)</span>}
+              </div>
             </div>
-            <p className="text-sm text-gray-600 mt-1 line-clamp-2">{finding.description}</p>
-            <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-              <span className="capitalize">{finding.confidence} confidence</span>
-              {suggestions.length > 0 && <span>{suggestions.length} suggestion(s)</span>}
-            </div>
+            <svg
+              className={`w-5 h-5 text-gray-400 transition-transform duration-150 ${
+                expanded ? 'rotate-180' : ''
+              }`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
           </div>
-          <svg
-            className={`w-5 h-5 text-gray-400 transition-transform duration-150 ${
-              expanded ? 'rotate-180' : ''
-            }`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            aria-hidden="true"
+        </button>
+
+        {isActionable && (
+          <Button
+            aria-label={`Simulate ${finding.title}`}
+            className="my-3 mr-3 shrink-0 self-start"
+            loading={simulationMutation.isPending}
+            onClick={() => simulationMutation.mutate()}
+            size="sm"
+            variant="primary"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+            Simulate
+          </Button>
+        )}
+      </div>
+
+      {simulationMutation.error && (
+        <div
+          className="flex items-center justify-between gap-3 border-t border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          role="alert"
+        >
+          <span>{simulationMutation.error.message}</span>
+          <Button onClick={() => simulationMutation.mutate()} size="sm" variant="quiet">
+            Retry
+          </Button>
         </div>
-      </button>
+      )}
+
+      {simulationMutation.data && (
+        <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm" role="status">
+          <p className="font-semibold text-amber-900">Guidance only</p>
+          {simulationMutation.data.guidanceOnlySuggestions.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {simulationMutation.data.guidanceOnlySuggestions.map((guidance) => (
+                <div key={guidance.playbookId}>
+                  <p className="font-medium text-gray-900">{guidance.title}</p>
+                  <p className="mt-1 text-gray-700">{guidance.explanation}</p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    <strong>Playbook reference:</strong> {guidance.playbookId}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1 text-gray-700">No guidance was returned for this finding.</p>
+          )}
+          <p className="mt-2 text-xs font-medium text-amber-900">No DNS changes are applied.</p>
+        </div>
+      )}
 
       {expanded && (
         <div className="px-4 pb-4 border-t border-gray-200/50 bg-white">
@@ -372,7 +566,7 @@ function MailFindingCard({
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
