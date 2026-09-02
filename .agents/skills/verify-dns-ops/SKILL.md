@@ -7,7 +7,7 @@ description: Drive the real dns-ops (web UI + public health APIs) to prove behav
 
 Read `features/README.md` first, then the feature file(s) the task names. The map says how to use a feature and what proves it; this file says how to run and drive the app.
 
-Surfaces: web (TanStack Start + Hono on port 3000) and public health HTTP (web `/api/health`, collector `/healthz` + `/readyz` on port 3001).
+Surfaces: web (TanStack Start + Hono on port 3000), collector route-boundary API (`apps/collector`), and public health HTTP (web `/api/health`, collector `/healthz` + `/readyz` on port 3001).
 
 ## Launch
 
@@ -20,13 +20,13 @@ bun run --filter @dns-ops/web dev
 
 Ready when: `curl -fsS --max-time 5 http://localhost:3000/api/health` returns JSON with `"status":"healthy"` (HTTP 200). HTTP 503 with `"status":"degraded"` means the process is up but the DB is not — doctor fails; do not drive authenticated features.
 
-Collector (needed for Domain 360 live collection, not for health.public / login / portfolio search UI chrome):
+Collector (needed for Domain 360 live collection and collector API verification, not for login / portfolio search UI chrome):
 
 ```bash
-bun run --filter @dns-ops/collector dev
+NODE_ENV=development DATABASE_URL=postgresql://127.0.0.1:1/collector-verification PORT=3001 bun run --filter @dns-ops/collector dev
 ```
 
-Ready when: `curl -fsS --max-time 5 http://localhost:3001/healthz` returns JSON with `"status":"ok"`.
+Ready when: `curl -fsS --max-time 5 http://localhost:3001/healthz` returns JSON with `"status":"ok"`. For request-body-limit verification, `collector.mts` imports the exported production app with `COLLECTOR_SKIP_LISTEN=true` so controlled streams can prove cancellation without adding a server or route.
 
 Teardown: kill the pid you started (`kill $APP_PID`), never `pkill` by name.
 Isolation: web binds `PORT` (default 3000), collector binds `PORT` (default 3001). Single instance per port — if the port is already taken, refuse to double-drive unless it is this checkout (`reuseExistingServer` is only for Playwright e2e).
@@ -35,13 +35,15 @@ Isolation: web binds `PORT` (default 3000), collector binds `PORT` (default 3001
 
 ```bash
 .agents/skills/verify-dns-ops/harness/doctor.sh
+# collector-only API drive:
+.agents/skills/verify-dns-ops/harness/collector-doctor.sh
 ```
 
-Read-only. Exit 0 = worth driving. Checks bun/node, web `/api/health`, and (when `COLLECTOR_URL` is set) collector `/healthz`. There is no `/version` endpoint — do not invent one. There is no seeded `verify@example.test` user in this repo; login needs `VERIFY_USER` / `VERIFY_PASS` against a real users row, or local e2e headers `X-Dev-Tenant` + `X-Dev-Actor`. Run doctor first whenever anything looks off; a failing doctor means `blocked`, not `failed`.
+Read-only. Exit 0 = worth driving. The general doctor checks bun/node, web `/api/health`, and (when `COLLECTOR_URL` is set) collector `/healthz`; `collector-doctor.sh` checks collector `/healthz` and accepts `/readyz` 200 or 503 for the local dependency. There is no `/version` endpoint — do not invent one. There is no seeded `verify@example.test` user in this repo; login needs `VERIFY_USER` / `VERIFY_PASS` against a real users row, or local e2e headers `X-Dev-Tenant` + `X-Dev-Actor`. Confirm the process cwd/pid is this checkout. Run doctor first whenever anything looks off; a failing doctor means `blocked`, not `failed`.
 
 ## Drive
 
-Harness: `.agents/skills/verify-dns-ops/harness/web.mts` (Playwright) and `.agents/skills/verify-dns-ops/harness/api.mts` (HTTP).
+Harness: `.agents/skills/verify-dns-ops/harness/web.mts` (Playwright), `.agents/skills/verify-dns-ops/harness/api.mts` (HTTP), and `.agents/skills/verify-dns-ops/harness/collector.mts` (production collector route-boundary streams).
 Identity:
 - Local e2e: `X-Dev-Tenant=dns-ops-e2e` and `X-Dev-Actor=e2e-bot` (see `apps/web/playwright.config.mjs`). Never live OAuth.
 - Login form: `VERIFY_USER` + `VERIFY_PASS` posted to `/api/auth/login` (signup is disabled 403).
@@ -58,7 +60,7 @@ VERIFY_RUN_DIR=<run dir> bun .agents/skills/verify-dns-ops/harness/api.mts <feat
 
 Everything goes into `$VERIFY_RUN_DIR/`:
 - `*.png` screenshots of the action and the resulting state; `trace.zip`; `console.log`; `failed-requests.log`
-- `http/*.json` request/response pairs for API drives; `readback/*.json` for API/DB read-backs
+- `http/*.json` request/response pairs for API drives; `readback/*.json` for API/DB read-backs; collector route matrices when the collector harness is used
 - `cli-transcript.txt` for CLI drives
 - `doctor.txt` from `harness/doctor.sh`
 
@@ -88,4 +90,6 @@ Kill what you started by pid/session. Do not drop the shared `dns_ops` database.
 | `harness/doctor.sh` | `.agents/skills/verify-dns-ops/harness/doctor.sh` | read-only health |
 | `harness/web.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/web.mts <feature-id>` | Playwright driver + evidence capture |
 | `harness/api.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/api.mts <feature-id>` | HTTP driver + exchange capture |
+| `harness/collector.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/collector.mts` | real collector route-boundary body-limit proof |
+| `harness/collector-doctor.sh` | `.agents/skills/verify-dns-ops/harness/collector-doctor.sh` | read-only collector health/readiness check |
 | `harness/cli.sh` | `VERIFY_RUN_DIR=… .agents/skills/verify-dns-ops/harness/cli.sh <name> -- <command>` | isolated CLI transcript |
