@@ -21,6 +21,12 @@ import {
 import { isValidDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
+import {
+  isRequestBodyTooLargeError,
+  readRequestBodyJson,
+  readRequestBodyText,
+  requestBodyTooLargeResponse,
+} from '../middleware/request-body-limit.js';
 import type { Env } from '../types.js';
 
 const logger = getCollectorLogger();
@@ -37,7 +43,21 @@ fleetReportRoutes.post('/run', async (c) => {
     return c.json({ error: 'Database not available' }, 503);
   }
 
-  const body = await c.req.json().catch(() => ({}));
+  let body: {
+    inventory?: unknown;
+    checks?: string[];
+    format?: string;
+  };
+  try {
+    body = await readRequestBodyJson<{
+      inventory?: unknown;
+      checks?: string[];
+      format?: string;
+    }>(c.req.raw);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+    throw error;
+  }
   const {
     inventory = [],
     checks = ['spf', 'dmarc', 'mx', 'infrastructure'],
@@ -194,16 +214,16 @@ fleetReportRoutes.post('/run', async (c) => {
  * Import inventory from CSV
  */
 fleetReportRoutes.post('/import-csv', async (c) => {
-  const body = await c.req.text();
+  let body: string;
+  try {
+    body = await readRequestBodyText(c.req.raw);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+    throw error;
+  }
 
   if (!body.trim()) {
     return c.json({ error: 'CSV data required' }, 400);
-  }
-
-  // Limit CSV size to prevent DoS
-  const maxCsvSize = 1024 * 1024; // 1MB
-  if (body.length > maxCsvSize) {
-    return c.json({ error: 'CSV file too large. Max size: 1MB' }, 400);
   }
 
   try {
