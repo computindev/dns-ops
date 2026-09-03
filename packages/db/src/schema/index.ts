@@ -572,6 +572,8 @@ export const savedFilters = pgTable(
       };
       tags?: string[];
       lastSnapshotWithin?: number; // hours
+      // Issue #60: RDAP expiry window criterion (days); UI accepts 7 | 30 | 90 only.
+      expirationWithinDays?: 7 | 30 | 90;
     }>(),
 
     // Visibility

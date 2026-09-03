@@ -5,6 +5,7 @@ import { type BuiltInView, searchBodyForView } from '../lib/built-in-views.js';
 import {
   type CurrentFilters,
   EMPTY_CURRENT_FILTERS,
+  type ExpirationWindow,
   normalizeCurrentFilters,
   type Severity,
   type ZoneManagement,
@@ -35,10 +36,24 @@ interface SearchResult {
     resultState: string;
     rulesetVersionId: string | null;
   } | null;
+  expiration:
+    | {
+        status: 'OBSERVED';
+        expirationDate: string;
+        observedAt: string;
+        bucket: 'EXPIRED' | 'WITHIN_7' | 'WITHIN_30' | 'WITHIN_90' | 'LATER';
+      }
+    | { status: 'UNKNOWN' };
 }
 
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const ZONE_MANAGEMENT: ZoneManagement[] = ['managed', 'unmanaged', 'unknown'];
+const EXPIRY_WINDOW_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Any' },
+  { value: '7', label: 'Within 7 days' },
+  { value: '30', label: 'Within 30 days' },
+  { value: '90', label: 'Within 90 days' },
+];
 
 export function PortfolioSearchPanel({
   currentFilters,
@@ -50,6 +65,7 @@ export function PortfolioSearchPanel({
   const idPrefix = useId();
   const queryId = `${idPrefix}-portfolio-search-query`;
   const tagsId = `${idPrefix}-portfolio-search-tags`;
+  const expiryWindowId = `${idPrefix}-portfolio-search-expiry-window`;
   const [tagDraft, setTagDraft] = useState('');
 
   const normalizedFilters = useMemo(
@@ -310,6 +326,30 @@ export function PortfolioSearchPanel({
           </div>
         </fieldset>
 
+        <div>
+          <label className="mb-1 block text-sm font-medium text-text" htmlFor={expiryWindowId}>
+            Expiry window
+          </label>
+          <select
+            id={expiryWindowId}
+            value={normalizedFilters.expirationWithinDays ?? ''}
+            onChange={(e) =>
+              updateFilters({
+                expirationWithinDays:
+                  e.target.value === '' ? null : (Number(e.target.value) as ExpirationWindow),
+              })
+            }
+            disabled={authRequired}
+            className="ds-input w-full rounded-lg border border-line px-3 py-2 focus:border-brand focus:ring-2 focus:ring-focus disabled:bg-surface-muted"
+          >
+            {EXPIRY_WINDOW_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex justify-end">
           <button
             type="button"
@@ -344,10 +384,28 @@ export function PortfolioSearchPanel({
               No tenant domains matched the current filters.
             </div>
           ) : (
-            <div className="space-y-3">
-              {results.map((result) => (
-                <SearchResultCard key={result.id} result={result} />
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Portfolio search results by domain</caption>
+                <thead>
+                  <tr className="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th scope="col" className="px-2 py-2 font-medium">
+                      Domain
+                    </th>
+                    <th scope="col" className="px-2 py-2 font-medium">
+                      Findings
+                    </th>
+                    <th scope="col" className="px-2 py-2 font-medium">
+                      Expiry
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((result) => (
+                    <SearchResultRow key={result.id} result={result} />
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -356,7 +414,7 @@ export function PortfolioSearchPanel({
   );
 }
 
-function SearchResultCard({ result }: { result: SearchResult }) {
+function SearchResultRow({ result }: { result: SearchResult }) {
   const counts = result.findings.reduce(
     (acc, finding) => {
       acc[finding.severity] += 1;
@@ -366,33 +424,28 @@ function SearchResultCard({ result }: { result: SearchResult }) {
   );
 
   return (
-    <div className="rounded-lg border border-line bg-surface-muted p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <Link
-            to="/domain/$domain"
-            params={{ domain: result.normalizedName }}
-            className="text-base font-medium text-brand hover:text-brand"
-          >
-            {result.name}
-          </Link>
-          <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted">
-            <span className="rounded bg-surface px-2 py-0.5 text-text">
-              {result.zoneManagement}
+    <tr className="border-b border-line align-top">
+      <th scope="row" className="px-2 py-3 font-normal">
+        <Link
+          to="/domain/$domain"
+          params={{ domain: result.normalizedName }}
+          className="text-base font-medium text-brand hover:text-brand"
+        >
+          {result.name}
+        </Link>
+        <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted">
+          <span className="rounded bg-surface px-2 py-0.5 text-text">{result.zoneManagement}</span>
+          {result.latestSnapshot ? (
+            <span>
+              {result.latestSnapshot.resultState} ·{' '}
+              {new Date(result.latestSnapshot.createdAt).toLocaleString()}
             </span>
-            {result.latestSnapshot ? (
-              <span>
-                {result.latestSnapshot.resultState} ·{' '}
-                {new Date(result.latestSnapshot.createdAt).toLocaleString()}
-              </span>
-            ) : (
-              <span>No snapshot available yet</span>
-            )}
-          </div>
+          ) : (
+            <span>No snapshot available yet</span>
+          )}
         </div>
-      </div>
-
-      <div className="mt-3 text-sm text-text">
+      </th>
+      <td className="px-2 py-3 text-text">
         {!result.findingsEvaluated ? (
           <span className="ds-badge ds-badge--unknown">
             Needs setup/evidence. {result.evaluationCoverage.errors[0]?.unknown.explanation}{' '}
@@ -411,7 +464,23 @@ function SearchResultCard({ result }: { result: SearchResult }) {
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </td>
+      <td className="px-2 py-3 text-text">
+        {'expirationDate' in result.expiration ? (
+          <span className="flex flex-col gap-0.5">
+            <span>
+              {new Date(result.expiration.expirationDate).toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+            </span>
+            <span className="text-xs text-muted">{result.expiration.bucket}</span>
+          </span>
+        ) : (
+          <span>UNKNOWN</span>
+        )}
+      </td>
+    </tr>
   );
 }

@@ -255,6 +255,9 @@ function createMockDb(data: MockData) {
       findings: {
         findMany: vi.fn(async () => data.findings),
       },
+      probeObservations: {
+        findMany: vi.fn(async () => []),
+      },
     },
   };
 
