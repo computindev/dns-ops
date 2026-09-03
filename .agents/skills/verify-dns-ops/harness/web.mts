@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Observation } from '@dns-ops/db/schema';
 import { type APIResponse, type BrowserContext, chromium, type Page } from '@playwright/test';
+import { Pool } from 'pg';
 import {
   estimateLiveAt,
   indexObservationsById,
@@ -11,6 +12,7 @@ import {
   parseServerDate,
   toDateTimeAttribute,
 } from '../../../../apps/web/app/lib/dns-ttl.js';
+import { getTenantUUID } from '../../../../packages/contracts/src/tenant.ts';
 import { observationsToRecordSets } from '../../../../packages/parsing/src/dns/recordset.js';
 
 export const BASE_URL = process.env.APP_URL ?? 'http://localhost:3000';
@@ -85,6 +87,73 @@ export async function login(page: Page) {
   await page.getByLabel('Password').fill(pass);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('heading', { name: /dns ops workbench/i }).waitFor({ timeout: 15_000 });
+}
+
+/** Seed isolated RDAP expiry rows for the portfolio proof and remove them after the drive. */
+async function seedPortfolioExpiryFixture(): Promise<{
+  observed: string;
+  unknown: string;
+  expirationDate: string;
+  cleanup: () => Promise<void>;
+}> {
+  const tenantId = await getTenantUUID(process.env.E2E_DEV_TENANT ?? 'dns-ops-e2e');
+  const observed = 'verify-expiry-observed.example.test';
+  const unknown = 'verify-expiry-unknown.example.test';
+  const expirationDate = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString();
+  const connectionString =
+    process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/dns_ops';
+  const remove = async () => {
+    const pool = new Pool({ connectionString });
+    try {
+      await pool.query('DELETE FROM domains WHERE tenant_id = $1 AND normalized_name = ANY($2)', [
+        tenantId,
+        [observed, unknown],
+      ]);
+    } finally {
+      await pool.end();
+    }
+  };
+  await remove();
+  const pool = new Pool({ connectionString });
+  try {
+    const insertDomain = async (name: string) =>
+      (
+        await pool.query(
+          `INSERT INTO domains (name, normalized_name, zone_management, tenant_id, metadata)
+         VALUES ($1, $1, 'managed', $2, '{"portfolio": true}'::jsonb) RETURNING id`,
+          [name, tenantId]
+        )
+      ).rows[0].id as string;
+    const insertSnapshot = async (domainId: string, name: string) =>
+      (
+        await pool.query(
+          `INSERT INTO snapshots (domain_id, domain_name, result_state, queried_names,
+         queried_types, vantages, zone_management, triggered_by, metadata)
+         VALUES ($1, $2, 'complete', $3::jsonb, '[]'::jsonb, '[]'::jsonb, 'managed',
+         'verify-harness', '{"evaluation":{"state":"COMPLETE"}}'::jsonb) RETURNING id`,
+          [domainId, name, JSON.stringify([name])]
+        )
+      ).rows[0].id as string;
+    const observedDomainId = await insertDomain(observed);
+    await insertSnapshot(await insertDomain(unknown), unknown);
+    const observedSnapshotId = await insertSnapshot(observedDomainId, observed);
+    await pool.query(
+      `INSERT INTO probe_observations (snapshot_id, probe_type, status, hostname, port,
+       success, probe_data) VALUES ($1, 'rdap', 'success', $2, 443, true, $3::jsonb)`,
+      [
+        observedSnapshotId,
+        observed,
+        JSON.stringify({
+          check: 'RDAP_EXPIRATION',
+          status: 'OBSERVED',
+          evidence: { kind: 'RDAP_EXPIRATION', domain: observed, expirationDate },
+        }),
+      ]
+    );
+  } finally {
+    await pool.end();
+  }
+  return { observed, unknown, expirationDate, cleanup: remove };
 }
 
 function responseServerDate(response: APIResponse, label: string): number {
@@ -308,6 +377,7 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
     await ev.shot(page, 'domain-dns-parsed-ttl');
   },
   'portfolio.search': async (page, ev) => {
+    const fixture = await seedPortfolioExpiryFixture();
     await page.goto(`${BASE_URL}/portfolio`);
     await page.getByRole('heading', { name: /portfolio workflows/i }).waitFor({ timeout: 15_000 });
     await page.getByRole('heading', { name: /portfolio search/i }).waitFor();
@@ -331,10 +401,9 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       };
     }
 
-    const query = await searchRoundtrip(() => page.getByLabel('Query').fill('example.com'));
+    const query = await searchRoundtrip(() => page.getByLabel('Query').fill('verify-expiry'));
     if (!query.json || !Array.isArray(query.json.domains))
       throw new Error('portfolio search JSON missing domains[]');
-
     // Built-in views (issue #63): each button must drive the real search
     // endpoint with the view's criteria, and toggling it off removes them.
     const mailBroken = await searchRoundtrip(() =>
@@ -368,6 +437,52 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
     if (cleared.request.coverage !== undefined)
       throw new Error(`clearing the view kept view criteria: ${JSON.stringify(cleared.request)}`);
 
+    const queryNames = query.json.domains.map((d: { name: string }) => d.name);
+    if (!queryNames.includes(fixture.observed) || !queryNames.includes(fixture.unknown))
+      throw new Error(
+        `expiry fixture domains missing from search results: ${JSON.stringify(queryNames)}`
+      );
+    const observedRow = query.json.domains.find(
+      (d: { name: string }) => d.name === fixture.observed
+    );
+    if (observedRow?.expiration?.status !== 'OBSERVED')
+      throw new Error(`expected OBSERVED expiration for ${fixture.observed}`);
+    const table = page.getByRole('table');
+    await table.getByRole('columnheader', { name: 'Expiry' }).waitFor({ timeout: 15_000 });
+    await table
+      .getByRole('row', { name: new RegExp(fixture.observed.replace(/\\./g, '\\\\.')) })
+      .getByText('WITHIN_90')
+      .waitFor({ timeout: 15_000 });
+    await table
+      .getByRole('row', { name: new RegExp(fixture.unknown.replace(/\\./g, '\\\\.')) })
+      .getByRole('cell', { name: 'UNKNOWN', exact: true })
+      .waitFor({ timeout: 15_000 });
+    const expiryPending = page.waitForResponse(
+      (r) => {
+        if (!r.url().includes('/api/portfolio/search') || r.request().method() !== 'POST')
+          return false;
+        return r.request().postDataJSON()?.expirationWithinDays === 90;
+      },
+      { timeout: 15_000 }
+    );
+    await page.getByLabel('Expiry window').selectOption('90');
+    const expiryRes = await expiryPending;
+    if (expiryRes.status() !== 200)
+      throw new Error(`expiry search expected 200, got ${expiryRes.status()}`);
+    const expiryJson = await expiryRes.json();
+    const expiryNames = expiryJson.domains.map((d: { name: string }) => d.name);
+    if (!expiryNames.includes(fixture.observed) || expiryNames.includes(fixture.unknown))
+      throw new Error(`expiry filter returned unexpected domains: ${JSON.stringify(expiryNames)}`);
+    await ev.readback('portfolio-expiry', {
+      fixture: {
+        observed: fixture.observed,
+        unknown: fixture.unknown,
+        seededExpirationDate: fixture.expirationDate,
+      },
+      query: query.json,
+      expiryWithin90Days: expiryJson,
+    });
+
     await ev.readback('portfolio-search', query.json);
     await ev.readback('built-in-view-requests', {
       mailBroken: mailBroken.request,
@@ -376,6 +491,7 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       cleared: cleared.request,
     });
     await ev.shot(page, 'portfolio-search');
+    await fixture.cleanup();
   },
 };
 

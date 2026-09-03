@@ -1,5 +1,14 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type ZoneManagement = 'managed' | 'unmanaged' | 'unknown';
+export type ExpirationWindow = 7 | 30 | 90;
+
+export const EXPIRATION_WINDOWS: readonly ExpirationWindow[] = [7, 30, 90];
+
+function normalizeExpirationWindow(value: unknown): ExpirationWindow | null {
+  return EXPIRATION_WINDOWS.includes(value as ExpirationWindow)
+    ? (value as ExpirationWindow)
+    : null;
+}
 
 export interface FilterCriteria {
   domainPatterns?: string[];
@@ -11,6 +20,7 @@ export interface FilterCriteria {
   };
   tags?: string[];
   lastSnapshotWithin?: number;
+  expirationWithinDays?: ExpirationWindow;
 }
 
 export interface CurrentFilters {
@@ -18,6 +28,7 @@ export interface CurrentFilters {
   tags: string[];
   severities: Severity[];
   zoneManagement: ZoneManagement[];
+  expirationWithinDays?: ExpirationWindow | null;
 }
 
 export interface SavedFilterCriteriaCompatibility {
@@ -30,6 +41,7 @@ export const EMPTY_CURRENT_FILTERS: CurrentFilters = {
   tags: [],
   severities: [],
   zoneManagement: [],
+  expirationWithinDays: null,
 };
 
 export function normalizeCurrentFilters(filters: CurrentFilters): CurrentFilters {
@@ -38,6 +50,7 @@ export function normalizeCurrentFilters(filters: CurrentFilters): CurrentFilters
     tags: dedupe(filters.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean)),
     severities: dedupe(filters.severities),
     zoneManagement: dedupe(filters.zoneManagement),
+    expirationWithinDays: normalizeExpirationWindow(filters.expirationWithinDays),
   };
 }
 
@@ -47,7 +60,8 @@ export function hasActiveFilters(filters: CurrentFilters): boolean {
     normalized.query.length > 0 ||
     normalized.tags.length > 0 ||
     normalized.severities.length > 0 ||
-    normalized.zoneManagement.length > 0
+    normalized.zoneManagement.length > 0 ||
+    normalized.expirationWithinDays !== null
   );
 }
 
@@ -67,6 +81,9 @@ export function currentFiltersToSavedCriteria(filters: CurrentFilters): FilterCr
   if (normalized.zoneManagement.length > 0) {
     criteria.zoneManagement = normalized.zoneManagement;
   }
+  if (normalized.expirationWithinDays !== null) {
+    criteria.expirationWithinDays = normalized.expirationWithinDays;
+  }
 
   return criteria;
 }
@@ -78,6 +95,9 @@ export function currentFiltersToSearchBody(filters: CurrentFilters): Record<stri
     ...(normalized.tags.length > 0 ? { tags: normalized.tags } : {}),
     ...(normalized.severities.length > 0 ? { severities: normalized.severities } : {}),
     ...(normalized.zoneManagement.length > 0 ? { zoneManagement: normalized.zoneManagement } : {}),
+    ...(normalized.expirationWithinDays !== null
+      ? { expirationWithinDays: normalized.expirationWithinDays }
+      : {}),
     limit: 20,
     offset: 0,
   };
@@ -100,6 +120,12 @@ export function assessSavedCriteriaCompatibility(
   if (criteria.lastSnapshotWithin) {
     reasons.push('snapshot recency');
   }
+  if (
+    criteria.expirationWithinDays !== undefined &&
+    !normalizeExpirationWindow(criteria.expirationWithinDays)
+  ) {
+    reasons.push('unsupported expiry window');
+  }
 
   return {
     supported: reasons.length === 0,
@@ -113,6 +139,7 @@ export function savedCriteriaToCurrentFilters(criteria: FilterCriteria): Current
     tags: criteria.tags || [],
     severities: criteria.findings?.severities || [],
     zoneManagement: criteria.zoneManagement || [],
+    expirationWithinDays: normalizeExpirationWindow(criteria.expirationWithinDays),
   });
 }
 

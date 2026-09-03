@@ -596,6 +596,9 @@ function CriteriaPreview({ criteria }: { criteria: FilterCriteria }) {
   if (criteria.lastSnapshotWithin) {
     chips.push(`Snapshot <= ${criteria.lastSnapshotWithin}d`);
   }
+  if (criteria.expirationWithinDays) {
+    chips.push(`Expiry <= ${criteria.expirationWithinDays}d`);
+  }
 
   if (chips.length === 0) {
     return <span className="text-xs text-faint">No filters selected</span>;
@@ -631,5 +634,6 @@ function getCriteriaCount(criteria: FilterCriteria): number {
   if (criteria.findings?.severities?.length) count += criteria.findings.severities.length;
   if (criteria.findings?.types?.length) count += criteria.findings.types.length;
   if (criteria.lastSnapshotWithin) count += 1;
+  if (criteria.expirationWithinDays) count += 1;
   return count;
 }
