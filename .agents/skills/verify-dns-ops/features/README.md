@@ -13,6 +13,7 @@ One file per user-facing feature, from the user's point of view: what it is, how
 | portfolio.search | web | critical | portfolio.search.md |
 | fleet.reports | web | critical | fleet.reports.md |
 | smtp.starttls-trust | api | critical | smtp.starttls-trust.md |
+| collector.request-body-limits | api | critical | collector.request-body-limits.md |
 
 ## Baseline preconditions (unless a feature file overrides them)
 

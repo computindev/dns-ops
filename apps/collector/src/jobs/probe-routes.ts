@@ -33,6 +33,11 @@
 import { normalizeDNSDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { getEnvConfig } from '../config/env.js';
+import {
+  isRequestBodyTooLargeError,
+  readRequestBodyJson,
+  requestBodyTooLargeResponse,
+} from '../middleware/request-body-limit.js';
 import { type AllowlistEntry, isExpiryFresh } from '../probes/allowlist.js';
 import {
   fetchMTASTSPolicy,
@@ -122,11 +127,16 @@ function failureResponse(failure: EvidenceFailure) {
  * Caller-supplied DNS-shaped arrays are rejected outright (Issue #67):
  * they are not proven registered-domain evidence.
  */
-function hasCallerSuppliedDnsEvidence(body: {
+interface ProbeRequestBody {
+  domain?: unknown;
+  hostname?: unknown;
+  port?: unknown;
   txtRecords?: unknown;
   mxRecords?: unknown;
   dnsResults?: unknown;
-}): boolean {
+}
+
+function hasCallerSuppliedDnsEvidence(body: ProbeRequestBody): boolean {
   return (
     body.txtRecords !== undefined || body.mxRecords !== undefined || body.dnsResults !== undefined
   );
@@ -137,7 +147,13 @@ function hasCallerSuppliedDnsEvidence(body: {
  * Fetch MTA-STS policy for a domain (persisted evidence only)
  */
 probeRoutes.post('/mta-sts', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  let body: ProbeRequestBody;
+  try {
+    body = await readRequestBodyJson<ProbeRequestBody>(c.req.raw);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+    throw error;
+  }
   const { domain } = body;
   const tenantId = c.get('tenantId');
 
@@ -205,7 +221,13 @@ probeRoutes.post('/mta-sts', async (c) => {
  * - Without `hostname`, every persisted MX target is probed.
  */
 probeRoutes.post('/smtp-starttls', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  let body: ProbeRequestBody;
+  try {
+    body = await readRequestBodyJson<ProbeRequestBody>(c.req.raw);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+    throw error;
+  }
   const { domain, hostname, port } = body;
   const tenantId = c.get('tenantId');
 
@@ -316,7 +338,13 @@ probeRoutes.post('/smtp-starttls', async (c) => {
  * Generate tenant-scoped allowlist entries from persisted DNS evidence only
  */
 probeRoutes.post('/allowlist/generate', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  let body: ProbeRequestBody;
+  try {
+    body = await readRequestBodyJson<ProbeRequestBody>(c.req.raw);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+    throw error;
+  }
   const { domain } = body;
   const tenantId = c.get('tenantId');
 

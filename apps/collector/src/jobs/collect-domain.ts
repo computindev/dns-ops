@@ -49,6 +49,7 @@ import {
   trackCollectionError,
   trackCollectionResult,
 } from '../middleware/error-tracking.js';
+import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
 import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import type { Env } from '../types.js';
 import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
@@ -66,6 +67,7 @@ class DomainOwnershipError extends Error {
 }
 
 export const collectDomainRoutes = new Hono<Env>();
+collectDomainRoutes.use('*', requestBodyLimitMiddleware());
 
 /**
  * POST /api/collect/domain

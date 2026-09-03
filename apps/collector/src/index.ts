@@ -27,6 +27,7 @@ import { startWorkers, stopWorkers, workersRunning } from './jobs/worker.js';
 import { checkDatabaseReady, dbMiddleware } from './middleware/db.js';
 import { requireServiceAuthMiddleware } from './middleware/index.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
+import { requestBodyLimitMiddleware } from './middleware/request-body-limit.js';
 import { notificationRoutes } from './notifications/routes.js';
 import type { Env } from './types.js';
 
@@ -175,6 +176,8 @@ app.get('/readyz', async (c) => {
   );
 });
 
+// Enforce the request limit before dependency/auth middleware or any route can read a body.
+app.use('/api/*', requestBodyLimitMiddleware());
 app.use('/api/*', dbMiddleware);
 app.use('/api/*', requireServiceAuthMiddleware);
 

@@ -10,8 +10,43 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { MAX_COLLECTOR_REQUEST_BODY_BYTES } from '../middleware/request-body-limit.js';
 import type { Env } from '../types.js';
 import { fleetReportRoutes } from './fleet-report.js';
+
+interface StreamState {
+  cancelled: boolean;
+}
+
+function streamRequest(
+  path: string,
+  chunks: Uint8Array[],
+  headers: Record<string, string> = {}
+): { request: Request; state: StreamState } {
+  const state: StreamState = { cancelled: false };
+  let nextChunk = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[nextChunk++];
+      if (chunk) controller.enqueue(chunk);
+      else controller.close();
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  const request = new Request(`http://localhost${path}`, {
+    method: 'POST',
+    headers,
+    body: stream,
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' });
+  return { request, state };
+}
+
+function exactTooLargeBody() {
+  return { error: 'Request body too large', maxBytes: MAX_COLLECTOR_REQUEST_BODY_BYTES };
+}
 
 describe('Fleet Report Routes', () => {
   let app: Hono<Env>;
@@ -142,6 +177,92 @@ describe('Fleet Report Routes', () => {
       if (json.error) {
         expect(json.error).not.toContain('DB context missing');
       }
+    });
+  });
+
+  describe('bounded POST request bodies (issue #75)', () => {
+    it.each([
+      '/api/fleet-report/run',
+      '/api/fleet-report/import-csv',
+    ])('returns the exact 413 response for declared overflow on %s', async (path) => {
+      const { request, state } = streamRequest(path, [new Uint8Array([1])], {
+        'Content-Type': path.endsWith('/run') ? 'application/json' : 'text/csv',
+        'Content-Length': String(MAX_COLLECTOR_REQUEST_BODY_BYTES + 1),
+      });
+
+      const res = await app.fetch(request);
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual(exactTooLargeBody());
+      expect(state.cancelled).toBe(true);
+    });
+
+    it.each([
+      '/api/fleet-report/run',
+      '/api/fleet-report/import-csv',
+    ])('returns the exact 413 response for no-length streamed overflow on %s', async (path) => {
+      const { request, state } = streamRequest(
+        path,
+        [new Uint8Array(MAX_COLLECTOR_REQUEST_BODY_BYTES), new Uint8Array([1])],
+        {
+          'Content-Type': path.endsWith('/run') ? 'application/json' : 'text/csv',
+        }
+      );
+
+      const res = await app.fetch(request);
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual(exactTooLargeBody());
+      expect(state.cancelled).toBe(true);
+    });
+
+    it('counts UTF-8 bytes for CSV and rejects multibyte overflow', async () => {
+      const csv = `domain\n${'é'.repeat(Math.floor(MAX_COLLECTOR_REQUEST_BODY_BYTES / 2) + 1)}`;
+      expect(csv.length).toBeLessThan(MAX_COLLECTOR_REQUEST_BODY_BYTES);
+      const { request, state } = streamRequest(
+        '/api/fleet-report/import-csv',
+        [new TextEncoder().encode(csv)],
+        { 'Content-Type': 'text/csv' }
+      );
+
+      const res = await app.fetch(request);
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual(exactTooLargeBody());
+      expect(state.cancelled).toBe(true);
+    });
+
+    it('accepts bodies exactly at the byte limit', async () => {
+      const encoder = new TextEncoder();
+      const jsonPrefix = JSON.stringify({ inventory: ['example.com'] });
+      const jsonBody = `${jsonPrefix}${' '.repeat(
+        MAX_COLLECTOR_REQUEST_BODY_BYTES - encoder.encode(jsonPrefix).byteLength
+      )}`;
+      const run = streamRequest('/api/fleet-report/run', [encoder.encode(jsonBody)], {
+        'Content-Type': 'application/json',
+      });
+      const runResponse = await app.fetch(run.request);
+      expect(runResponse.status).not.toBe(413);
+      expect(run.state.cancelled).toBe(false);
+
+      const csvPrefix = 'domain\nexample.com\n';
+      const csvBody = `${csvPrefix}${' '.repeat(
+        MAX_COLLECTOR_REQUEST_BODY_BYTES - encoder.encode(csvPrefix).byteLength
+      )}`;
+      const imported = streamRequest('/api/fleet-report/import-csv', [encoder.encode(csvBody)], {
+        'Content-Type': 'text/csv',
+      });
+      const importResponse = await app.fetch(imported.request);
+      expect(importResponse.status).toBe(200);
+      expect(imported.state.cancelled).toBe(false);
+    });
+
+    it('keeps malformed under-limit JSON on the existing 400 validation path', async () => {
+      const res = await app.request('/api/fleet-report/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"inventory":[',
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain('Inventory required');
     });
   });
 
