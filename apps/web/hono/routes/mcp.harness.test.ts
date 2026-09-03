@@ -54,6 +54,11 @@ const cases = [
   ['signal_list', { domainId: 'domain-a' }, []],
   ['case_get', { caseId: 'case-a' }, { case: { id: 'case-a' } }],
   [
+    'explain_case',
+    { caseKind: 'DOMAIN_EXPIRING_SOON' },
+    { caseKind: 'DOMAIN_EXPIRING_SOON', playbookId: 'domain-expiry', title: 'Domain expiry' },
+  ],
+  [
     'case_open',
     { domainId: 'domain-a', conditionKey: 'mail.no-spf-record', idempotencyKey: 'open-1' },
     { ok: true, value: { case: { id: 'case-a' } }, replayed: false },
@@ -86,6 +91,12 @@ describe('deterministic MCP transport harness', () => {
     vi.spyOn(McpReadService.prototype, 'signalList').mockResolvedValue([]);
     vi.spyOn(McpReadService.prototype, 'caseGet').mockResolvedValue({
       case: { id: 'case-a' },
+    } as never);
+    vi.spyOn(McpReadService.prototype, 'explainCase').mockResolvedValue({
+      caseKind: 'DOMAIN_EXPIRING_SOON',
+      playbookId: 'domain-expiry',
+      title: 'Domain expiry',
+      sections: {},
     } as never);
     vi.spyOn(McpCaseCommandService.prototype, 'caseOpen').mockResolvedValue({
       ok: true,

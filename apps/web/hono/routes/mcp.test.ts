@@ -86,9 +86,9 @@ describe('MCP discovery transport', () => {
       ]),
     };
     const response = await app().request('/mcp', rpc('tools/list'), limitedEnv);
-    await expect(response.json()).resolves.toMatchObject({
-      result: { tools: [{ name: 'case_get', requiredScope: 'CASE_READ' }] },
-    });
+    const body = (await response.json()) as { result: { tools: Array<{ name: string }> } };
+    const names = body.result.tools.map((tool) => tool.name).sort();
+    expect(names).toEqual(['case_get', 'explain_case']);
   });
 
   it('rejects malformed and unimplemented transport methods without leaking exceptions', async () => {

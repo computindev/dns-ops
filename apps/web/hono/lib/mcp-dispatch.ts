@@ -85,6 +85,9 @@ export async function dispatchMcpTool(
     case 'case_get':
       value = await read.caseGet(args.caseId as string);
       break;
+    case 'explain_case':
+      value = await read.explainCase(args.caseKind as string);
+      break;
     case 'case_open':
       value = await new McpCaseCommandService(db, principal).caseOpen(
         args as { domainId: string; conditionKey: string; idempotencyKey: string }

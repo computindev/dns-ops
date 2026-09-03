@@ -6,6 +6,7 @@ export const MCP_TOOL_NAMES = [
   'evidence_get',
   'signal_list',
   'case_get',
+  'explain_case',
   'case_open',
   'case_set_disposition',
   'scan_request',
@@ -74,6 +75,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     readOnly: true,
     requiredScope: 'CASE_READ',
     inputSchema: { type: 'object', required: ['caseId'], properties: { caseId: id } },
+  },
+  {
+    // Issue #61: deterministic playbook excerpt for a case kind. No LLM.
+    name: 'explain_case',
+    readOnly: true,
+    requiredScope: 'CASE_READ',
+    inputSchema: { type: 'object', required: ['caseKind'], properties: { caseKind: id } },
   },
   {
     name: 'case_open',

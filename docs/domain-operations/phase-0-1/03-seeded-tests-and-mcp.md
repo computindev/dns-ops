@@ -189,7 +189,7 @@ Cloudflare Access authenticates the edge; the application map authorizes DNS Ops
 
 ## 13.3 Required tools
 
-Exactly ten tools:
+Exactly eleven tools (issue #61 added `explain_case`):
 
 ### Read
 
@@ -201,6 +201,7 @@ snapshot_compare
 evidence_get
 signal_list
 case_get
+explain_case
 ```
 
 ### Commands
@@ -214,6 +215,17 @@ scan_request
 `scan_request` is mandatory because the full MCP loop must be exercised through MCP rather than through an application-service bypass.
 
 ## 13.4 Command controls
+
+### `case_get`
+
+- requires `CASE_READ`.
+
+### `explain_case`
+
+- requires `CASE_READ`;
+- takes a case kind (closed-world `InternalSignalKind`);
+- returns the matching approved playbook excerpt parsed from `docs/playbooks/`;
+- deterministic: no LLM and no provider access.
 
 ### `case_open`
 
