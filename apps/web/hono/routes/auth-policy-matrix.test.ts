@@ -456,6 +456,13 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   },
   // Simulation (tenant-scoped)
   { path: '/api/simulate', method: 'POST', policy: 'auth-read', notes: 'Uses tenant isolation' },
+  // Pasted evidence (issue #56): evaluates pasted text, persists nothing
+  {
+    path: '/api/paste/findings',
+    method: 'POST',
+    policy: 'auth-read',
+    notes: 'Pasted dig/bounce evaluation; requireAuth only, no persistence',
+  },
   // Suggestions (actorId checked in handler)
   {
     path: '/api/suggestions/:suggestionId',
