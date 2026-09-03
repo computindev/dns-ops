@@ -392,9 +392,42 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       };
     }
 
-    const query = await searchRoundtrip(() => page.getByLabel('Query').fill('example.com'));
+    const query = await searchRoundtrip(() => page.getByLabel('Query').fill('verify-expiry'));
     if (!query.json || !Array.isArray(query.json.domains))
       throw new Error('portfolio search JSON missing domains[]');
+    // Built-in views (issue #63): each button must drive the real search
+    // endpoint with the view's criteria, and toggling it off removes them.
+    const mailBroken = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /mail broken/i }).click()
+    );
+    if (mailBroken.request.findingTypePrefix !== 'mail.')
+      throw new Error(
+        `mail-broken view lost findingTypePrefix: ${JSON.stringify(mailBroken.request)}`
+      );
+    if (JSON.stringify(mailBroken.request.severities) !== JSON.stringify(['high', 'critical']))
+      throw new Error(`mail-broken view lost severities: ${JSON.stringify(mailBroken.request)}`);
+
+    const expiring = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /expiring evidence/i }).click()
+    );
+    if (expiring.request.snapshotOlderThanDays !== 30)
+      throw new Error(
+        `expiring view lost snapshotOlderThanDays: ${JSON.stringify(expiring.request)}`
+      );
+
+    const incomplete = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /incomplete coverage/i }).click()
+    );
+    if (incomplete.request.coverage !== 'incomplete')
+      throw new Error(`incomplete view lost coverage: ${JSON.stringify(incomplete.request)}`);
+    const activeButton = page.getByRole('button', { name: /incomplete coverage/i });
+    if ((await activeButton.getAttribute('aria-pressed')) !== 'true')
+      throw new Error('incomplete coverage button did not become aria-pressed=true');
+
+    const cleared = await searchRoundtrip(() => activeButton.click());
+    if (cleared.request.coverage !== undefined)
+      throw new Error(`clearing the view kept view criteria: ${JSON.stringify(cleared.request)}`);
+
     const queryNames = query.json.domains.map((d: { name: string }) => d.name);
     if (!queryNames.includes(fixture.observed) || !queryNames.includes(fixture.unknown))
       throw new Error(`expiry fixture domains missing from search results: ${JSON.stringify(queryNames)}`);
@@ -432,39 +465,6 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       query: query.json,
       expiryWithin90Days: expiryJson,
     });
-
-    // Built-in views (issue #63): each button must drive the real search
-    // endpoint with the view's criteria, and toggling it off removes them.
-    const mailBroken = await searchRoundtrip(() =>
-      page.getByRole('button', { name: /mail broken/i }).click()
-    );
-    if (mailBroken.request.findingTypePrefix !== 'mail.')
-      throw new Error(
-        `mail-broken view lost findingTypePrefix: ${JSON.stringify(mailBroken.request)}`
-      );
-    if (JSON.stringify(mailBroken.request.severities) !== JSON.stringify(['high', 'critical']))
-      throw new Error(`mail-broken view lost severities: ${JSON.stringify(mailBroken.request)}`);
-
-    const expiring = await searchRoundtrip(() =>
-      page.getByRole('button', { name: /expiring evidence/i }).click()
-    );
-    if (expiring.request.snapshotOlderThanDays !== 30)
-      throw new Error(
-        `expiring view lost snapshotOlderThanDays: ${JSON.stringify(expiring.request)}`
-      );
-
-    const incomplete = await searchRoundtrip(() =>
-      page.getByRole('button', { name: /incomplete coverage/i }).click()
-    );
-    if (incomplete.request.coverage !== 'incomplete')
-      throw new Error(`incomplete view lost coverage: ${JSON.stringify(incomplete.request)}`);
-    const activeButton = page.getByRole('button', { name: /incomplete coverage/i });
-    if ((await activeButton.getAttribute('aria-pressed')) !== 'true')
-      throw new Error('incomplete coverage button did not become aria-pressed=true');
-
-    const cleared = await searchRoundtrip(() => activeButton.click());
-    if (cleared.request.coverage !== undefined)
-      throw new Error(`clearing the view kept view criteria: ${JSON.stringify(cleared.request)}`);
 
     await ev.readback('portfolio-search', query.json);
     await ev.readback('built-in-view-requests', {
