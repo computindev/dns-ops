@@ -7,9 +7,9 @@
 
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import { MAX_COLLECTOR_REQUEST_BODY_BYTES } from './request-body-limit.js';
-import type { Env } from '../types.js';
 import { probeRoutes } from '../jobs/probe-routes.js';
+import type { Env } from '../types.js';
+import { MAX_COLLECTOR_REQUEST_BODY_BYTES } from './request-body-limit.js';
 
 const PROBE_POST_PATHS = [
   '/api/probe/mta-sts',

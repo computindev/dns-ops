@@ -6,10 +6,15 @@ paths:
   - apps/collector/src/index.ts
   - apps/collector/src/middleware/request-body-limit.ts
   - apps/collector/src/middleware/request-body-limit.test.ts
+  - apps/collector/src/middleware/request-body-limit.routes.test.ts
+  - apps/collector/src/middleware/request-body-limit.shared-routes.test.ts
+  - apps/collector/src/jobs/collect-domain.ts
+  - apps/collector/src/jobs/collect-mail.ts
   - apps/collector/src/jobs/fleet-report.ts
   - apps/collector/src/jobs/fleet-report.test.ts
+  - apps/collector/src/jobs/monitoring.ts
   - apps/collector/src/jobs/probe-routes.ts
-  - apps/collector/src/middleware/request-body-limit.routes.test.ts
+  - apps/collector/src/notifications/routes.ts
   - .agents/skills/verify-dns-ops/harness/collector.mts
 always_with: []
 ---
@@ -21,12 +26,15 @@ The collector accepts bounded request bodies on its JSON and CSV POST APIs. A ca
 
 - Fleet report bodies on `/api/fleet-report/run` and `/api/fleet-report/import-csv`.
 - Probe bodies on `/api/probe/mta-sts`, `/api/probe/smtp-starttls`, and `/api/probe/allowlist/generate`.
+- Collection bodies on `/api/collect/domain`, `/api/collect/mail`, and `/api/collect/mail/check`.
+- Monitoring bodies on `/api/monitoring/check`, `/api/monitoring/alerts/:alertId/resolve`, and `/api/monitoring/domains/:domainId/monitor`.
+- Notification webhook body on `/api/notify/webhook`.
 - Declared `Content-Length` overflow, streamed overflow without `Content-Length`, UTF-8 byte counting, the exact limit boundary, cancellation, and malformed-under-limit validation.
 
 ## How to get to it (user POV)
 
 1. Run the collector from this checkout with `NODE_ENV=development`, a local or refused PostgreSQL URL, `ENABLE_ACTIVE_PROBES=true`, and `COLLECTOR_SKIP_LISTEN=true` for the route harness.
-2. Send POST requests to the five production collector route boundaries listed above. Use `X-Dev-Tenant` and `X-Dev-Actor` only when driving the network server; the harness invokes the exported production collector app with the same route paths and does not add a test endpoint.
+2. Send POST requests to the twelve production collector route boundaries listed above. Use `X-Dev-Tenant` and `X-Dev-Actor` only when driving the network server; the harness invokes the exported production collector app with the same route paths and does not add a test endpoint.
 
 ## Driving it with collector.mts
 
@@ -42,9 +50,9 @@ The harness imports `apps/collector/src/index.ts`, calls its exported `fetch` at
 
 ### Expected observations
 
-- Every one of the five POST paths returns status `413` for a declared `Content-Length` of `1048577` and for a streamed body whose first `1048576` bytes are followed by one extra byte. Every such response JSON is exactly `{ "error": "Request body too large", "maxBytes": 1048576 }`.
-- A UTF-8 body made from `é` characters is rejected based on encoded byte length even when its JavaScript character length is below `1048576`; all five POST paths are exercised.
-- A body encoded to exactly `1048576` bytes is not rejected as too large on every path. Existing route validation remains observable: fleet run and probe requests return their normal `400` validation response, and CSV import returns its normal `200` response.
+- Every one of the twelve POST paths returns status `413` for a declared `Content-Length` of `1048577` and for a streamed body whose first `1048576` bytes are followed by one extra byte. Every such response JSON is exactly `{ "error": "Request body too large", "maxBytes": 1048576 }`.
+- A UTF-8 body made from `é` characters is rejected based on encoded byte length even when its JavaScript character length is below `1048576`; all twelve POST paths are exercised.
+- A body encoded to exactly `1048576` bytes is not rejected as too large on the five fleet/probe validation paths. Existing route validation remains observable: fleet run and probe requests return their normal `400` validation response, and CSV import returns its normal `200` response.
 - Malformed JSON under the limit returns the existing `400` response on fleet run and each probe path. Malformed CSV under the limit returns the existing missing-column `400` response.
 - Declared overflow cancels before route parsing and consumes at most one runtime-prefetched chunk. Streamed overflow cancels the request reader after the first over-limit chunk and never pulls the controlled sentinel chunk, demonstrating bounded consumption rather than unbounded buffering.
 

@@ -7,10 +7,12 @@
 
 import { Hono } from 'hono';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
+import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
 import type { Env } from '../types.js';
 import { sendAlertNotification } from './webhook.js';
 
 export const notificationRoutes = new Hono<Env>();
+notificationRoutes.use('*', requestBodyLimitMiddleware());
 
 /**
  * POST /api/notify/webhook

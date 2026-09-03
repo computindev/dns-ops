@@ -8,6 +8,7 @@ import { AlertRepository, DomainRepository, MonitoredDomainRepository } from '@d
 import { createLogger } from '@dns-ops/logging';
 import { Hono } from 'hono';
 import { internalOnlyMiddleware, requireServiceAuthMiddleware } from '../middleware/auth.js';
+import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
 import { sendAlertNotification } from '../notifications/webhook.js';
 import type { Env } from '../types.js';
 
@@ -21,6 +22,7 @@ const monitoringLogger = createLogger({
 type Alert = Awaited<ReturnType<AlertRepository['findPending']>>[number];
 
 export const monitoringRoutes = new Hono<Env>();
+monitoringRoutes.use('*', requestBodyLimitMiddleware());
 
 /**
  * POST /api/monitoring/check

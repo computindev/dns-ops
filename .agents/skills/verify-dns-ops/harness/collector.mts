@@ -91,7 +91,30 @@ const PROBE_POST_PATHS = [
   '/api/probe/smtp-starttls',
   '/api/probe/allowlist/generate',
 ] as const;
-const POST_PATHS = [...FLEET_POST_PATHS, ...PROBE_POST_PATHS] as const;
+const COLLECT_POST_PATHS = [
+  '/api/collect/domain',
+  '/api/collect/mail',
+  '/api/collect/mail/check',
+] as const;
+const MONITORING_POST_PATHS = [
+  '/api/monitoring/check',
+  '/api/monitoring/alerts/alert-1/resolve',
+  '/api/monitoring/domains/domain-1/monitor',
+] as const;
+const NOTIFY_POST_PATHS = ['/api/notify/webhook'] as const;
+
+// Every body-reading collector POST boundary is exercised for overflow. The
+// exact-boundary and malformed-under-limit validation assertions stay on the
+// fleet/probe routes whose under-limit behavior is deterministic without a
+// live database.
+const OVERFLOW_PATHS = [
+  ...FLEET_POST_PATHS,
+  ...PROBE_POST_PATHS,
+  ...COLLECT_POST_PATHS,
+  ...MONITORING_POST_PATHS,
+  ...NOTIFY_POST_PATHS,
+] as const;
+const VALIDATION_PATHS = [...FLEET_POST_PATHS, ...PROBE_POST_PATHS] as const;
 
 type StreamState = {
   pulls: number;
@@ -371,11 +394,11 @@ async function main(): Promise<void> {
   fs.mkdirSync(path.join(RUN_DIR, 'http'), { recursive: true });
   fs.mkdirSync(path.join(RUN_DIR, 'readback'), { recursive: true });
 
-  for (const routePath of POST_PATHS) await declaredOverflow(routePath);
-  for (const routePath of POST_PATHS) await streamedOverflow(routePath);
-  for (const routePath of POST_PATHS) await utf8Overflow(routePath);
-  for (const routePath of POST_PATHS) await exactBoundary(routePath);
-  for (const routePath of POST_PATHS) await malformedUnderLimit(routePath);
+  for (const routePath of OVERFLOW_PATHS) await declaredOverflow(routePath);
+  for (const routePath of OVERFLOW_PATHS) await streamedOverflow(routePath);
+  for (const routePath of OVERFLOW_PATHS) await utf8Overflow(routePath);
+  for (const routePath of VALIDATION_PATHS) await exactBoundary(routePath);
+  for (const routePath of VALIDATION_PATHS) await malformedUnderLimit(routePath);
 
   assert(
     providerAttempts.length === 0,
@@ -422,7 +445,8 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         maxBytes: MAX_BYTES,
-        endpoints: POST_PATHS,
+        endpoints: OVERFLOW_PATHS,
+        validationEndpoints: VALIDATION_PATHS,
         cases: matrix,
         providerAttempts: {
           count: providerAttempts.length,
@@ -445,11 +469,11 @@ async function main(): Promise<void> {
   const observations = [
     '## Observations (expected → seen)',
     '',
-    `- Exercised ${POST_PATHS.length} production collector POST boundaries: ${POST_PATHS.join(', ')}.`,
+    `- Exercised ${OVERFLOW_PATHS.length} production collector POST boundaries for overflow: ${OVERFLOW_PATHS.join(', ')}.`,
     `- ${matrix.filter((x) => x.mode === 'content-length-overflow').length} declared overflows returned exact 413 ${JSON.stringify(exactResponse())}.`,
     `- ${matrix.filter((x) => x.mode === 'chunked-overflow').length} chunked overflows returned exact 413; every stream was cancelled and no sentinel was pulled.`,
     `- ${matrix.filter((x) => x.mode === 'utf8-byte-overflow').length} UTF-8 byte-overflows had JavaScript length below ${MAX_BYTES} but encoded bytes above it and returned exact 413.`,
-    `- ${matrix.filter((x) => x.mode === 'exact-limit').length} bodies were exactly ${MAX_BYTES} bytes and none returned 413; CSV import returned 200 and the four JSON routes kept 400 validation.`,
+    `- ${matrix.filter((x) => x.mode === 'exact-limit').length} bodies were exactly ${MAX_BYTES} bytes and none returned 413; CSV import returned 200 and the four JSON validation routes kept 400 validation.`,
     `- ${matrix.filter((x) => x.mode === 'malformed-under-limit').length} malformed-under-limit bodies returned 400, preserving route validation.`,
     '',
     '## Forbidden (must not happen → confirmed absent)',

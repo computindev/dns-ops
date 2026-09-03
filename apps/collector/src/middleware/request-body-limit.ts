@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context, Next } from 'hono';
 
 export const MAX_COLLECTOR_REQUEST_BODY_BYTES = 1_048_576;
 
@@ -125,4 +125,34 @@ export function requestBodyTooLargeResponse(c: Context): Response {
     },
     413
   );
+}
+
+/**
+ * Shared middleware enforcing the collector body limit on every body-reading
+ * route. It buffers the request body (bounded at maxBytes) and re-injects the
+ * bounded bytes so downstream handlers read the already-bounded body; a
+ * declared or streamed length over the limit is rejected with a stable 413
+ * before any handler runs. Requests without a body pass through untouched.
+ */
+export function requestBodyLimitMiddleware(maxBytes = MAX_COLLECTOR_REQUEST_BODY_BYTES) {
+  return async (c: Context, next: Next) => {
+    const request = c.req.raw;
+    if (request.body === null) return next();
+
+    let bytes: Uint8Array;
+    try {
+      bytes = await readRequestBodyBytes(request, maxBytes);
+    } catch (error) {
+      if (isRequestBodyTooLargeError(error)) return requestBodyTooLargeResponse(c);
+      throw error;
+    }
+
+    c.req.raw = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: bytes,
+    });
+
+    return next();
+  };
 }

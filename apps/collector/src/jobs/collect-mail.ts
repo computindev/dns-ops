@@ -43,11 +43,13 @@ import { isValidDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { type MailCheckResult, performMailCheck } from '../mail/checker.js';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
+import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
 import type { Env } from '../types.js';
 
 const logger = getCollectorLogger();
 
 export const collectMailRoutes = new Hono<Env>();
+collectMailRoutes.use('*', requestBodyLimitMiddleware());
 
 /**
  * POST /api/collect/mail
