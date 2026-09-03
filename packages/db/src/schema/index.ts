@@ -627,6 +627,9 @@ export const auditActionEnum = pgEnum('audit_action', [
   'domain_profile_updated',
   'operational_baseline_accepted',
   'mcp_case_disposition_set',
+  'live_drill_requested',
+  'live_drill_confirmed',
+  'live_drill_started',
 ]);
 
 export const auditEvents = pgTable(
@@ -1293,3 +1296,46 @@ export const sessions = pgTable('sessions', {
 
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+
+// =============================================================================
+// LIVE DRILL RUNS (Issue #62)
+//
+// Durable two-person approval + run trail for starting the fail-closed
+// controlled-live harness against the allowlisted asorin.ai tuples. The
+// harness (tools/controlled-live-harness) remains the only component that may
+// touch the provider; this table only gates and records operator intent.
+// =============================================================================
+
+export const drillRuns = pgTable(
+  'drill_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    // Allowlisted scenario: LIVE-01 | LIVE-02 | LIVE-03 with its pinned record
+    recordName: varchar('record_name', { length: 253 }).notNull(),
+    mutationId: varchar('mutation_id', { length: 20 }).notNull(),
+
+    // requested → approved (second operator) → started → fault_applied | failed
+    status: varchar('status', { length: 20 }).notNull().default('requested'),
+
+    // Two-person confirm: confirmer must differ from requester
+    requesterActor: varchar('requester_actor', { length: 100 }).notNull(),
+    confirmerActor: varchar('confirmer_actor', { length: 100 }),
+
+    // Redacted harness outputs (artifact path + fail-closed error summary)
+    recoveryArtifact: text('recovery_artifact'),
+    runnerMessage: text('runner_message'),
+
+    tenantId: uuid('tenant_id').notNull(),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantIdx: index('drill_run_tenant_idx').on(table.tenantId),
+    mutationIdx: index('drill_run_mutation_idx').on(table.mutationId),
+  })
+);
+
+export type DrillRun = typeof drillRuns.$inferSelect;
+export type NewDrillRun = typeof drillRuns.$inferInsert;

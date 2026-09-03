@@ -61,3 +61,6 @@ verification/registry.json
 
 # verify-fresh generated marker; exclude it from working-tree digests.
 /.verify-fresh-worktree
+
+# Live drill harness artifacts (redacted, mode 0600; never commit)
+/.live-drills/
