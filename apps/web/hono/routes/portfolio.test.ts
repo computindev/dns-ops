@@ -44,6 +44,7 @@ interface MockData {
     createdAt: Date;
     resultState: string;
     rulesetVersionId: string | null;
+    metadata?: Record<string, unknown> | null;
   }>;
   findings: Array<{
     id: string;
@@ -51,6 +52,7 @@ interface MockData {
     ruleId: string;
     severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
     summary: string;
+    type: string;
   }>;
   domainNotes: Array<{
     id: string;
@@ -143,6 +145,7 @@ function createMockData(): MockData {
         createdAt: now,
         resultState: 'complete',
         rulesetVersionId: 'ruleset-v1',
+        metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
       },
       {
         id: 'snap-2',
@@ -159,6 +162,7 @@ function createMockData(): MockData {
         ruleId: 'rule-1',
         severity: 'high',
         summary: 'Missing DMARC record',
+        type: 'mail.no-dmarc-record',
       },
       {
         id: 'finding-2',
@@ -166,6 +170,15 @@ function createMockData(): MockData {
         ruleId: 'rule-2',
         severity: 'medium',
         summary: 'SPF too permissive',
+        type: 'mail.spf-permissive',
+      },
+      {
+        id: 'finding-3',
+        snapshotId: 'snap-1',
+        ruleId: 'rule-3',
+        severity: 'high',
+        summary: 'Authoritative servers disagree',
+        type: 'dns.authoritative-mismatch',
       },
     ],
     domainNotes: [],
@@ -1311,6 +1324,7 @@ describe('Portfolio Routes', () => {
         ruleId: 'mail.spf-analysis.v1',
         severity: 'critical',
         summary: 'Critical SPF issue',
+        type: 'mail.spf-permissive',
       });
 
       // Create filter with tag criteria
@@ -1937,6 +1951,120 @@ describe('Portfolio Routes', () => {
 
       expect(res.status).toBe(200);
       // Test passes if no error - actual filtering logic is tested at unit level
+    });
+  });
+
+  // ===========================================================================
+  // BUILT-IN VIEW FILTERS (issue #63)
+  // ===========================================================================
+
+  describe('Built-in view filters (issue #63)', () => {
+    async function searchWith(body: JsonBody): Promise<{ status: number; json: JsonBody }> {
+      const res = await app.request('/api/portfolio/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, json: (await res.json()) as JsonBody };
+    }
+
+    function resultNames(json: JsonBody): string[] {
+      return (
+        (json.domains as Array<{ name: string }>)
+          .map((domain) => domain.name)
+          // The mock drizzle ignores the tenant where clause; the real route
+          // enforces tenant scoping in SQL, so drop the known tenant-2 row here.
+          .filter((name) => name !== 'other-tenant.com')
+      );
+    }
+
+    it('findingTypePrefix keeps evaluated domains with matching findings and narrows returned findings', async () => {
+      // domain-1: COMPLETE evaluation with mail.* and dns.* findings on snap-1
+      const { status, json } = await searchWith({ findingTypePrefix: 'mail.' });
+
+      expect(status).toBe(200);
+      expect(resultNames(json)).toContain('example.com');
+      const example = (json.domains as JsonBody[]).find((d) => d.name === 'example.com');
+      const findings = example?.findings as Array<{ type: string }>;
+      expect(findings.length).toBeGreaterThan(0);
+      expect(findings.every((finding) => finding.type.startsWith('mail.'))).toBe(true);
+    });
+
+    it('findingTypePrefix drops fully evaluated domains without matching findings', async () => {
+      // Re-point every finding away from mail.*: domain-1 is fully evaluated
+      // with no mail findings, so it must be dropped. domain-2 is unevaluated
+      // (unknown coverage) and is kept — it might match once evaluated.
+      for (const finding of mockData.findings) {
+        finding.type = 'dns.recursive-authoritative-mismatch';
+      }
+
+      const { status, json } = await searchWith({ findingTypePrefix: 'mail.' });
+
+      expect(status).toBe(200);
+      expect(resultNames(json)).not.toContain('example.com');
+      expect(resultNames(json)).toContain('test.com');
+    });
+
+    it('snapshotOlderThanDays keeps only domains whose latest snapshot is stale', async () => {
+      const now = Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      const snapOne = mockData.snapshots.find((snapshot) => snapshot.id === 'snap-1');
+      const snapTwo = mockData.snapshots.find((snapshot) => snapshot.id === 'snap-2');
+      if (snapOne) snapOne.createdAt = new Date(now);
+      if (snapTwo) snapTwo.createdAt = new Date(now - 40 * day);
+
+      const { status, json } = await searchWith({ snapshotOlderThanDays: 30 });
+
+      expect(status).toBe(200);
+      expect(resultNames(json)).toEqual(['test.com']);
+    });
+
+    it('snapshotOlderThanDays excludes domains without a snapshot', async () => {
+      const day = 24 * 60 * 60 * 1000;
+      mockData.snapshots = mockData.snapshots.filter((snapshot) => snapshot.id !== 'snap-1');
+      mockData.snapshots[0].createdAt = new Date(Date.now() - 40 * day);
+
+      const { status, json } = await searchWith({ snapshotOlderThanDays: 30 });
+
+      expect(status).toBe(200);
+      // domain-1 has no snapshot at all: nothing is expiring, so it is excluded
+      expect(resultNames(json)).toEqual(['test.com']);
+    });
+
+    it('coverage=incomplete keeps only domains whose evidence is not fully evaluated', async () => {
+      // snap-1 carries explicit COMPLETE evaluation; snap-2 has none
+      const { status, json } = await searchWith({ coverage: 'incomplete' });
+
+      expect(status).toBe(200);
+      expect(resultNames(json)).toEqual(['test.com']);
+    });
+
+    it('rejects unsupported coverage values', async () => {
+      const { status, json } = await searchWith({ coverage: 'complete' });
+
+      expect(status).toBe(400);
+      expect(json.error).toBeDefined();
+    });
+
+    it('rejects out-of-range snapshotOlderThanDays', async () => {
+      const { status } = await searchWith({ snapshotOlderThanDays: 0 });
+
+      expect(status).toBe(400);
+    });
+
+    it('combines built-in view criteria with operator filters', async () => {
+      const day = 24 * 60 * 60 * 1000;
+      const snapOne = mockData.snapshots.find((snapshot) => snapshot.id === 'snap-1');
+      if (snapOne) snapOne.createdAt = new Date(Date.now() - 40 * day);
+
+      const { status, json } = await searchWith({
+        findingTypePrefix: 'mail.',
+        severities: ['high'],
+        zoneManagement: ['managed'],
+      });
+
+      expect(status).toBe(200);
+      expect(resultNames(json)).toContain('example.com');
     });
   });
 });

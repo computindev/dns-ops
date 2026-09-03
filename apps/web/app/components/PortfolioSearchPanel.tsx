@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useId, useMemo, useState } from 'react';
+import { type BuiltInView, searchBodyForView } from '../lib/built-in-views.js';
 import {
   type CurrentFilters,
-  currentFiltersToSearchBody,
   EMPTY_CURRENT_FILTERS,
   normalizeCurrentFilters,
   type Severity,
@@ -13,6 +13,9 @@ import {
 interface PortfolioSearchPanelProps {
   currentFilters: CurrentFilters;
   onFiltersChange: (next: CurrentFilters) => void;
+  /** Built-in portfolio view active on top of the visible filters (issue #63). */
+  activeView?: BuiltInView | null;
+  onClearView?: () => void;
 }
 
 interface SearchResult {
@@ -40,6 +43,8 @@ const ZONE_MANAGEMENT: ZoneManagement[] = ['managed', 'unmanaged', 'unknown'];
 export function PortfolioSearchPanel({
   currentFilters,
   onFiltersChange,
+  activeView = null,
+  onClearView,
 }: PortfolioSearchPanelProps) {
   const queryClient = useQueryClient();
   const idPrefix = useId();
@@ -65,19 +70,19 @@ export function PortfolioSearchPanel({
 
   const tagSuggestions = tagSuggestionsData?.tags ?? [];
 
-  // Portfolio search — reactive to filters
+  // Portfolio search — reactive to filters and the active built-in view
   const {
     data: searchData,
     isLoading,
     error,
     isError,
   } = useQuery({
-    queryKey: ['portfolio-search', normalizedFilters],
+    queryKey: ['portfolio-search', normalizedFilters, activeView?.id ?? null],
     queryFn: async ({ signal }) => {
       const response = await fetch('/api/portfolio/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(currentFiltersToSearchBody(normalizedFilters)),
+        body: JSON.stringify(searchBodyForView(normalizedFilters, activeView)),
         signal,
         credentials: 'include',
       });
@@ -157,6 +162,25 @@ export function PortfolioSearchPanel({
       </div>
 
       <div className="space-y-4 p-4">
+        {activeView && (
+          <div className="flex items-start justify-between gap-2 rounded-lg border border-brand bg-info-surface p-3 text-sm text-text">
+            <span>
+              <strong className="text-ink">{activeView.name}</strong> view active —{' '}
+              {activeView.description}
+            </span>
+            {onClearView && (
+              <button
+                type="button"
+                onClick={onClearView}
+                disabled={authRequired}
+                className="shrink-0 font-medium text-brand hover:text-brand disabled:text-faint"
+              >
+                Clear view
+              </button>
+            )}
+          </div>
+        )}
+
         {authRequired && (
           <div className="rounded-lg border border-warning bg-warning-surface p-4 text-sm text-warning">
             Operator sign-in is required to search tenant domains and load saved filters.
