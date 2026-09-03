@@ -9,6 +9,7 @@ import type { GuidanceOnlySuggestion } from '@dns-ops/contracts';
 import type { Finding, Suggestion } from '@dns-ops/db/schema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { CopyProviderRecords } from './CopyProviderRecords.js';
 import { Button } from './ui/Button.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
@@ -305,6 +306,10 @@ export function MailFindingsPanel({ snapshotId }: MailFindingsPanelProps) {
               {findings.length} finding{findings.length !== 1 ? 's' : ''}
             </span>
           )}
+        </div>
+
+        <div className="mb-4">
+          <CopyProviderRecords domain={data.domain} />
         </div>
 
         {findings.length === 0 && data.evaluationCoverage.state === 'COMPLETE' && (

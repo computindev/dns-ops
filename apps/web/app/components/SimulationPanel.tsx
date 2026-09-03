@@ -7,6 +7,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { CopyProviderRecords } from './CopyProviderRecords.js';
 import { EmptyState, ErrorState, LoadingState } from './ui/StateDisplay.js';
 
 interface GuidanceOnlySuggestion {
@@ -187,6 +188,8 @@ export function SimulationPanel({ snapshotId }: SimulationPanelProps) {
           </div>
         </section>
       )}
+
+      <CopyProviderRecords domain={result.domain} />
 
       {result.currentFindings.length > 0 && (
         <section>
