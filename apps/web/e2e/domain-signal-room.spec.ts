@@ -1,10 +1,27 @@
 import { expect, test } from '@playwright/test';
-import { mockDomainSnapshot, waitForDomainPageReady } from './support/domain-fixtures.js';
+import {
+  type EvidenceResponse,
+  mockDomainSnapshot,
+  type SnapshotFixture,
+  waitForDomainPageReady,
+} from './support/domain-fixtures.js';
 
 const DOMAIN = 'signal-room.example.test';
 
-async function mockSignalRoomDomain(page: import('@playwright/test').Page): Promise<void> {
-  await mockDomainSnapshot(page, { domain: DOMAIN, snapshotId: 'current-snapshot' });
+type SignalRoomOptions = {
+  snapshot?: Omit<Partial<SnapshotFixture>, 'domain' | 'snapshotId'>;
+  evidence?: EvidenceResponse['evidence'];
+};
+
+async function mockSignalRoomDomain(
+  page: import('@playwright/test').Page,
+  options: SignalRoomOptions = {}
+): Promise<void> {
+  await mockDomainSnapshot(page, {
+    domain: DOMAIN,
+    snapshotId: 'current-snapshot',
+    ...options.snapshot,
+  });
 
   await page.route(`**/api/domains/${DOMAIN}/profile`, (route) =>
     route.fulfill({
@@ -20,7 +37,7 @@ async function mockSignalRoomDomain(page: import('@playwright/test').Page): Prom
       contentType: 'application/json',
       body: JSON.stringify({
         snapshotId: 'current-snapshot',
-        evidence: [
+        evidence: options.evidence ?? [
           {
             id: 'tls-missing-baseline',
             probeType: 'tls_cert',
@@ -123,15 +140,18 @@ async function mockSignalRoomDomain(page: import('@playwright/test').Page): Prom
 }
 
 test.describe('Domain 360 Signal Room', () => {
-  test('uses semantic evidence and baseline surfaces without presenting UNKNOWN as healthy', async ({
+  test('opens with a labelled completeness region and keeps setup gaps UNKNOWN', async ({
     page,
   }) => {
     await mockSignalRoomDomain(page);
     await page.goto(`/domain/${DOMAIN}`);
     await waitForDomainPageReady(page);
 
-    const evidence = page.locator('section.domain-evidence');
-    await expect(evidence).toHaveClass(/ds-panel/);
+    const evidence = page.getByRole('region', { name: /evidence completeness/i });
+    await expect(evidence).toHaveAttribute('data-state', 'unknown');
+    await expect(
+      evidence.getByRole('heading', { name: 'Evidence completeness', level: 2 })
+    ).toBeVisible();
     await expect(page.getByTestId('domain-needs-setup-evidence')).toHaveClass(/ds-panel--muted/);
     await expect(
       page.getByTestId('domain-needs-setup-evidence').getByText('Accept baseline')
@@ -139,6 +159,101 @@ test.describe('Domain 360 Signal Room', () => {
     await expect(page.getByTestId('domain-current-evidence').getByText('Current')).toHaveClass(
       /ds-badge--success/
     );
+  });
+
+  test('keeps partial coverage plus zero findings UNKNOWN and actionable', async ({ page }) => {
+    const partialCoverage = {
+      state: 'PARTIAL' as const,
+      errors: [
+        {
+          code: 'RULE_EXECUTION_FAILED',
+          ruleId: 'dns.example',
+          message: 'Rule failed',
+          status: 'UNKNOWN',
+          unknown: {
+            reason: 'CHECK_EVALUATION_FAILED',
+            explanation: 'This check could not be evaluated.',
+            action: 'RUN_FRESH_SCAN',
+            actionLabel: 'Run a fresh scan',
+            blocking: true,
+          },
+        },
+      ],
+    };
+    await mockSignalRoomDomain(page, {
+      snapshot: {
+        evaluationCoverage: partialCoverage,
+        findingsSummary: {
+          findingsEvaluated: false,
+          evaluationCoverage: partialCoverage,
+          hasFindings: false,
+          total: 0,
+        },
+      },
+      evidence: [
+        {
+          id: 'dns-current',
+          probeType: 'dns',
+          status: 'success',
+          success: true,
+          errorMessage: null,
+          freshness: 'CURRENT',
+          probeData: { status: 'OBSERVED' },
+        },
+      ],
+    });
+    await page.goto(`/domain/${DOMAIN}`);
+    await waitForDomainPageReady(page);
+
+    const evidence = page.getByRole('region', { name: /evidence completeness/i });
+    await expect(evidence).toHaveAttribute('data-state', 'unknown');
+    await expect(evidence.getByRole('group', { name: 'Findings' })).toHaveAttribute(
+      'data-state',
+      'unknown'
+    );
+    await expect(evidence).toContainText('0 observed does not establish health');
+    await expect(evidence).toContainText('Run a fresh scan');
+  });
+
+  test('allows healthy zero findings only with complete coverage and no setup gaps', async ({
+    page,
+  }) => {
+    const completeCoverage = { state: 'COMPLETE' as const, errors: [] };
+    await mockSignalRoomDomain(page, {
+      snapshot: {
+        evaluationCoverage: completeCoverage,
+        findingsSummary: {
+          findingsEvaluated: true,
+          evaluationCoverage: completeCoverage,
+          hasFindings: false,
+          total: 0,
+        },
+      },
+      evidence: [
+        {
+          id: 'dns-current',
+          probeType: 'dns',
+          status: 'success',
+          success: true,
+          errorMessage: null,
+          freshness: 'CURRENT',
+          probeData: { status: 'OBSERVED' },
+        },
+      ],
+    });
+    await page.goto(`/domain/${DOMAIN}`);
+    await waitForDomainPageReady(page);
+
+    const evidence = page.getByRole('region', { name: /evidence completeness/i });
+    await expect(evidence).toHaveAttribute('data-state', 'complete');
+    await expect(evidence.getByRole('group', { name: 'Findings' })).toHaveAttribute(
+      'data-state',
+      'known'
+    );
+    await expect(
+      evidence.getByRole('group', { name: 'Findings' }).getByText('0', { exact: true })
+    ).toHaveClass(/ds-badge--success/);
+    await expect(evidence).toContainText('No findings detected by the current evaluated ruleset.');
   });
 
   test('keeps evidence history usable without root overflow at supported widths', async ({

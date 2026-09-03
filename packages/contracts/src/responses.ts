@@ -325,6 +325,8 @@ export interface FindingsMailResponse {
  */
 export interface FindingsSummaryResponse {
   snapshotId: string;
+  findingsEvaluated: boolean;
+  evaluationCoverage: EvaluationCoverage;
   hasFindings: boolean;
   severityCounts: Record<Severity, number>;
   total: number;

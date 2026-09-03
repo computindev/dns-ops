@@ -9,6 +9,19 @@
 
 import type { Page } from '@playwright/test';
 
+export interface EvaluationCoverageFixture {
+  state: 'COMPLETE' | 'PARTIAL';
+  errors: Array<Record<string, unknown>>;
+}
+
+export interface FindingsSummaryFixture {
+  findingsEvaluated?: boolean;
+  evaluationCoverage?: EvaluationCoverageFixture;
+  hasFindings?: boolean;
+  severityCounts?: Partial<Record<'critical' | 'high' | 'medium' | 'low' | 'info', number>>;
+  total?: number;
+}
+
 export interface SnapshotFixture {
   domain: string;
   snapshotId: string;
@@ -17,6 +30,8 @@ export interface SnapshotFixture {
   queriedNames?: string[];
   queriedTypes?: string[];
   vantages?: string[];
+  evaluationCoverage?: EvaluationCoverageFixture;
+  findingsSummary?: FindingsSummaryFixture;
 }
 
 export interface DelegationFixture {
@@ -34,8 +49,30 @@ export interface MailFixture {
  * Must be called BEFORE page.goto().
  */
 export async function mockDomainSnapshot(page: Page, fixture: SnapshotFixture): Promise<void> {
-  const { domain, snapshotId, zoneManagement, resultState, queriedNames, queriedTypes, vantages } =
-    fixture;
+  const {
+    domain,
+    snapshotId,
+    zoneManagement,
+    resultState,
+    queriedNames,
+    queriedTypes,
+    vantages,
+    evaluationCoverage,
+    findingsSummary,
+  } = fixture;
+  const coverage =
+    findingsSummary?.evaluationCoverage ||
+    evaluationCoverage ||
+    ({ state: 'COMPLETE', errors: [] } satisfies EvaluationCoverageFixture);
+  const total = findingsSummary?.total ?? 0;
+  const severityCounts = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    info: 0,
+    ...findingsSummary?.severityCounts,
+  };
 
   await page.route(`**/api/domain/${domain}/latest`, (route) => {
     route.fulfill({
@@ -46,6 +83,8 @@ export async function mockDomainSnapshot(page: Page, fixture: SnapshotFixture): 
         domainId: `dom-${snapshotId}`,
         zoneManagement: zoneManagement ?? 'unmanaged',
         resultState: resultState ?? 'complete',
+        rulesetVersionId: `ruleset-${snapshotId}`,
+        metadata: { evaluation: coverage },
         createdAt: new Date().toISOString(),
         queriedNames: queriedNames ?? [domain],
         queriedTypes: queriedTypes ?? ['A', 'NS', 'SOA'],
@@ -59,6 +98,21 @@ export async function mockDomainSnapshot(page: Page, fixture: SnapshotFixture): 
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify([]),
+    });
+  });
+
+  await page.route(`**/api/snapshot/${snapshotId}/findings/summary`, (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        snapshotId,
+        findingsEvaluated: findingsSummary?.findingsEvaluated ?? coverage.state === 'COMPLETE',
+        evaluationCoverage: coverage,
+        hasFindings: findingsSummary?.hasFindings ?? total > 0,
+        severityCounts,
+        total,
+      }),
     });
   });
 }

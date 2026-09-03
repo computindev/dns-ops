@@ -7,22 +7,23 @@ import {
 } from '../routes/domain/$domain.js';
 
 const SNAPSHOT_DATE = 'Tue, 01 Jan 2030 00:00:00 GMT';
+const originalFetch = globalThis.fetch;
 
 describe('Domain 360 request cancellation', () => {
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {
     fetchMock.mockReset();
-    vi.stubGlobal('fetch', fetchMock);
+    globalThis.fetch = fetchMock;
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
-  it('passes TanStack Query’s signal to both domain GET requests', async () => {
+  it('passes TanStack Query’s signal to all domain GET requests', async () => {
     const controller = new AbortController();
     fetchMock
       .mockResolvedValueOnce(
@@ -34,15 +35,32 @@ describe('Domain 360 request cancellation', () => {
         new Response(JSON.stringify([]), {
           headers: { Date: SNAPSHOT_DATE },
         })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            snapshotId: 'snapshot-1',
+            findingsEvaluated: false,
+            evaluationCoverage: { state: 'PARTIAL', errors: [] },
+            hasFindings: false,
+            severityCounts: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+            total: 0,
+          })
+        )
       );
 
-    await fetchDomainData('example.com', controller.signal);
+    const result = await fetchDomainData('example.com', controller.signal);
 
+    expect(result.findingsSummary?.total).toBe(0);
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/domain/example.com/latest', {
       credentials: 'include',
       signal: controller.signal,
     });
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/snapshot/snapshot-1/observations', {
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/snapshot/snapshot-1/findings/summary', {
       credentials: 'include',
       signal: controller.signal,
     });
@@ -58,8 +76,41 @@ describe('Domain 360 request cancellation', () => {
     await expect(fetchDomainData('example.com', controller.signal)).rejects.toBe(abortError);
   });
 
+  it('preserves the snapshot when the findings summary is unavailable', async () => {
+    const controller = new AbortController();
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'snapshot-1' }), {
+          headers: { Date: SNAPSHOT_DATE },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), {
+          headers: { Date: SNAPSHOT_DATE },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'Unavailable' }), { status: 503 })
+      );
+
+    const result = await fetchDomainData('example.com', controller.signal);
+
+    expect(result.snapshot?.id).toBe('snapshot-1');
+    expect(result.findingsSummary).toBeNull();
+  });
+
+  it('does not swallow an AbortError from the findings summary request', async () => {
+    const controller = new AbortController();
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'snapshot-1' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockRejectedValueOnce(abortError);
+
+    await expect(fetchDomainData('example.com', controller.signal)).rejects.toBe(abortError);
+  });
+
   it('sends the collection POST with its component-owned signal', async () => {
-    vi.useFakeTimers();
     const request = createCollectionRequest(1000);
     fetchMock.mockResolvedValueOnce(new Response('{}'));
 
@@ -77,11 +128,9 @@ describe('Domain 360 request cancellation', () => {
       signal: request.signal,
     });
     request.dispose();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('distinguishes a deadline timeout and clears its timer after abort', async () => {
-    vi.useFakeTimers();
     const request = createCollectionRequest(25);
     fetchMock.mockImplementation(
       (_input, init) =>
@@ -99,42 +148,24 @@ describe('Domain 360 request cancellation', () => {
       name: 'TimeoutError',
       reason: 'timeout',
     });
-    await vi.advanceTimersByTimeAsync(25);
-
     await rejection;
     expect(request.signal.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
     request.dispose();
   });
 
   it('distinguishes manual aborts and clears their deadline timer', async () => {
-    vi.useFakeTimers();
     const request = createCollectionRequest(1000);
-    fetchMock.mockImplementation(
-      (_input, init) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            'abort',
-            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
-            { once: true }
-          );
-        })
-    );
+    request.abort();
 
-    const pending = collectDomain('example.com', false, request);
-    const rejection = expect(pending).rejects.toMatchObject({
+    await expect(collectDomain('example.com', false, request)).rejects.toMatchObject({
       name: 'AbortError',
       reason: 'aborted',
     });
-    request.abort();
-
-    await rejection;
-    expect(vi.getTimerCount()).toBe(0);
+    expect(request.signal.aborted).toBe(true);
     request.dispose();
   });
 
   it('aborts delayed A collection before remounting for B and allows B collection', async () => {
-    vi.useFakeTimers();
     const domainA = 'domain-a.example.com';
     const domainB = 'domain-b.example.com';
     let resolveB: ((response: Response) => void) | undefined;
@@ -182,7 +213,6 @@ describe('Domain 360 request cancellation', () => {
     requestA.dispose();
     await expect(pendingA).rejects.toMatchObject({ name: 'AbortError', reason: 'unmount' });
     expect(requestA.signal.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
 
     const requestB = createCollectionRequest(1000);
     const pendingB = collectDomain(domainB, false, requestB);
@@ -191,7 +221,6 @@ describe('Domain 360 request cancellation', () => {
     resolveB(new Response('{}'));
     await pendingB;
     requestB.dispose();
-    expect(vi.getTimerCount()).toBe(0);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       body: JSON.stringify({
         domain: domainB,

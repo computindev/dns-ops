@@ -900,10 +900,75 @@
     gap: var(--space-sm);
   }
 
-  .domain-evidence__header h3,
+  .domain-evidence__header h2,
   .domain-diff h3 {
     font-size: var(--text-xl);
     margin-block-start: var(--space-2xs);
+  }
+
+  .domain-evidence__metrics {
+    display: grid;
+    gap: var(--space-md);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .domain-evidence__metric {
+    display: grid;
+    gap: var(--space-sm);
+    min-inline-size: 0;
+    margin: 0;
+    padding: var(--space-md);
+  }
+
+  .domain-evidence__metric[data-state='complete'] {
+    border-color: var(--color-success);
+  }
+
+  .domain-evidence__metric h3 {
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    letter-spacing: -0.03em;
+    line-height: var(--leading-tight);
+    margin: 0;
+  }
+
+  .domain-evidence__metric dl {
+    display: grid;
+    gap: var(--space-sm);
+    margin: 0;
+  }
+
+  .domain-evidence__metric dl > div {
+    display: grid;
+    gap: var(--space-xs);
+    min-inline-size: 0;
+  }
+
+  .domain-evidence__metric dt {
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .domain-evidence__metric dd {
+    align-items: center;
+    color: var(--color-text);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: var(--text-sm);
+    gap: var(--space-xs);
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .domain-evidence__evaluation,
+  .domain-evidence__finding-copy {
+    color: var(--color-muted);
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    margin: 0;
+    overflow-wrap: anywhere;
   }
 
   .domain-evidence__header > p,
@@ -922,7 +987,7 @@
     padding: var(--space-md);
   }
 
-  .domain-evidence__setup h4 {
+  .domain-evidence__setup h3 {
     font-size: var(--text-lg);
     margin-block-start: var(--space-2xs);
   }
@@ -1374,6 +1439,12 @@
   .domain-360__alert,
   .domain-360__state {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 40rem) {
+  .domain-evidence__metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

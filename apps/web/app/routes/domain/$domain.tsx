@@ -1,3 +1,4 @@
+import type { FindingsSummaryResponse } from '@dns-ops/contracts/responses';
 import type { Observation, Snapshot } from '@dns-ops/db/schema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
@@ -83,10 +84,11 @@ const DOMAIN_TABS: { id: DomainTabId; label: string }[] = [
   ...(DELEGATION_ENABLED ? [{ id: 'delegation' as const, label: 'Delegation' }] : []),
 ];
 
-interface DomainData {
+export interface DomainData {
   snapshot: Snapshot | null;
   observations: Observation[];
   evidenceClock: EvidenceClock | null;
+  findingsSummary: FindingsSummaryResponse | null;
 }
 
 export const DOMAIN_COLLECTION_TIMEOUT_MS = 30_000;
@@ -244,7 +246,12 @@ export async function fetchDomainData(domain: string, signal?: AbortSignal): Pro
 
   if (!snapshotResponse.ok) {
     if (snapshotResponse.status === 404) {
-      return { snapshot: null, observations: [], evidenceClock: null };
+      return {
+        snapshot: null,
+        observations: [],
+        evidenceClock: null,
+        findingsSummary: null,
+      };
     }
     throw new Error(
       `Failed to load domain data: ${snapshotResponse.status} ${snapshotResponse.statusText}`
@@ -292,7 +299,25 @@ export async function fetchDomainData(domain: string, signal?: AbortSignal): Pro
     evidenceClock = null;
   }
 
-  return { snapshot: snap, observations, evidenceClock };
+  let findingsSummary: FindingsSummaryResponse | null = null;
+  try {
+    const summaryResponse = await fetch(`/api/snapshot/${snap.id}/findings/summary`, {
+      credentials: 'include',
+      signal,
+    });
+    throwIfAborted(signal);
+    if (summaryResponse.ok) {
+      findingsSummary = (await summaryResponse.json()) as FindingsSummaryResponse;
+      throwIfAborted(signal);
+    }
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    // A summary failure must not discard a usable snapshot, but it must stay
+    // UNKNOWN rather than becoming a fabricated zero-finding result.
+    findingsSummary = null;
+  }
+
+  return { snapshot: snap, observations, evidenceClock, findingsSummary };
 }
 
 function Domain360Page() {
@@ -316,6 +341,7 @@ function Domain360Page() {
 
   const snapshot = domainData?.snapshot ?? null;
   const observations = Array.isArray(domainData?.observations) ? domainData.observations : [];
+  const findingsSummary = domainData?.findingsSummary;
 
   const loaderError: LoaderError | undefined = error
     ? {
@@ -594,7 +620,12 @@ function Domain360Page() {
           data-testid="domain-tabpanel-overview"
         >
           {activeTab === 'overview' && (
-            <OverviewTab domain={domain} snapshot={snapshot} observations={observations} />
+            <OverviewTab
+              domain={domain}
+              snapshot={snapshot}
+              observations={observations}
+              findingsSummary={findingsSummary}
+            />
           )}
         </div>
 
@@ -657,10 +688,12 @@ function OverviewTab({
   domain,
   snapshot,
   observations,
+  findingsSummary,
 }: {
   domain: string;
   snapshot: Snapshot | null;
   observations: Observation[];
+  findingsSummary?: FindingsSummaryResponse | null;
 }) {
   const scopeHeadingId = useId();
   const metadataHeadingId = useId();
@@ -668,11 +701,15 @@ function OverviewTab({
   if (!snapshot) {
     return (
       <div className="space-y-6">
+        <DomainEvidencePanel
+          domain={domain}
+          snapshot={snapshot}
+          findingsSummary={findingsSummary}
+        />
+
         <div className="text-center py-12">
           <p className="text-gray-500">No DNS evidence available yet for {domain}.</p>
         </div>
-
-        <DomainEvidencePanel domain={domain} />
 
         <div className="space-y-4">
           <div>
@@ -698,6 +735,8 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
+      <DomainEvidencePanel domain={domain} snapshot={snapshot} findingsSummary={findingsSummary} />
+
       <div className="domain-stat-grid">
         <StatCard label="Total Queries" value={observations.length} />
         <StatCard label="Successful" value={successCount} color="green" />
@@ -707,8 +746,6 @@ function OverviewTab({
           color={errorCount > 0 ? 'red' : 'gray'}
         />
       </div>
-
-      <DomainEvidencePanel domain={domain} />
 
       {SIMULATION_ENABLED && (
         <div>
