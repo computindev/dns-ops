@@ -1,9 +1,9 @@
 # Probe Sandbox Security Review
 
-**Document Version:** 2.0.0
-**Date:** 2026-04-03
+**Document Version:** 2.2.0
+**Date:** 2026-09-02
 **Status:** Verified — gaps found and mitigated
-**Reviewer:** PR-06 automated security audit
+**Reviewer:** PR-06 automated security audit; issue #74 TLS trust review
 **Prior Version:** 1.0.0 (unverified — see §Revision History)
 
 ---
@@ -42,6 +42,7 @@ the PR-06 fixes.
 | Timeout exhaustion | Medium | `PROBE_TIMEOUT_MS` enforced | ✅ Fixed in PR-06 |
 | Arbitrary target probing | Critical | MX-only allowlist | ✅ |
 | Cross-tenant probe leakage | High | Tenant-scoped allowlist | ✅ |
+| Invalid SMTP certificate reported as trusted success | High | Diagnostic handshake + explicit chain/hostname authorization (issue #74) | ✅ |
 | Allowlist TTL exhaustion | Low | 5-minute TTL auto-expiry | ✅ |
 
 ### Out-of-Scope
@@ -134,6 +135,56 @@ reject failed or unsafe resolution, and prevent a second DNS decision:
 Native HTTPS is used with `agent: false`, `rejectUnauthorized: true`, and no
 redirect following. The request deadline remains active while the response
 body is streamed, with a 64 KiB declared and actual body limit.
+
+---
+
+## SMTP STARTTLS Diagnostic TLS Handshake (Issue #74)
+
+The SMTP probe deliberately makes **one permissive TLS handshake** so that
+expired, hostname-mismatched, and untrusted-chain certificates are retained
+as diagnostic evidence instead of aborting the session. This mirrors the
+HTTPS TLS-certificate precedent (`tls-certificate.ts`): handshake-time
+hostname evaluation is disabled (`checkServerIdentity: () => undefined`,
+`rejectUnauthorized: false`), and trust is then decided **explicitly and
+separately** from the exact peer certificate.
+
+### Trust definitions
+
+| Field | Meaning |
+|-------|---------|
+| `supportsStarttls` | EHLO advertised STARTTLS |
+| `tlsNegotiated` | the diagnostic TLS handshake completed |
+| `tlsTrusted` | `chainAuthorized && hostnameAuthorized` |
+| `success` | exactly trusted TLS success — never true unless `supportsStarttls && tlsNegotiated && tlsTrusted` |
+
+- `chainAuthorized` is `TLSSocket.authorized` (runtime trust store verdict).
+- `hostnameAuthorized` is `tls.checkServerIdentity(hostname, peerCertificate) === undefined`.
+- An invalid certificate is still reported with its full diagnostic
+  certificate data (subject, issuer, validity, fingerprint, authorization
+  error), with `tlsNegotiated: true`, `tlsTrusted: false`, `success: false`.
+- The probe never sends `QUIT` over an untrusted TLS session; the socket is
+  destroyed once the evidence is captured.
+- Persistence and read paths fail closed: observations are only stored and
+  returned as successful when explicit trust is present, and legacy rows
+  without `tlsTrusted === true` are excluded by `findSuccessfulSmtpProbes`.
+
+### No credentials, ever
+
+The SMTP conversation is limited to `EHLO`, `STARTTLS`, and `QUIT`. The probe
+never sends `AUTH`, `MAIL FROM`, `RCPT TO`, or `DATA`, and holds no
+credentials. STARTTLS capability detection cannot relay mail.
+
+### Residual risk
+
+- `rejectUnauthorized: false` remains deliberate for the diagnostic
+  handshake; safety depends on the explicit authorization checks above and
+  the fail-closed consumers. Static analysis may continue to flag it — the
+  finding is attested here, not hidden.
+- `chainAuthorized` reflects the collector runtime trust store. Operators
+  using private CAs need an explicit CA-bundle design; trust is never
+  relaxed automatically.
+- Certificate fields from an untrusted session are attacker-controlled
+  diagnostic input and must not be presented as authoritative identity.
 
 ---
 
@@ -281,6 +332,7 @@ public unicast destinations at the network layer as defense in depth.
 | Gap | Severity | Recommendation |
 |-----|----------|---------------|
 | Complete public IPv6 policy is not yet maintained | Medium | All IPv6 literals and DNS answers fail closed until the policy exists |
+| Historical persisted SMTP observations cannot be proven trusted | Medium | Fail-closed repository filter excludes them; run a data inventory before any backfill |
 
 ---
 
@@ -291,6 +343,7 @@ public unicast destinations at the network layer as defense in depth.
 | 1.0.0 | 2024-03-24 | Initial (unverified — incorrectly claimed zero remaining gaps) |
 | 2.0.0 | 2026-04-04 | PR-06 security audit; fixed IPv4-mapped IPv6, redirect handling, config wiring, semaphore gaps, DNS pinning, and body/deadline limits |
 | 2.1.0 | 2026-09-01 | Fail closed for all IPv6 active-probe targets; pin webhook HTTPS delivery and reject DNS failures, redirects, and oversized bodies |
+| 2.2.0 | 2026-09-02 | Issue #74: SMTP STARTTLS diagnostic handshake documented; `success` now requires negotiated, chain-authorized, hostname-authorized TLS; invalid certificates retained as unsuccessful diagnostic evidence; fail-closed persistence and read paths |
 
 ---
 
@@ -301,6 +354,7 @@ public unicast destinations at the network layer as defense in depth.
 | `apps/collector/src/probes/ssrf-guard.ts` | SSRF guard — IP/URL validation |
 | `apps/collector/src/probes/allowlist.ts` | Tenant-scoped probe allowlist |
 | `apps/collector/src/probes/mta-sts.ts` | Pinned MTA-STS policy fetch and body limits |
+| `apps/collector/src/probes/smtp-starttls.ts` | Pinned SMTP STARTTLS probe with diagnostic TLS trust contract |
 | `apps/collector/src/probes/semaphore.ts` | Global concurrency semaphore |
 | `apps/collector/src/probes/ssrf-guard.test.ts` | SSRF guard unit tests |
 | `apps/collector/src/probes/probe-ratelimit.test.ts` | Rate-limit/concurrency tests |

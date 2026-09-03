@@ -5,11 +5,14 @@
  * Used by probe routes after collecting probe results.
  */
 
-import { type ProbeData, ProbeObservationRepository } from '@dns-ops/db';
+import { type ProbeData, ProbeObservationRepository, type SMTPProbeData } from '@dns-ops/db';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 import type { Env } from '../types.js';
 import type { MTASTSProbeResult } from './mta-sts.js';
 import type { SMTPProbeResult } from './smtp-starttls.js';
+
+type PersistedSMTPProbeData = SMTPProbeData &
+  Pick<SMTPProbeResult, 'tlsNegotiated' | 'tlsTrusted' | 'certificate'>;
 
 const logger = getCollectorLogger();
 
@@ -27,6 +30,12 @@ export type ProbeStatus =
 
 /**
  * Map SMTP probe result to probe observation format
+ *
+ * Trust is derived defensively from every trust condition (issue #74): a
+ * result can only be persisted as successful when STARTTLS was advertised,
+ * TLS was negotiated, and both chain and hostname authorization passed —
+ * verified against the certificate verdicts, not the caller-asserted
+ * `tlsTrusted` bit.
  */
 export function smtpResultToObservation(
   snapshotId: string,
@@ -40,17 +49,24 @@ export function smtpResultToObservation(
   success: boolean;
   errorMessage: string | null;
   responseTimeMs: number;
-  probeData: Record<string, unknown> | null;
+  probeData: PersistedSMTPProbeData | null;
 } {
+  const tlsNegotiated = result.tlsNegotiated === true;
+  // Never trust a caller-asserted trust or success bit alone: derive trust
+  // from the persisted certificate's chain and hostname verdicts (issue #74).
+  // An invalid certificate is retained as diagnostic evidence but can never
+  // persist as success.
+  const certificate = result.certificate;
+  const tlsTrusted =
+    certificate?.chainAuthorized === true && certificate.hostnameAuthorized === true;
+  const trusted =
+    result.success === true && result.supportsStarttls === true && tlsNegotiated && tlsTrusted;
+
   // Determine status from result
   let status: ProbeStatus = 'error';
 
-  if (result.success) {
-    if (result.supportsStarttls) {
-      status = 'success';
-    } else {
-      status = 'error'; // Server doesn't support STARTTLS
-    }
+  if (trusted) {
+    status = 'success';
   } else if (result.error) {
     const errorLower = result.error.toLowerCase();
 
@@ -68,19 +84,17 @@ export function smtpResultToObservation(
     }
   }
 
-  // Extract TLS data if available
-  const probeData: Record<string, unknown> | null = result.certificate
-    ? {
-        supportsStarttls: result.supportsStarttls,
-        tlsVersion: result.tlsVersion,
-        tlsCipher: result.tlsCipher,
-        certificateSubject: result.certificate.subject,
-        certificateIssuer: result.certificate.issuer,
-        certificateValidFrom: result.certificate.validFrom,
-        certificateValidTo: result.certificate.validTo,
-        smtpBanner: result.smtpBanner,
-      }
-    : { supportsStarttls: result.supportsStarttls, smtpBanner: result.smtpBanner };
+  // Diagnostic TLS state and certificate evidence are always persisted,
+  // including for untrusted or failed sessions.
+  const probeData: PersistedSMTPProbeData = {
+    supportsStarttls: result.supportsStarttls,
+    tlsNegotiated,
+    tlsTrusted,
+    tlsVersion: result.tlsVersion,
+    tlsCipher: result.tlsCipher,
+    certificate: result.certificate,
+    smtpBanner: result.smtpBanner,
+  };
 
   // Handle empty string error message - keep as null
   const errorMessage = result.error && result.error.trim().length > 0 ? result.error : null;
@@ -91,7 +105,7 @@ export function smtpResultToObservation(
     status,
     hostname: result.hostname,
     port: result.port,
-    success: result.success && result.supportsStarttls,
+    success: trusted,
     errorMessage,
     responseTimeMs: result.responseTimeMs,
     probeData,

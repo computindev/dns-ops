@@ -7,7 +7,7 @@ description: Drive the real dns-ops (web UI + public health APIs) to prove behav
 
 Read `features/README.md` first, then the feature file(s) the task names. The map says how to use a feature and what proves it; this file says how to run and drive the app.
 
-Surfaces: web (TanStack Start + Hono on port 3000) and public health HTTP (web `/api/health`, collector `/healthz` + `/readyz` on port 3001).
+Surfaces: web (TanStack Start + Hono on port 3000), public health HTTP (web `/api/health`, collector `/healthz` + `/readyz` on port 3001), and the collector's authenticated programmatic probe API. SMTP STARTTLS is not exposed in the web UI; its safe local verification path drives the real collector route/repository with deterministic fixtures at the DNS, TCP, and TLS external boundaries.
 
 ## Launch
 
@@ -20,7 +20,7 @@ bun run --filter @dns-ops/web dev
 
 Ready when: `curl -fsS --max-time 5 http://localhost:3000/api/health` returns JSON with `"status":"healthy"` (HTTP 200). HTTP 503 with `"status":"degraded"` means the process is up but the DB is not — doctor fails; do not drive authenticated features.
 
-Collector (needed for Domain 360 live collection, not for health.public / login / portfolio search UI chrome):
+Collector (needed for Domain 360 live collection and the probe API, not for health.public / login / portfolio search UI chrome):
 
 ```bash
 bun run --filter @dns-ops/collector dev
@@ -52,7 +52,10 @@ End states: poll headings, URL, or HTTP JSON `status`; never sleep.
 ```bash
 VERIFY_RUN_DIR=<run dir> bun .agents/skills/verify-dns-ops/harness/web.mts <feature-id>
 VERIFY_RUN_DIR=<run dir> bun .agents/skills/verify-dns-ops/harness/api.mts <feature-id>
+VERIFY_RUN_DIR=<run dir> bun .agents/skills/verify-dns-ops/harness/smtp-starttls-trust.mts
 ```
+
+For `smtp.starttls-trust`, use the dedicated helper above. It drives the real collector route and persistence code in-process and runs the existing deterministic SMTP/TLS boundary fixtures; it never enables active probing against a provider and accepts no credentials.
 
 ## Evidence
 
@@ -89,3 +92,4 @@ Kill what you started by pid/session. Do not drop the shared `dns_ops` database.
 | `harness/web.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/web.mts <feature-id>` | Playwright driver + evidence capture |
 | `harness/api.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/api.mts <feature-id>` | HTTP driver + exchange capture |
 | `harness/cli.sh` | `VERIFY_RUN_DIR=… .agents/skills/verify-dns-ops/harness/cli.sh <name> -- <command>` | isolated CLI transcript |
+| `harness/smtp-starttls-trust.mts` | `VERIFY_RUN_DIR=… bun .agents/skills/verify-dns-ops/harness/smtp-starttls-trust.mts` | deterministic collector route, persistence, SMTP, and TLS trust proof |

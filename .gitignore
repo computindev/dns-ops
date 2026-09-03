@@ -58,3 +58,6 @@ verification/runs/
 verification/pending.json
 verification/.hook-blocks
 verification/registry.json
+
+# verify-fresh generated marker; exclude it from working-tree digests.
+/.verify-fresh-worktree

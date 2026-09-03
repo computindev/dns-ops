@@ -12,13 +12,14 @@ One file per user-facing feature, from the user's point of view: what it is, how
 | domain.overview | web | changed | domain.overview.md |
 | portfolio.search | web | critical | portfolio.search.md |
 | fleet.reports | web | critical | fleet.reports.md |
+| smtp.starttls-trust | api | critical | smtp.starttls-trust.md |
 
 ## Baseline preconditions (unless a feature file overrides them)
 
 - App running from the current checkout; `.agents/skills/verify-dns-ops/harness/doctor.sh` healthy.
 - There is no `/version` sha endpoint. Confirm the process you started is this worktree (cwd + pid), not a random leftover on port 3000.
 - Identity: local e2e headers `X-Dev-Tenant=dns-ops-e2e` and `X-Dev-Actor=e2e-bot`, or a real session from `/login`. No modal, toast or unsaved draft open.
-- Do not enable `ENABLE_ACTIVE_PROBES` or hit provider-write paths. Simulation is guidance-only.
+- Do not enable `ENABLE_ACTIVE_PROBES` against a deployed service or hit provider-write paths. `smtp.starttls-trust` uses the collector API handler with deterministic persisted-evidence and network/TLS boundary fixtures only.
 
 ## Driving conventions
 

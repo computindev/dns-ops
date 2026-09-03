@@ -16,7 +16,7 @@ export type TLSConnector = (
 
 export interface TLSProbeSocket {
   authorized: boolean;
-  authorizationError?: Error;
+  authorizationError?: string | Error | null;
   once(event: 'secureConnect', listener: () => void): this;
   once(event: 'error', listener: (error: Error) => void): this;
   off(event: 'secureConnect', listener: () => void): this;
@@ -126,6 +126,12 @@ function connectTls(
   });
 }
 
+function authorizationErrorMessage(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.message;
+  return undefined;
+}
+
 function distinguishedName(value: tls.PeerCertificate['subject']): string {
   if (!value) return '';
   return Object.entries(value)
@@ -212,7 +218,8 @@ function evidenceFromSocket(
       [
         socket.authorized
           ? undefined
-          : (socket.authorizationError?.message ?? 'certificate chain is not authorized'),
+          : (authorizationErrorMessage(socket.authorizationError) ??
+            'certificate chain is not authorized'),
         hostnameError?.message,
       ]
         .filter((value): value is string => Boolean(value))
