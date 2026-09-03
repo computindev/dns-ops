@@ -2,10 +2,9 @@
 // Run:  VERIFY_RUN_DIR=verification/runs/<id> bun .agents/skills/verify-dns-ops/harness/web.mts <feature-id>
 import fs from 'node:fs';
 import path from 'node:path';
-import { Pool } from 'pg';
-import { getTenantUUID } from '../../../../packages/contracts/src/tenant.ts';
 import type { Observation } from '@dns-ops/db/schema';
 import { type APIResponse, type BrowserContext, chromium, type Page } from '@playwright/test';
+import { Pool } from 'pg';
 import {
   estimateLiveAt,
   indexObservationsById,
@@ -13,6 +12,7 @@ import {
   parseServerDate,
   toDateTimeAttribute,
 } from '../../../../apps/web/app/lib/dns-ttl.js';
+import { getTenantUUID } from '../../../../packages/contracts/src/tenant.ts';
 import { observationsToRecordSets } from '../../../../packages/parsing/src/dns/recordset.js';
 
 export const BASE_URL = process.env.APP_URL ?? 'http://localhost:3000';
@@ -117,29 +117,38 @@ async function seedPortfolioExpiryFixture(): Promise<{
   const pool = new Pool({ connectionString });
   try {
     const insertDomain = async (name: string) =>
-      (await pool.query(
-        `INSERT INTO domains (name, normalized_name, zone_management, tenant_id, metadata)
+      (
+        await pool.query(
+          `INSERT INTO domains (name, normalized_name, zone_management, tenant_id, metadata)
          VALUES ($1, $1, 'managed', $2, '{"portfolio": true}'::jsonb) RETURNING id`,
-        [name, tenantId]
-      )).rows[0].id as string;
+          [name, tenantId]
+        )
+      ).rows[0].id as string;
     const insertSnapshot = async (domainId: string, name: string) =>
-      (await pool.query(
-        `INSERT INTO snapshots (domain_id, domain_name, result_state, queried_names,
+      (
+        await pool.query(
+          `INSERT INTO snapshots (domain_id, domain_name, result_state, queried_names,
          queried_types, vantages, zone_management, triggered_by, metadata)
          VALUES ($1, $2, 'complete', $3::jsonb, '[]'::jsonb, '[]'::jsonb, 'managed',
          'verify-harness', '{"evaluation":{"state":"COMPLETE"}}'::jsonb) RETURNING id`,
-        [domainId, name, JSON.stringify([name])]
-      )).rows[0].id as string;
+          [domainId, name, JSON.stringify([name])]
+        )
+      ).rows[0].id as string;
     const observedDomainId = await insertDomain(observed);
     await insertSnapshot(await insertDomain(unknown), unknown);
     const observedSnapshotId = await insertSnapshot(observedDomainId, observed);
     await pool.query(
       `INSERT INTO probe_observations (snapshot_id, probe_type, status, hostname, port,
        success, probe_data) VALUES ($1, 'rdap', 'success', $2, 443, true, $3::jsonb)`,
-      [observedSnapshotId, observed, JSON.stringify({
-        check: 'RDAP_EXPIRATION', status: 'OBSERVED',
-        evidence: { kind: 'RDAP_EXPIRATION', domain: observed, expirationDate },
-      })]
+      [
+        observedSnapshotId,
+        observed,
+        JSON.stringify({
+          check: 'RDAP_EXPIRATION',
+          status: 'OBSERVED',
+          evidence: { kind: 'RDAP_EXPIRATION', domain: observed, expirationDate },
+        }),
+      ]
     );
   } finally {
     await pool.end();
@@ -430,7 +439,9 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
 
     const queryNames = query.json.domains.map((d: { name: string }) => d.name);
     if (!queryNames.includes(fixture.observed) || !queryNames.includes(fixture.unknown))
-      throw new Error(`expiry fixture domains missing from search results: ${JSON.stringify(queryNames)}`);
+      throw new Error(
+        `expiry fixture domains missing from search results: ${JSON.stringify(queryNames)}`
+      );
     const observedRow = query.json.domains.find(
       (d: { name: string }) => d.name === fixture.observed
     );
@@ -448,20 +459,26 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       .waitFor({ timeout: 15_000 });
     const expiryPending = page.waitForResponse(
       (r) => {
-        if (!r.url().includes('/api/portfolio/search') || r.request().method() !== 'POST') return false;
+        if (!r.url().includes('/api/portfolio/search') || r.request().method() !== 'POST')
+          return false;
         return r.request().postDataJSON()?.expirationWithinDays === 90;
       },
       { timeout: 15_000 }
     );
     await page.getByLabel('Expiry window').selectOption('90');
     const expiryRes = await expiryPending;
-    if (expiryRes.status() !== 200) throw new Error(`expiry search expected 200, got ${expiryRes.status()}`);
+    if (expiryRes.status() !== 200)
+      throw new Error(`expiry search expected 200, got ${expiryRes.status()}`);
     const expiryJson = await expiryRes.json();
     const expiryNames = expiryJson.domains.map((d: { name: string }) => d.name);
     if (!expiryNames.includes(fixture.observed) || expiryNames.includes(fixture.unknown))
       throw new Error(`expiry filter returned unexpected domains: ${JSON.stringify(expiryNames)}`);
     await ev.readback('portfolio-expiry', {
-      fixture: { observed: fixture.observed, unknown: fixture.unknown, seededExpirationDate: fixture.expirationDate },
+      fixture: {
+        observed: fixture.observed,
+        unknown: fixture.unknown,
+        seededExpirationDate: fixture.expirationDate,
+      },
       query: query.json,
       expiryWithin90Days: expiryJson,
     });

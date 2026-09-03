@@ -334,9 +334,7 @@ portfolioRoutes.post('/search', async (c) => {
     const hasFindingCriteria = hasSeverityFilter || findingTypePrefix !== undefined;
     const severitySet = new Set(severities ?? []);
     const stalenessCutoffMs =
-      snapshotOlderThanDays !== undefined
-        ? now - snapshotOlderThanDays * DAY_MS
-        : null;
+      snapshotOlderThanDays !== undefined ? now - snapshotOlderThanDays * DAY_MS : null;
     const allFindings =
       snapshotIds.length > 0
         ? await db.getDrizzle().query.findings.findMany({
@@ -397,7 +395,8 @@ portfolioRoutes.post('/search', async (c) => {
       if (
         stalenessCutoffMs !== null &&
         (!latestSnapshot || new Date(latestSnapshot.createdAt).getTime() > stalenessCutoffMs)
-      ) continue;
+      )
+        continue;
 
       if (!latestSnapshot) {
         // Missing evidence is UNKNOWN and cannot match a within window.
