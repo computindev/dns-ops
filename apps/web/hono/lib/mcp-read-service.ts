@@ -9,6 +9,7 @@ import {
   SnapshotRepository,
 } from '@dns-ops/db';
 import { compareSnapshots } from '@dns-ops/parsing';
+import { loadCasePlaybook } from './case-playbooks.js';
 import { type AuthenticatedMcpPrincipal, requireMcpScope } from './mcp-auth.js';
 
 export class McpNotFoundError extends Error {
@@ -133,6 +134,13 @@ export class McpReadService {
     );
     if (!result) throw new McpNotFoundError();
     return result;
+  }
+
+  async explainCase(caseKind: string) {
+    requireMcpScope(this.principal, 'CASE_READ');
+    const playbook = await loadCasePlaybook(caseKind);
+    if (!playbook) throw new McpNotFoundError();
+    return playbook;
   }
 
   private async ownedDomain(domainId: string) {
