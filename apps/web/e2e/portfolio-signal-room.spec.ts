@@ -84,7 +84,7 @@ test.describe('Portfolio Signal Room', () => {
 
     const workspace = page.locator('.portfolio-workspace');
     await expect(workspace).toBeVisible();
-    await expect(workspace.locator('.portfolio-panel')).toHaveCount(8);
+    await expect(workspace.locator('.portfolio-panel')).toHaveCount(9);
     await expect(page.getByRole('heading', { name: 'Portfolio workflows' })).toBeVisible();
     await expect(
       page.getByRole('heading', { name: 'Portfolio Search' }).locator('xpath=../..')
@@ -114,7 +114,7 @@ test.describe('Portfolio Signal Room', () => {
   test('keeps the complete workspace within the viewport at supported widths', async ({ page }) => {
     await mockPortfolioWorkspace(page);
     await page.goto('/portfolio');
-    await expect(page.locator('.portfolio-panel')).toHaveCount(8);
+    await expect(page.locator('.portfolio-panel')).toHaveCount(9);
 
     for (const width of [320, 375, 414, 768]) {
       await page.setViewportSize({ width, height: 900 });
