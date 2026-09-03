@@ -90,7 +90,7 @@ describe('Job Worker Processors - Bead 19', () => {
       expect(typeof processCollectDomain).toBe('function');
     });
 
-    it('should return error when DATABASE_URL not set', async () => {
+    it('should throw when DATABASE_URL not set so BullMQ retries', async () => {
       const originalEnv = process.env.DATABASE_URL;
       delete process.env.DATABASE_URL;
 
@@ -100,10 +100,7 @@ describe('Job Worker Processors - Bead 19', () => {
         triggeredBy: 'user',
       });
 
-      const result = await processCollectDomain(job);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('DATABASE_URL');
+      await expect(processCollectDomain(job)).rejects.toThrow('DATABASE_URL');
 
       process.env.DATABASE_URL = originalEnv;
     });
@@ -114,7 +111,7 @@ describe('Job Worker Processors - Bead 19', () => {
       expect(typeof processMonitoringRefresh).toBe('function');
     });
 
-    it('should return error when DATABASE_URL not set', async () => {
+    it('should throw when DATABASE_URL not set so BullMQ retries', async () => {
       const originalEnv = process.env.DATABASE_URL;
       delete process.env.DATABASE_URL;
 
@@ -126,10 +123,7 @@ describe('Job Worker Processors - Bead 19', () => {
         tenantId: 't1',
       });
 
-      const result = await processMonitoringRefresh(job);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('DATABASE_URL');
+      await expect(processMonitoringRefresh(job)).rejects.toThrow('DATABASE_URL');
 
       process.env.DATABASE_URL = originalEnv;
     });
@@ -140,7 +134,7 @@ describe('Job Worker Processors - Bead 19', () => {
       expect(typeof processFleetReport).toBe('function');
     });
 
-    it('should return error when DATABASE_URL not set', async () => {
+    it('should throw when DATABASE_URL not set so BullMQ retries', async () => {
       const originalEnv = process.env.DATABASE_URL;
       delete process.env.DATABASE_URL;
 
@@ -152,10 +146,7 @@ describe('Job Worker Processors - Bead 19', () => {
         tenantId: 't1',
       });
 
-      const result = await processFleetReport(job);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('DATABASE_URL');
+      await expect(processFleetReport(job)).rejects.toThrow('DATABASE_URL');
 
       process.env.DATABASE_URL = originalEnv;
     });

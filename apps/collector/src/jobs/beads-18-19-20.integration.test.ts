@@ -41,20 +41,21 @@ describe('Beads 18-19-20 Integration Tests', () => {
         // Verify the function exists and is callable
         expect(typeof processFleetReport).toBe('function');
 
-        const result = await processFleetReport(job);
-        expect(result).toBeDefined();
+        // Failures now propagate to BullMQ instead of resolving success:false.
+        await expect(processFleetReport(job)).rejects.toThrow();
       });
 
       it('should handle missing domains gracefully', async () => {
         const job = createMockJob<FleetReportJobData>('job-1', {
           inventory: ['nonexistent.com'],
           checks: ['spf'],
+          format: 'summary',
           triggeredBy: 'user',
           tenantId: 'tenant-123',
         });
 
-        const result = await processFleetReport(job);
-        expect(result).toBeDefined();
+        // Unreachable DB surfaces as a retryable thrown failure.
+        await expect(processFleetReport(job)).rejects.toThrow();
       });
     });
   });
@@ -154,10 +155,8 @@ describe('Beads 18-19-20 Integration Tests', () => {
         triggeredBy: 'user',
       });
 
-      const result = await processCollectDomain(job);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
+      // Retryable: thrown so BullMQ's three-attempt policy runs.
+      await expect(processCollectDomain(job)).rejects.toThrow('DATABASE_URL');
 
       process.env.DATABASE_URL = originalEnv;
     });

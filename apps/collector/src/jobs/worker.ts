@@ -17,7 +17,9 @@ import {
   MonitoredDomainRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
-import { type ConnectionOptions, type Job, Worker } from 'bullmq';
+import type { JobMetrics } from '@dns-ops/logging';
+import { isValidDomain } from '@dns-ops/parsing';
+import { type ConnectionOptions, type Job, UnrecoverableError, Worker } from 'bullmq';
 import { DNSCollector } from '../dns/collector.js';
 import type { CollectionConfig } from '../dns/types.js';
 import {
@@ -39,6 +41,110 @@ import {
 } from './queue.js';
 
 const logger = getCollectorLogger();
+
+type WorkerFailureOutcome = 'retrying' | 'failed';
+
+type JobMetricsRecorder = Pick<JobMetrics, 'failed' | 'retried'>;
+
+function validationError(message: string): never {
+  throw new UnrecoverableError(`Job validation failed: ${message}`);
+}
+
+function validateCollectDomainJobData(data: CollectDomainJobData): void {
+  if (!data.tenantId || !isValidDomain(data.domain) || !data.triggeredBy) {
+    validationError('tenantId, domain, and triggeredBy are required');
+  }
+}
+
+function validateMonitoringRefreshJobData(data: MonitoringRefreshJobData): void {
+  if (!data.tenantId || !['hourly', 'daily', 'weekly'].includes(data.schedule)) {
+    validationError('monitoring refresh job data is invalid');
+  }
+  // The scheduled placeholder (domainName 'scheduled', tenantId 'system') only
+  // fans out batch refreshes; it has no per-domain fields to validate.
+  if (data.monitoredDomainId === 'scheduled') return;
+  if (!data.monitoredDomainId || !data.domainId || !isValidDomain(data.domainName)) {
+    validationError('monitoring refresh job data is invalid');
+  }
+}
+
+function validateFleetReportJobData(data: FleetReportJobData): void {
+  if (
+    !Array.isArray(data.inventory) ||
+    !data.inventory.every((domain) => typeof domain === 'string') ||
+    !Array.isArray(data.checks) ||
+    !data.checks.every((check) => typeof check === 'string') ||
+    !['summary', 'detailed'].includes(data.format) ||
+    !data.triggeredBy ||
+    !data.tenantId
+  ) {
+    validationError('fleet report job data is invalid');
+  }
+}
+
+function isUnrecoverableError(error: Error): boolean {
+  return error instanceof UnrecoverableError || error.name === 'UnrecoverableError';
+}
+
+export function classifyWorkerFailure(job: Job | undefined, error: Error): WorkerFailureOutcome {
+  const attempt = job?.attemptsMade ?? 0;
+  const maxAttempts = Math.max(job?.opts.attempts ?? 1, 1);
+  return !isUnrecoverableError(error) && attempt < maxAttempts ? 'retrying' : 'failed';
+}
+
+export function recordWorkerFailure({
+  label,
+  jobType,
+  queue,
+  job,
+  error,
+  jobMetrics,
+}: {
+  label: string;
+  jobType: string;
+  queue: string;
+  job: Job | undefined;
+  error: Error;
+  jobMetrics: JobMetricsRecorder;
+}): WorkerFailureOutcome {
+  const outcome = classifyWorkerFailure(job, error);
+  const attempt = job?.attemptsMade ?? 0;
+  const maxAttempts = Math.max(job?.opts.attempts ?? 1, 1);
+
+  if (outcome === 'retrying') {
+    logger.warn(`${label} job retrying`, {
+      jobId: job?.id,
+      eventType: 'job_retry',
+      attempt,
+      maxAttempts,
+      error: error.message,
+    });
+    jobMetrics.retried({
+      jobType,
+      queue,
+      jobId: job?.id || 'unknown',
+      attempt,
+    });
+  } else {
+    logger.error(`${label} job failed`, error, {
+      jobId: job?.id,
+      eventType: 'job_failed',
+      outcome: isUnrecoverableError(error) ? 'terminal_validation' : 'exhausted_retries',
+      attempt,
+      maxAttempts,
+    });
+    jobMetrics.failed({
+      jobType,
+      queue,
+      jobId: job?.id || 'unknown',
+      durationMs: job?.processedOn ? Date.now() - job.processedOn : 0,
+      error: error.message,
+      attempt,
+    });
+  }
+
+  return outcome;
+}
 
 // =============================================================================
 // Database Helper
@@ -77,6 +183,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
   });
 
   try {
+    validateCollectDomainJobData(job.data);
     const db = getDbAdapter();
 
     const config: CollectionConfig = {
@@ -188,10 +295,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
       domain,
       durationMs: Date.now() - startTime,
     });
-    return {
-      success: false,
-      error: err.message,
-    };
+    throw err;
   }
 }
 
@@ -214,6 +318,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
     logger.info('Processing scheduled monitoring refresh', { schedule, jobId: job.id });
 
     try {
+      validateMonitoringRefreshJobData(job.data);
       const db = getDbAdapter();
       const monitoredRepo = new MonitoredDomainRepository(db);
       const domainRepo = new DomainRepository(db);
@@ -221,10 +326,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
       const queue = getCollectionQueue();
 
       if (!queue) {
-        return {
-          success: false,
-          error: 'Queue not available for scheduling',
-        };
+        throw new Error('Queue not available for scheduling');
       }
 
       // Find all monitored domains due for refresh across ALL tenants
@@ -306,10 +408,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
         tenantId,
         jobId: job.id,
       });
-      return {
-        success: false,
-        error: err.message,
-      };
+      throw err;
     }
   }
 
@@ -321,16 +420,19 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
   });
 
   try {
+    validateMonitoringRefreshJobData(job.data);
     const db = getDbAdapter();
     const domainRepo = new DomainRepository(db);
 
     // Get domain to check zone management
     const domain = await domainRepo.findById(domainId);
     if (!domain || domain.tenantId !== tenantId) {
-      throw new Error(`Domain ${domainId} is outside the monitoring tenant`);
+      throw new UnrecoverableError(`Domain ${domainId} is outside the monitoring tenant`);
     }
     if (domain.normalizedName !== domainName.toLowerCase()) {
-      throw new Error('Monitoring job domain name does not match the registered domain');
+      throw new UnrecoverableError(
+        'Monitoring job domain name does not match the registered domain'
+      );
     }
 
     const config: CollectionConfig = {
@@ -399,10 +501,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
       domain: domainName,
       durationMs: Date.now() - startTime,
     });
-    return {
-      success: false,
-      error: err.message,
-    };
+    throw err;
   }
 }
 
@@ -427,6 +526,7 @@ export async function processFleetReport(job: Job<FleetReportJobData>): Promise<
   });
 
   try {
+    validateFleetReportJobData(job.data);
     const db = getDbAdapter();
     const domainRepo = new DomainRepository(db);
     const snapshotRepo = new SnapshotRepository(db);
@@ -512,10 +612,7 @@ export async function processFleetReport(job: Job<FleetReportJobData>): Promise<
       jobType: 'fleet-report',
       durationMs: Date.now() - startTime,
     });
-    return {
-      success: false,
-      error: err.message,
-    };
+    throw err;
   }
 }
 
@@ -555,39 +652,25 @@ export async function startWorkers(): Promise<void> {
   );
 
   collectionWorker.on('completed', (job) => {
-    const result = job.returnvalue as { success?: boolean; error?: string } | undefined;
     const durationMs = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0;
-    if (result?.success === false) {
-      logger.debug('Collection job completed with failure', { jobId: job.id });
-      jobMetrics.failed({
-        jobType: 'collect-domain',
-        queue: QUEUE_NAMES.COLLECTION,
-        jobId: job.id || 'unknown',
-        durationMs,
-        error: result.error || 'Unknown error',
-        attempt: job.attemptsMade || 0,
-      });
-    } else {
-      logger.debug('Collection job completed', { jobId: job.id });
-      jobMetrics.completed({
-        jobType: 'collect-domain',
-        queue: QUEUE_NAMES.COLLECTION,
-        jobId: job.id || 'unknown',
-        durationMs,
-      });
-    }
-  });
-
-  // Fires only on uncaught processor crashes (processors catch known errors)
-  collectionWorker.on('failed', (job, error) => {
-    logger.error('Collection job crashed', error, { jobId: job?.id });
-    jobMetrics.failed({
+    logger.debug('Collection job completed', { jobId: job.id });
+    jobMetrics.completed({
       jobType: 'collect-domain',
       queue: QUEUE_NAMES.COLLECTION,
-      jobId: job?.id || 'unknown',
-      durationMs: job?.processedOn ? Date.now() - job.processedOn : 0,
-      error: error.message,
-      attempt: job?.attemptsMade || 0,
+      jobId: job.id || 'unknown',
+      durationMs,
+    });
+  });
+
+  // Processors throw for retryable and terminal outcomes; BullMQ retries here.
+  collectionWorker.on('failed', (job, error) => {
+    recordWorkerFailure({
+      label: 'Collection',
+      jobType: 'collect-domain',
+      queue: QUEUE_NAMES.COLLECTION,
+      job,
+      error,
+      jobMetrics,
     });
   });
 
@@ -604,38 +687,24 @@ export async function startWorkers(): Promise<void> {
   );
 
   monitoringWorker.on('completed', (job) => {
-    const result = job.returnvalue as { success?: boolean; error?: string } | undefined;
     const durationMs = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0;
-    if (result?.success === false) {
-      logger.debug('Monitoring job completed with failure', { jobId: job.id });
-      jobMetrics.failed({
-        jobType: 'monitoring-refresh',
-        queue: QUEUE_NAMES.MONITORING,
-        jobId: job.id || 'unknown',
-        durationMs,
-        error: result.error || 'Unknown error',
-        attempt: job.attemptsMade || 0,
-      });
-    } else {
-      logger.debug('Monitoring job completed', { jobId: job.id });
-      jobMetrics.completed({
-        jobType: 'monitoring-refresh',
-        queue: QUEUE_NAMES.MONITORING,
-        jobId: job.id || 'unknown',
-        durationMs,
-      });
-    }
+    logger.debug('Monitoring job completed', { jobId: job.id });
+    jobMetrics.completed({
+      jobType: 'monitoring-refresh',
+      queue: QUEUE_NAMES.MONITORING,
+      jobId: job.id || 'unknown',
+      durationMs,
+    });
   });
 
   monitoringWorker.on('failed', (job, error) => {
-    logger.error('Monitoring job crashed', error, { jobId: job?.id });
-    jobMetrics.failed({
+    recordWorkerFailure({
+      label: 'Monitoring',
       jobType: 'monitoring-refresh',
       queue: QUEUE_NAMES.MONITORING,
-      jobId: job?.id || 'unknown',
-      durationMs: job?.processedOn ? Date.now() - job.processedOn : 0,
-      error: error.message,
-      attempt: job?.attemptsMade || 0,
+      job,
+      error,
+      jobMetrics,
     });
   });
 
@@ -652,38 +721,24 @@ export async function startWorkers(): Promise<void> {
   );
 
   reportsWorker.on('completed', (job) => {
-    const result = job.returnvalue as { success?: boolean; error?: string } | undefined;
     const durationMs = job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0;
-    if (result?.success === false) {
-      logger.debug('Reports job completed with failure', { jobId: job.id });
-      jobMetrics.failed({
-        jobType: 'fleet-report',
-        queue: QUEUE_NAMES.REPORTS,
-        jobId: job.id || 'unknown',
-        durationMs,
-        error: result.error || 'Unknown error',
-        attempt: job.attemptsMade || 0,
-      });
-    } else {
-      logger.debug('Reports job completed', { jobId: job.id });
-      jobMetrics.completed({
-        jobType: 'fleet-report',
-        queue: QUEUE_NAMES.REPORTS,
-        jobId: job.id || 'unknown',
-        durationMs,
-      });
-    }
+    logger.debug('Reports job completed', { jobId: job.id });
+    jobMetrics.completed({
+      jobType: 'fleet-report',
+      queue: QUEUE_NAMES.REPORTS,
+      jobId: job.id || 'unknown',
+      durationMs,
+    });
   });
 
   reportsWorker.on('failed', (job, error) => {
-    logger.error('Reports job crashed', error, { jobId: job?.id });
-    jobMetrics.failed({
+    recordWorkerFailure({
+      label: 'Reports',
       jobType: 'fleet-report',
       queue: QUEUE_NAMES.REPORTS,
-      jobId: job?.id || 'unknown',
-      durationMs: job?.processedOn ? Date.now() - job.processedOn : 0,
-      error: error.message,
-      attempt: job?.attemptsMade || 0,
+      job,
+      error,
+      jobMetrics,
     });
   });
 
