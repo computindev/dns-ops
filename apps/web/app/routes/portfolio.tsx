@@ -5,6 +5,7 @@ import { AuditLogPanel } from '../components/AuditLogPanel.js';
 import { AuthPending } from '../components/AuthPending.js';
 import { BuiltInViewsPanel } from '../components/BuiltInViewsPanel.js';
 import { FleetReportsPanel } from '../components/FleetReportsPanel.js';
+import { FleetTapePanel } from '../components/FleetTapePanel.js';
 import { MonitoredDomainsPanel } from '../components/MonitoredDomainsPanel.js';
 import { PortfolioSearchPanel } from '../components/PortfolioSearchPanel.js';
 import { SavedFiltersPanel } from '../components/SavedFiltersPanel.js';
@@ -74,6 +75,7 @@ function PortfolioWorkspace() {
       <AlertsPanel />
       <SharedReportsPanel />
       <FleetReportsPanel />
+      <FleetTapePanel />
       <TemplateOverridesPanel />
       <AuditLogPanel />
 

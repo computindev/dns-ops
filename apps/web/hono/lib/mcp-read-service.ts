@@ -10,6 +10,7 @@ import {
 } from '@dns-ops/db';
 import { compareSnapshots } from '@dns-ops/parsing';
 import { loadCasePlaybook } from './case-playbooks.js';
+import { buildFleetTape } from './fleet-tape.js';
 import { type AuthenticatedMcpPrincipal, requireMcpScope } from './mcp-auth.js';
 
 export class McpNotFoundError extends Error {
@@ -124,6 +125,11 @@ export class McpReadService {
     requireMcpScope(this.principal, 'SIGNAL_READ');
     if (domainId) await this.ownedDomain(domainId);
     return new OperationalConditionService(this.db).listCases(this.principal.tenantId, domainId);
+  }
+
+  async fleetTape() {
+    requireMcpScope(this.principal, 'DOMAIN_READ');
+    return buildFleetTape(this.db, this.principal.tenantId);
   }
 
   async caseGet(caseId: string) {

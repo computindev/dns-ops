@@ -17,6 +17,7 @@ import {
 import { domains, findings, probeObservations, snapshots } from '@dns-ops/db/schema';
 import { and, desc, eq, inArray, like, or } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { buildFleetTape } from '../lib/fleet-tape.js';
 import {
   requireAdminAccess,
   requireAuth,
@@ -1256,5 +1257,20 @@ portfolioRoutes.get('/audit', async (c) => {
     return c.json({ events });
   } catch (_error) {
     return c.json({ error: 'Failed to fetch audit log' }, 500);
+  }
+});
+
+// 24h snapshot-diff digest for the tenant portfolio (issue #57). Same
+// implementation as the MCP fleet_tape tool; email delivery is out of scope.
+portfolioRoutes.get('/tape', async (c) => {
+  const tenantId = c.get('tenantId');
+  if (!tenantId) {
+    return c.json({ error: 'Authenticated tenant context required' }, 401);
+  }
+
+  try {
+    return c.json(await buildFleetTape(c.get('db'), tenantId));
+  } catch (_error) {
+    return c.json({ error: 'Fleet tape failed' }, 500);
   }
 });
