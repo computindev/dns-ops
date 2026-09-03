@@ -379,6 +379,31 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
   // Alerts read (tenant-scoped)
   { path: '/api/alerts', method: 'GET', policy: 'auth-read', notes: 'Uses tenant isolation' },
   { path: '/api/alerts/:id', method: 'GET', policy: 'auth-read', notes: 'Uses tenant isolation' },
+  // Live drills (issue #62): fail-closed harness starts with two-person confirm
+  {
+    path: '/api/portfolio/drills',
+    method: 'GET',
+    policy: 'auth-read',
+    notes: 'Allowlisted drill tuples and tenant run history',
+  },
+  {
+    path: '/api/portfolio/drills',
+    method: 'POST',
+    policy: 'auth-write',
+    notes: 'Request a drill start (first operator)',
+  },
+  {
+    path: '/api/portfolio/drills/:id/confirm',
+    method: 'POST',
+    policy: 'auth-write',
+    notes: 'Second-operator confirm; must differ from requester',
+  },
+  {
+    path: '/api/portfolio/drills/:id/start',
+    method: 'POST',
+    policy: 'auth-write',
+    notes: 'Start the fail-closed harness after confirmation',
+  },
   {
     path: '/api/alerts/reports',
     method: 'GET',
