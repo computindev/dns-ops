@@ -5,7 +5,11 @@
  * Includes DNS rules and Mail rules with database persistence.
  */
 
-import { evaluationCoverageOrUnknown } from '@dns-ops/contracts';
+import {
+  evaluationCoverageOrUnknown,
+  isEvaluationComplete,
+  type Severity,
+} from '@dns-ops/contracts';
 import type { NewFinding, NewSuggestion } from '@dns-ops/db';
 import {
   DkimSelectorRepository,
@@ -585,14 +589,32 @@ findingsRoutes.get('/snapshot/:snapshotId/findings/summary', requireAuth, async 
     }
 
     const findingRepo = new FindingRepository(db);
-    const severityCounts = await findingRepo.countBySeverity(snapshotId);
-    const hasFindings = await findingRepo.hasFindings(snapshotId);
+    const currentFindings = snapshot.rulesetVersionId
+      ? await findingRepo.findBySnapshotIdAndRulesetVersionId(snapshotId, snapshot.rulesetVersionId)
+      : [];
+    const severityCounts: Record<Severity, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      info: 0,
+    };
+
+    for (const finding of currentFindings) {
+      severityCounts[finding.severity] += 1;
+    }
+
+    const evaluationCoverage = snapshot.rulesetVersionId
+      ? evaluationCoverageOrUnknown(snapshot.metadata?.evaluation)
+      : evaluationCoverageOrUnknown(undefined);
 
     return c.json({
       snapshotId,
-      hasFindings,
+      findingsEvaluated: isEvaluationComplete(evaluationCoverage),
+      evaluationCoverage,
+      hasFindings: currentFindings.length > 0,
       severityCounts,
-      total: Object.values(severityCounts).reduce((a, b) => a + b, 0),
+      total: currentFindings.length,
     });
   } catch (error) {
     const logger = getWebLogger();

@@ -1,3 +1,10 @@
+import {
+  type EvaluationCoverage,
+  evaluationCoverageOrUnknown,
+  isEvaluationComplete,
+} from '@dns-ops/contracts';
+import type { FindingsSummaryResponse } from '@dns-ops/contracts/responses';
+import type { Snapshot } from '@dns-ops/db/schema';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId } from 'react';
 import { Button } from './ui/Button.js';
@@ -77,23 +84,108 @@ export function unknownForEvidence(
   };
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { credentials: 'include' });
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { credentials: 'include', signal });
   if (!response.ok) throw new Error(`Evidence request failed (${response.status})`);
   return response.json() as Promise<T>;
 }
 
-export function DomainEvidencePanel({ domain }: { domain: string }) {
+export function isEvidenceComplete({
+  snapshot,
+  findingsSummary,
+  setup,
+  requestsReady = true,
+}: {
+  snapshot: Pick<Snapshot, 'resultState' | 'metadata'> | null;
+  findingsSummary: FindingsSummaryResponse | null | undefined;
+  setup: readonly Unknown[];
+  requestsReady?: boolean;
+}): boolean {
+  if (
+    !snapshot ||
+    !findingsSummary ||
+    !Number.isFinite(findingsSummary.total) ||
+    findingsSummary.total < 0 ||
+    !requestsReady ||
+    setup.length > 0
+  ) {
+    return false;
+  }
+  if (snapshot.resultState !== 'complete') return false;
+  if (
+    !findingsSummary.findingsEvaluated ||
+    !isEvaluationComplete(findingsSummary.evaluationCoverage)
+  ) {
+    return false;
+  }
+  return snapshot.metadata?.authoritativeEvidence?.state !== 'UNKNOWN';
+}
+
+function unavailableEvidence(subject: string): Unknown {
+  return {
+    reason: 'EVIDENCE_UNAVAILABLE',
+    explanation: `${subject} is currently unavailable.`,
+    action: 'RETRY',
+    actionLabel: 'Retry',
+  };
+}
+
+function collectionSetup(snapshot: Snapshot | null): Unknown | undefined {
+  if (!snapshot || snapshot.resultState === 'complete') return undefined;
+  return {
+    reason: 'COLLECTION_INCOMPLETE',
+    explanation:
+      snapshot.resultState === 'failed'
+        ? 'DNS collection failed, so evidence completeness is UNKNOWN.'
+        : 'DNS collection is partial, so evidence completeness is UNKNOWN.',
+    action: 'RUN_FRESH_SCAN',
+    actionLabel: 'Run a fresh scan',
+  };
+}
+
+function authoritativeSetup(snapshot: Snapshot | null): Unknown | undefined {
+  const authoritativeEvidence = snapshot?.metadata?.authoritativeEvidence;
+  if (authoritativeEvidence?.state !== 'UNKNOWN') return undefined;
+  return (
+    authoritativeEvidence.unknown ?? {
+      reason: 'AUTHORITATIVE_EVIDENCE_UNAVAILABLE',
+      explanation: 'Authoritative DNS evidence is currently UNKNOWN.',
+      action: 'RETRY_PROBE',
+      actionLabel: 'Retry authoritative evidence',
+    }
+  );
+}
+
+function evaluationSetup(findingsSummary: FindingsSummaryResponse | null | undefined): Unknown[] {
+  if (!findingsSummary) return [];
+  const coverage: EvaluationCoverage = evaluationCoverageOrUnknown(
+    findingsSummary.evaluationCoverage
+  );
+  return coverage.errors.map((evaluationError) => evaluationError.unknown);
+}
+
+export function DomainEvidencePanel({
+  domain,
+  snapshot,
+  findingsSummary,
+}: {
+  domain: string;
+  snapshot: Snapshot | null;
+  findingsSummary?: FindingsSummaryResponse | null;
+}) {
   const headingId = useId();
+  const coverageHeadingId = `${headingId}-coverage`;
+  const findingsHeadingId = `${headingId}-findings`;
   const queryClient = useQueryClient();
   const profile = useQuery({
     queryKey: ['domain-profile', domain],
-    queryFn: () => fetchJson<ProfileResponse>(`/api/domains/${encodeURIComponent(domain)}/profile`),
+    queryFn: ({ signal }) =>
+      fetchJson<ProfileResponse>(`/api/domains/${encodeURIComponent(domain)}/profile`, signal),
   });
   const evidence = useQuery({
     queryKey: ['domain-evidence', domain],
-    queryFn: () =>
-      fetchJson<EvidenceResponse>(`/api/domains/${encodeURIComponent(domain)}/evidence`),
+    queryFn: ({ signal }) =>
+      fetchJson<EvidenceResponse>(`/api/domains/${encodeURIComponent(domain)}/evidence`, signal),
   });
 
   const retry = () => {
@@ -101,60 +193,172 @@ export function DomainEvidencePanel({ domain }: { domain: string }) {
     void queryClient.invalidateQueries({ queryKey: ['domain-evidence', domain] });
   };
 
-  if (profile.isLoading || evidence.isLoading) {
-    return (
-      <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
-        <p id={headingId} className="domain-evidence__state" role="status">
-          Loading evidence coverage…
-        </p>
-      </section>
-    );
-  }
-  if (profile.error || evidence.error) {
-    return (
-      <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
-        <div className="domain-evidence__error" role="alert">
-          <div>
-            <p className="ds-kicker">Evidence status</p>
-            <h3 id={headingId}>Evidence setup is unavailable</h3>
-            <p>Evidence setup status is currently unavailable.</p>
-          </div>
-          <Button onClick={retry} size="sm" variant="quiet">
-            Retry
-          </Button>
-        </div>
-      </section>
-    );
-  }
-
-  const setup = [
+  const collectionUnknown = collectionSetup(snapshot);
+  const authoritativeUnknown = authoritativeSetup(snapshot);
+  const setup: Unknown[] = [
     ...(profile.data?.setup ? [profile.data.setup] : []),
     ...(evidence.data?.evidence
       .map(unknownForEvidence)
       .filter((unknown): unknown is Unknown => Boolean(unknown)) ?? []),
+    ...(profile.error ? [unavailableEvidence('Profile setup')] : []),
+    ...(evidence.error ? [unavailableEvidence('External evidence')] : []),
+    ...(profile.isLoading || evidence.isLoading
+      ? [
+          {
+            reason: 'EVIDENCE_LOADING',
+            explanation: 'Profile and external evidence status are still loading.',
+            action: 'WAIT',
+            actionLabel: 'Loading',
+          },
+        ]
+      : []),
+    ...(collectionUnknown ? [collectionUnknown] : []),
+    ...(authoritativeUnknown ? [authoritativeUnknown] : []),
+    ...evaluationSetup(findingsSummary),
+    ...(findingsSummary === null ? [unavailableEvidence('Findings summary')] : []),
+    ...(findingsSummary === undefined
+      ? [
+          {
+            reason: 'FINDINGS_LOADING',
+            explanation: 'Findings coverage is still loading.',
+            action: 'WAIT',
+            actionLabel: 'Loading',
+          },
+        ]
+      : []),
+    ...(!snapshot
+      ? [
+          {
+            reason: 'SNAPSHOT_UNAVAILABLE',
+            explanation: 'No DNS snapshot is available for this domain yet.',
+            action: 'RUN_FRESH_SCAN',
+            actionLabel: 'Run a fresh scan',
+          },
+        ]
+      : []),
   ];
   const uniqueSetup = deduplicateSetup(setup);
+  const profileAndEvidenceReady =
+    !profile.isLoading && !profile.error && !evidence.isLoading && !evidence.error;
+  const complete = isEvidenceComplete({
+    snapshot,
+    findingsSummary,
+    setup: uniqueSetup,
+    requestsReady: profileAndEvidenceReady,
+  });
+  const findingsCount =
+    findingsSummary && Number.isFinite(findingsSummary.total) && findingsSummary.total >= 0
+      ? findingsSummary.total
+      : null;
+  const evaluationComplete = Boolean(
+    findingsSummary?.findingsEvaluated && isEvaluationComplete(findingsSummary.evaluationCoverage)
+  );
+  const findingsKnown = findingsCount !== null && evaluationComplete;
+  const findingsCopy =
+    findingsCount === null
+      ? findingsSummary === null
+        ? 'Findings unavailable; no numeric result is shown.'
+        : 'Findings are still loading; no numeric result is shown.'
+      : findingsCount === 0 && !complete
+        ? '0 observed does not establish health while evidence coverage is incomplete.'
+        : findingsCount === 0
+          ? 'No findings detected by the current evaluated ruleset.'
+          : !findingsKnown
+            ? `${findingsCount} observed finding${findingsCount === 1 ? '' : 's'}; evaluation coverage is incomplete.`
+            : `${findingsCount} current evaluated-ruleset finding${findingsCount === 1 ? '' : 's'} recorded.`;
   const observed = evidence.data?.evidence.filter(isCurrentEvidence) ?? [];
 
   return (
-    <section className="domain-evidence ds-panel" aria-labelledby={headingId}>
+    <section
+      className="domain-evidence ds-panel"
+      aria-labelledby={headingId}
+      data-state={complete ? 'complete' : 'unknown'}
+      data-testid="domain-evidence-panel"
+    >
       <header className="domain-evidence__header">
         <div>
           <p className="ds-kicker">Evidence integrity</p>
-          <h3 id={headingId}>Evidence coverage</h3>
+          <h2 id={headingId}>Evidence completeness</h2>
         </div>
-        <p>Known risk and completed evidence are separate. Unknown checks are never healthy.</p>
+        <p>Coverage and findings are separate. Unknown checks are never healthy.</p>
       </header>
+
+      <div className="domain-evidence__metrics">
+        <fieldset
+          className="domain-evidence__metric ds-panel--muted"
+          aria-labelledby={coverageHeadingId}
+          data-state={complete ? 'complete' : 'unknown'}
+          data-testid="domain-evidence-completeness"
+        >
+          <h3 id={coverageHeadingId}>Coverage</h3>
+          <dl>
+            <div>
+              <dt>Evidence completeness</dt>
+              <dd>
+                <span className={`ds-badge ds-badge--${complete ? 'success' : 'unknown'}`}>
+                  {complete ? 'Complete' : 'Needs setup/evidence'}
+                </span>
+              </dd>
+            </div>
+          </dl>
+          <p
+            className="domain-evidence__evaluation"
+            data-state={evaluationComplete ? 'complete' : 'unknown'}
+          >
+            Rule evaluation coverage: {evaluationComplete ? 'Complete' : 'UNKNOWN'}.
+          </p>
+        </fieldset>
+
+        <fieldset
+          className="domain-evidence__metric ds-panel--muted"
+          aria-labelledby={findingsHeadingId}
+          data-state={findingsKnown ? 'known' : 'unknown'}
+          data-testid="domain-evidence-findings"
+        >
+          <h3 id={findingsHeadingId}>Findings</h3>
+          <dl>
+            <div>
+              <dt>Current evaluated ruleset</dt>
+              <dd>
+                {findingsCount === null ? (
+                  <span className="ds-badge ds-badge--unknown">UNKNOWN</span>
+                ) : findingsKnown ? (
+                  <span className={`ds-badge ds-badge--${complete ? 'success' : 'unknown'}`}>
+                    {findingsCount}
+                  </span>
+                ) : (
+                  <>
+                    <span className="ds-badge ds-badge--unknown">UNKNOWN</span>
+                    <span>{findingsCount} observed</span>
+                  </>
+                )}{' '}
+                {findingsCount === null
+                  ? 'unavailable'
+                  : findingsKnown
+                    ? `finding${findingsCount === 1 ? '' : 's'}`
+                    : 'findings'}
+              </dd>
+            </div>
+          </dl>
+          <p
+            className="domain-evidence__finding-copy"
+            role={findingsSummary === null ? 'alert' : 'status'}
+          >
+            {findingsCopy}
+          </p>
+        </fieldset>
+      </div>
 
       {uniqueSetup.length > 0 ? (
         <section
           className="domain-evidence__setup ds-panel--muted"
           aria-labelledby={`${headingId}-setup`}
           data-testid="domain-needs-setup-evidence"
+          role={profile.error || evidence.error || findingsSummary === null ? 'alert' : 'status'}
         >
           <div>
             <p className="ds-kicker">Baseline and freshness</p>
-            <h4 id={`${headingId}-setup`}>Needs setup/evidence</h4>
+            <h3 id={`${headingId}-setup`}>Needs setup/evidence</h3>
           </div>
           <ul>
             {uniqueSetup.map((unknown) => (
@@ -165,6 +369,15 @@ export function DomainEvidencePanel({ domain }: { domain: string }) {
             ))}
           </ul>
         </section>
+      ) : null}
+
+      {profile.error || evidence.error ? (
+        <div className="domain-evidence__error" role="alert">
+          <p>Evidence setup status is currently unavailable.</p>
+          <Button onClick={retry} size="sm" variant="quiet">
+            Retry
+          </Button>
+        </div>
       ) : null}
 
       {profile.data?.profile ? (

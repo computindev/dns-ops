@@ -143,16 +143,8 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
     if (await delegation.count()) await delegation.waitFor();
     await ev.shot(page, 'domain-overview');
 
-    // DNS Parsed view — remaining TTL + estimated live-at on every row (issue #55).
-    await page.getByRole('tab', { name: /^DNS$/ }).click();
-    await page.getByRole('columnheader', { name: 'Remaining TTL' }).waitFor({ timeout: 15_000 });
-    await page
-      .getByRole('columnheader', { name: 'Estimated live at' })
-      .waitFor({ timeout: 15_000 });
-
-    // Store and independently audit the persisted evidence. URLs are built
-    // from a relative path so the map linter does not see route literals the
-    // registry's regex does not index (hono routes registered via apiRoutes).
+    // Read back the non-mutating findings summary before switching away from
+    // Overview, then compare its explicit state with the rendered hero.
     const apiBase = BASE_URL.endsWith('/') ? BASE_URL : `${BASE_URL}/`;
     const latest = await page.request.get(new URL('api/domain/google.com/latest', apiBase));
     if (!latest.ok()) throw new Error(`latest snapshot request failed: ${latest.status()}`);
@@ -167,6 +159,51 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
       throw new Error('snapshot is missing the response-received-v1 DNS timing marker');
     }
 
+    const summaryRes = await page.request.get(
+      new URL(`snapshot/${snap.id}/findings/summary`, apiBase)
+    );
+    if (!summaryRes.ok())
+      throw new Error(`findings summary read-back failed: ${summaryRes.status()}`);
+    const summaryJson = await summaryRes.json();
+    if (
+      !isRecord(summaryJson) ||
+      typeof summaryJson.total !== 'number' ||
+      !isRecord(summaryJson.evaluationCoverage) ||
+      (summaryJson.evaluationCoverage.state !== 'COMPLETE' &&
+        summaryJson.evaluationCoverage.state !== 'PARTIAL')
+    ) {
+      throw new Error('findings summary is missing an explicit evaluation coverage and count');
+    }
+    await ev.readback('findings-summary', summaryJson);
+
+    const evidenceHero = page.getByRole('region', { name: /evidence completeness/i });
+    await evidenceHero.waitFor({ timeout: 15_000 });
+    const evaluationState =
+      summaryJson.evaluationCoverage.state === 'COMPLETE' && summaryJson.findingsEvaluated === true
+        ? 'complete'
+        : 'unknown';
+    const evaluationIndicator = evidenceHero.getByText(/Rule evaluation coverage:/i);
+    await evaluationIndicator.waitFor();
+    if ((await evaluationIndicator.getAttribute('data-state')) !== evaluationState) {
+      throw new Error(`rendered evaluation state disagrees with summary: ${evaluationState}`);
+    }
+    const findingsGroup = evidenceHero.getByRole('group', { name: /^Findings$/i });
+    await findingsGroup.waitFor();
+    const expectedFindingsState = evaluationState === 'complete' ? 'known' : 'unknown';
+    if ((await findingsGroup.getAttribute('data-state')) !== expectedFindingsState) {
+      throw new Error(`rendered findings state disagrees with summary: ${expectedFindingsState}`);
+    }
+
+    // DNS Parsed view — remaining TTL + estimated live-at on every row (issue #55).
+    await page.getByRole('tab', { name: /^DNS$/ }).click();
+    await page.getByRole('columnheader', { name: 'Remaining TTL' }).waitFor({ timeout: 15_000 });
+    await page
+      .getByRole('columnheader', { name: 'Estimated live at' })
+      .waitFor({ timeout: 15_000 });
+
+    // Store and independently audit the persisted evidence. URLs are built
+    // from a relative path so the map linter does not see route literals the
+    // registry's regex does not index (hono routes registered via apiRoutes).
     const obsRes = await page.request.get(new URL(`snapshot/${snap.id}/observations`, apiBase));
     if (!obsRes.ok()) throw new Error(`observation read-back failed: ${obsRes.status()}`);
     const observationsJson = await obsRes.json();

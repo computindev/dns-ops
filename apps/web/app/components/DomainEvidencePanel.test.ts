@@ -1,5 +1,27 @@
+import type { FindingsSummaryResponse } from '@dns-ops/contracts/responses';
+import type { Snapshot } from '@dns-ops/db/schema';
 import { describe, expect, it } from 'vitest';
-import { deduplicateSetup, isCurrentEvidence, unknownForEvidence } from './DomainEvidencePanel.js';
+import {
+  deduplicateSetup,
+  isCurrentEvidence,
+  isEvidenceComplete,
+  unknownForEvidence,
+} from './DomainEvidencePanel.js';
+
+const completeSnapshot = {
+  resultState: 'complete',
+  metadata: {},
+} as Snapshot;
+
+const summary = (overrides: Partial<FindingsSummaryResponse> = {}): FindingsSummaryResponse => ({
+  snapshotId: 'snapshot-1',
+  findingsEvaluated: true,
+  evaluationCoverage: { state: 'COMPLETE', errors: [] },
+  hasFindings: false,
+  severityCounts: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+  total: 0,
+  ...overrides,
+});
 
 describe('DomainEvidencePanel evidence classification', () => {
   it('deduplicates repeated setup actions', () => {
@@ -69,5 +91,50 @@ describe('DomainEvidencePanel evidence classification', () => {
         probeData: { status: 'OBSERVED' },
       })
     ).toBe(true);
+  });
+
+  it('keeps partial evaluation plus zero findings UNKNOWN', () => {
+    expect(
+      isEvidenceComplete({
+        snapshot: completeSnapshot,
+        findingsSummary: summary({
+          findingsEvaluated: false,
+          evaluationCoverage: { state: 'PARTIAL', errors: [] },
+        }),
+        setup: [],
+      })
+    ).toBe(false);
+  });
+
+  it('allows a complete zero-finding result to be healthy', () => {
+    expect(
+      isEvidenceComplete({ snapshot: completeSnapshot, findingsSummary: summary(), setup: [] })
+    ).toBe(true);
+  });
+
+  it('keeps complete evaluation UNKNOWN when external setup has a gap', () => {
+    expect(
+      isEvidenceComplete({
+        snapshot: completeSnapshot,
+        findingsSummary: summary(),
+        setup: [
+          {
+            reason: 'MISSING_BASELINE',
+            explanation: 'Accept a baseline first.',
+            action: 'ACCEPT_BASELINE',
+            actionLabel: 'Accept baseline',
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('keeps an unavailable findings summary UNKNOWN instead of treating it as zero', () => {
+    expect(
+      isEvidenceComplete({ snapshot: completeSnapshot, findingsSummary: null, setup: [] })
+    ).toBe(false);
+    expect(
+      isEvidenceComplete({ snapshot: completeSnapshot, findingsSummary: undefined, setup: [] })
+    ).toBe(false);
   });
 });

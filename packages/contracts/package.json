@@ -11,6 +11,10 @@
     "./enums": {
       "import": "./dist/enums.js",
       "types": "./dist/enums.d.ts"
+    },
+    "./responses": {
+      "import": "./dist/responses.js",
+      "types": "./dist/responses.d.ts"
     }
   },
   "scripts": {

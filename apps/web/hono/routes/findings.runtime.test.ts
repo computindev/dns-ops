@@ -387,22 +387,32 @@ describe('findingsRoutes runtime', () => {
   describe('GET /snapshot/:snapshotId/findings/summary', () => {
     it('returns severity counts for a snapshot', async () => {
       const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: 'ruleset-current',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+          },
+        ],
         findings: [
           {
             id: 'f1',
             snapshotId: 'snap-1',
+            rulesetVersionId: 'ruleset-current',
             severity: 'high',
             type: 'dns.authoritative-failure',
           },
           {
             id: 'f2',
             snapshotId: 'snap-1',
+            rulesetVersionId: 'ruleset-current',
             severity: 'medium',
             type: 'mail.no-mx-record',
           },
           {
             id: 'f3',
             snapshotId: 'snap-1',
+            rulesetVersionId: 'ruleset-current',
             severity: 'high',
             type: 'dns.recursive-mismatch',
           },
@@ -415,12 +425,19 @@ describe('findingsRoutes runtime', () => {
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
         snapshotId: string;
+        findingsEvaluated: boolean;
+        evaluationCoverage: { state: string };
         hasFindings: boolean;
+        severityCounts: Record<string, number>;
         total: number;
       };
       expect(json.snapshotId).toBe('snap-1');
+      expect(json.findingsEvaluated).toBe(true);
+      expect(json.evaluationCoverage.state).toBe('COMPLETE');
       expect(json.hasFindings).toBe(true);
-      expect(json.total).toBeGreaterThan(0);
+      expect(json.severityCounts.high).toBe(2);
+      expect(json.severityCounts.medium).toBe(1);
+      expect(json.total).toBe(3);
     });
 
     it('returns empty summary for snapshot with no findings', async () => {
@@ -431,9 +448,152 @@ describe('findingsRoutes runtime', () => {
 
       expect(response.status).toBe(200);
       const json = (await response.json()) as {
+        findingsEvaluated: boolean;
+        evaluationCoverage: { state: string };
         hasFindings: boolean;
         total: number;
       };
+      expect(json.findingsEvaluated).toBe(false);
+      expect(json.evaluationCoverage.state).toBe('PARTIAL');
+      expect(json.hasFindings).toBe(false);
+      expect(json.total).toBe(0);
+    });
+
+    it('keeps a missing ruleset UNKNOWN even with complete-looking metadata', async () => {
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: null,
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/summary');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        findingsEvaluated: boolean;
+        evaluationCoverage: { state: string };
+        total: number;
+      };
+      expect(json.findingsEvaluated).toBe(false);
+      expect(json.evaluationCoverage.state).toBe('PARTIAL');
+      expect(json.total).toBe(0);
+    });
+
+    it('keeps zero findings UNKNOWN when evaluation coverage is partial', async () => {
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: 'ruleset-current',
+            metadata: {
+              evaluation: {
+                state: 'PARTIAL',
+                errors: [
+                  {
+                    code: 'RULE_EXECUTION_FAILED',
+                    ruleId: 'dns.example',
+                    message: 'Rule failed',
+                    status: 'UNKNOWN',
+                    unknown: {
+                      reason: 'CHECK_EVALUATION_FAILED',
+                      explanation: 'This check could not be evaluated.',
+                      action: 'RUN_FRESH_SCAN',
+                      actionLabel: 'Run a fresh scan',
+                      blocking: true,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/summary');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        findingsEvaluated: boolean;
+        evaluationCoverage: { state: string; errors: unknown[] };
+        hasFindings: boolean;
+        total: number;
+      };
+      expect(json.findingsEvaluated).toBe(false);
+      expect(json.evaluationCoverage.state).toBe('PARTIAL');
+      expect(json.evaluationCoverage.errors).toHaveLength(1);
+      expect(json.hasFindings).toBe(false);
+      expect(json.total).toBe(0);
+    });
+
+    it('counts only findings from the snapshot ruleset version', async () => {
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: 'ruleset-current',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+          },
+        ],
+        findings: [
+          {
+            id: 'old-finding',
+            snapshotId: 'snap-1',
+            rulesetVersionId: 'ruleset-old',
+            severity: 'critical',
+            type: 'dns.old-rule',
+          },
+          {
+            id: 'current-finding',
+            snapshotId: 'snap-1',
+            rulesetVersionId: 'ruleset-current',
+            severity: 'high',
+            type: 'dns.current-rule',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/summary');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        hasFindings: boolean;
+        severityCounts: Record<string, number>;
+        total: number;
+      };
+      expect(json.hasFindings).toBe(true);
+      expect(json.severityCounts.critical).toBe(0);
+      expect(json.severityCounts.high).toBe(1);
+      expect(json.total).toBe(1);
+    });
+
+    it('allows an explicitly complete zero-finding result', async () => {
+      const state = makeState({
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: 'ruleset-current',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/findings/summary');
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        findingsEvaluated: boolean;
+        hasFindings: boolean;
+        total: number;
+      };
+      expect(json.findingsEvaluated).toBe(true);
       expect(json.hasFindings).toBe(false);
       expect(json.total).toBe(0);
     });

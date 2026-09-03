@@ -5,6 +5,8 @@ profile: changed
 paths:
   - apps/web/app/routes/index.tsx
   - apps/web/app/routes/domain/$domain.tsx
+  - apps/web/app/components/DomainEvidencePanel.tsx
+  - apps/web/app/components/DomainEvidencePanel.test.ts
   - apps/web/app/components/DomainInput.tsx
   - apps/web/app/components/DNSViews.tsx
   - apps/web/app/components/MailFindingsPanel.tsx
@@ -12,11 +14,18 @@ paths:
   - apps/web/app/lib/dns-ttl.ts
   - apps/web/app/lib/dns-ttl.test.ts
   - apps/web/app/lib/domain-route.test.ts
+  - apps/web/app/styles/app.css
+  - apps/web/hono/routes/findings.ts
+  - apps/web/hono/routes/findings.runtime.test.ts
   - apps/web/e2e/domain-states.spec.ts
   - apps/web/e2e/finding-simulation.spec.ts
+  - apps/web/e2e/domain-signal-room.spec.ts
+  - apps/web/e2e/support/domain-fixtures.ts
   - apps/collector/src/dns/collector.ts
   - apps/collector/src/dns/collector.concurrency.test.ts
   - apps/collector/src/dns/integration.test.ts
+  - packages/contracts/package.json
+  - packages/contracts/src/responses.ts
   - packages/db/src/schema/index.ts
   - .agents/verify-kit/verify.mjs
   - .agents/verify-kit/working-tree.test.mjs
@@ -56,6 +65,8 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 ### Expected observations
 - URL matches `/domain/google.com`.
 - Tabs Overview, DNS, Mail, and History are visible. Delegation is visible only when the product shows that tab.
+- Overview opens with a labelled `Evidence completeness` region before query statistics, showing separate coverage and current evaluated-ruleset findings status/counts.
+- Partial or missing collection/evaluation coverage plus zero findings renders UNKNOWN / `Needs setup/evidence` and says that `0 observed does not establish health`; findings-unavailable renders UNKNOWN rather than numeric zero. Healthy zero-finding language is only allowed for explicit complete coverage with no setup or evidence gaps.
 - DNS Parsed view renders `Remaining TTL` and `Estimated live at` column headers; every body row's two new cells are populated (`N s remaining` + `<time datetime>`, or `UNKNOWN` ×2) — never blank. Rendered live rows agree with persisted recursive evidence and the `dns-ttl-audit` read-back.
 - On the Mail tab, existing findings render as accessible named cards. After authenticated actionable-type discovery returns `supportedTypeIds`, each matching existing card shows a visible `Simulate` sibling primary button, including review-only findings; unsupported findings remain visible and expandable without that button.
 - Activating a finding's `Simulate` button sends only `{ findingId }` to the authenticated single-finding endpoint. A valid result renders `Guidance only`, its returned title, explanation, and playbook reference, plus `No DNS changes are applied.`; no Apply control, executable mutation, provider record value, or projected resolution appears.
@@ -63,6 +74,8 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 
 ### Forbidden observations
 - Staying on `/` after Analyze with a valid domain.
+- Rendering a healthy/success zero-finding result when coverage is incomplete or unavailable.
+- Fabricating a coverage percentage from observations or query counts.
 - Driving with CSS class selectors.
 - Deriving the estimate from the averaged record TTL instead of matching recursive answers; blank TTL cells.
 - Nesting `Simulate` inside the finding accordion button, guessing supported types, or hiding findings when actionable-type discovery fails.
@@ -70,6 +83,7 @@ await page.getByRole('tab', { name: /overview/i }).waitFor();
 
 ### Read-back
 - The Domain 360 heading shows the submitted domain. Snapshot/findings JSON is optional; empty snapshot is allowed.
+- Harness stores the findings summary (`findings-summary`) and checks that rendered evaluation/finding states agree with its explicit coverage/count fields.
 - Harness stores the raw observations (`dns-observations`), persisted-vs-rendered deadline audit (`dns-ttl-audit`), and a per-row audit of the two TTL cells (`dns-ttl-cells`). The harness fails on API errors, missing timing metadata/server time, absent usable recursive evidence, all-UNKNOWN output, unexpected live values, or mismatched rows/countdowns.
 
 ## Gotchas
