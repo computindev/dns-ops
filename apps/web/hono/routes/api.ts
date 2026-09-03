@@ -34,6 +34,7 @@ import { legacyToolsRoutes } from './legacy-tools.js';
 import { mailRoutes } from './mail.js';
 import migrateRoutes from './migrate.js';
 import { monitoringRoutes } from './monitoring.js';
+import { pasteRoutes } from './paste.js';
 import { portfolioRoutes } from './portfolio.js';
 import { providerTemplateRoutes } from './provider-templates.js';
 import { rulesetVersionRoutes } from './ruleset-versions.js';
@@ -208,6 +209,7 @@ apiRoutes.route('/monitoring', monitoringRoutes);
 apiRoutes.route('/alerts', alertRoutes);
 apiRoutes.route('/fleet-report', fleetReportRoutes);
 apiRoutes.route('/simulate', simulationRoutes);
+apiRoutes.route('/paste', pasteRoutes);
 apiRoutes.route('/suggestions', suggestionsRoutes);
 
 // Domain read — tenant-scoped via resolveAccessibleSnapshot

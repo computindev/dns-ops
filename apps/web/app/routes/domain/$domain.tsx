@@ -11,6 +11,7 @@ import { DomainEvidencePanel } from '../../components/DomainEvidencePanel.js';
 import { MailFindingsPanel } from '../../components/MailFindingsPanel.js';
 import { MailDiagnostics } from '../../components/mail/index.js';
 import { NotesPanel } from '../../components/NotesPanel.js';
+import { PasteEvidencePanel } from '../../components/PasteEvidencePanel.js';
 import { SimulationPanel } from '../../components/SimulationPanel.js';
 import { SnapshotHistoryPanel } from '../../components/SnapshotHistoryPanel.js';
 import { ResultStateBadge, ZoneManagementBadge } from '../../components/StatusBadges.js';
@@ -746,6 +747,8 @@ function OverviewTab({
           color={errorCount > 0 ? 'red' : 'gray'}
         />
       </div>
+
+      <PasteEvidencePanel domain={domain} />
 
       {SIMULATION_ENABLED && (
         <div>

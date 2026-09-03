@@ -67,7 +67,6 @@ export {
   toPunycode,
 } from './idn/index.js';
 export * from './mail/index.js';
-
 // Mail Result-based parsing (gradual migration)
 export {
   isMailParseError,
@@ -81,3 +80,4 @@ export {
   parseSPFResult,
   partitionMailResults,
 } from './mail/result.js';
+export * from './paste/index.js';
