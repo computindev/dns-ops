@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 import { AlertsPanel } from '../components/AlertsPanel.js';
 import { AuditLogPanel } from '../components/AuditLogPanel.js';
 import { AuthPending } from '../components/AuthPending.js';
+import { BuiltInViewsPanel } from '../components/BuiltInViewsPanel.js';
 import { FleetReportsPanel } from '../components/FleetReportsPanel.js';
 import { MonitoredDomainsPanel } from '../components/MonitoredDomainsPanel.js';
 import { PortfolioSearchPanel } from '../components/PortfolioSearchPanel.js';
@@ -10,6 +11,7 @@ import { SavedFiltersPanel } from '../components/SavedFiltersPanel.js';
 import { SharedReportsPanel } from '../components/SharedReportsPanel.js';
 import { TemplateOverridesPanel } from '../components/TemplateOverridesPanel.js';
 import { requireAuthGuard } from '../lib/auth-guard.js';
+import { type BuiltInView, type BuiltInViewId, getBuiltInView } from '../lib/built-in-views.js';
 import { type CurrentFilters, EMPTY_CURRENT_FILTERS } from '../lib/portfolio-filters.js';
 
 export const Route = createFileRoute('/portfolio')({
@@ -23,6 +25,18 @@ export const Route = createFileRoute('/portfolio')({
 function PortfolioWorkspace() {
   const workspaceTitleId = useId();
   const [currentFilters, setCurrentFilters] = useState<CurrentFilters>(EMPTY_CURRENT_FILTERS);
+  const [activeViewId, setActiveViewId] = useState<BuiltInViewId | null>(null);
+  const activeView = activeViewId ? getBuiltInView(activeViewId) : null;
+
+  const handleSelectView = (view: BuiltInView) => {
+    setActiveViewId(view.id);
+    setCurrentFilters(view.currentFilters);
+  };
+
+  const handleClearView = () => {
+    setActiveViewId(null);
+    setCurrentFilters(EMPTY_CURRENT_FILTERS);
+  };
 
   return (
     <section className="portfolio-workspace" aria-labelledby={workspaceTitleId}>
@@ -40,8 +54,19 @@ function PortfolioWorkspace() {
         </Link>
       </header>
 
+      <BuiltInViewsPanel
+        activeView={activeViewId}
+        onSelectView={handleSelectView}
+        onClearView={handleClearView}
+      />
+
       <div className="portfolio-workspace__search-grid">
-        <PortfolioSearchPanel currentFilters={currentFilters} onFiltersChange={setCurrentFilters} />
+        <PortfolioSearchPanel
+          currentFilters={currentFilters}
+          onFiltersChange={setCurrentFilters}
+          activeView={activeView}
+          onClearView={handleClearView}
+        />
         <SavedFiltersPanel currentFilters={currentFilters} onLoadFilter={setCurrentFilters} />
       </div>
 

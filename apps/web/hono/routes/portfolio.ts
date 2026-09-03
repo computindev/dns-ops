@@ -56,6 +56,13 @@ portfolioRoutes.post('/search', async (c) => {
     tags: optionalArray<string>('tags'),
     severities: optionalArray<string>('severities'),
     zoneManagement: optionalArray<string>('zoneManagement'),
+    findingTypePrefix: optionalString('findingTypePrefix', { maxLength: 100 }),
+    snapshotOlderThanDays: integer('snapshotOlderThanDays', {
+      min: 1,
+      max: 3650,
+      required: false,
+    }),
+    coverage: optionalString('coverage', { maxLength: 20 }),
     limit: integer('limit', { min: 1, max: 100, required: false }),
     offset: integer('offset', { min: 0, required: false }),
   });
@@ -64,7 +71,24 @@ portfolioRoutes.post('/search', async (c) => {
     return validationErrorResponse(c, validation.error);
   }
 
-  const { query, tags, severities, zoneManagement, limit = 20, offset = 0 } = validation.data;
+  const {
+    query,
+    tags,
+    severities,
+    zoneManagement,
+    findingTypePrefix,
+    snapshotOlderThanDays,
+    coverage,
+    limit = 20,
+    offset = 0,
+  } = validation.data;
+
+  // Built-in view criteria (issue #63): only the incomplete-coverage view
+  // exists today, so any other value is a client error rather than a silent
+  // no-op filter.
+  if (coverage !== undefined && coverage !== 'incomplete') {
+    return c.json({ error: 'coverage must be "incomplete"' }, 400);
+  }
 
   try {
     const tagRepo = new DomainTagRepository(db);
@@ -168,28 +192,56 @@ portfolioRoutes.post('/search', async (c) => {
     }
 
     // Process results using the batched data
+    const hasFindingCriteria = hasSeverityFilter || findingTypePrefix !== undefined;
+    const stalenessCutoffMs =
+      snapshotOlderThanDays !== undefined
+        ? startTime - snapshotOlderThanDays * 24 * 60 * 60 * 1000
+        : null;
+
     const filteredDomains = portfolioResults.map((domain) => {
       const latestSnapshot = latestSnapshotByDomain.get(domain.id);
+      const evaluationCoverage = evaluationCoverageOrUnknown(latestSnapshot?.metadata?.evaluation);
+      const findingsEvaluated = isEvaluationComplete(evaluationCoverage);
+
+      // Built-in "incomplete coverage" view: keep only domains whose latest
+      // evidence was not fully evaluated. A domain without a snapshot counts
+      // as incomplete.
+      if (coverage === 'incomplete' && findingsEvaluated) {
+        return null;
+      }
+
+      // Built-in "expiring evidence" view: keep only domains whose latest
+      // snapshot is older than the requested window. Domains without a
+      // snapshot have no evidence to expire and are excluded.
+      if (
+        stalenessCutoffMs !== null &&
+        (!latestSnapshot || new Date(latestSnapshot.createdAt).getTime() > stalenessCutoffMs)
+      ) {
+        return null;
+      }
 
       if (!latestSnapshot) {
         return {
           ...domain,
           findings: [],
-          findingsEvaluated: false,
-          evaluationCoverage: evaluationCoverageOrUnknown(undefined),
+          findingsEvaluated,
+          evaluationCoverage,
           latestSnapshot: null,
         };
       }
 
-      // Only explicit complete coverage permits a zero-finding result to filter
-      // the domain out. A ruleset ID alone does not prove every check completed.
-      const evaluationCoverage = evaluationCoverageOrUnknown(latestSnapshot.metadata?.evaluation);
-      const findingsEvaluated = isEvaluationComplete(evaluationCoverage);
-      const domainFindings = findingsBySnapshot.get(latestSnapshot.id) || [];
+      // Built-in "mail broken" view narrows the snapshot's findings to the
+      // requested type prefix (e.g. `mail.`) before the evaluated-empty rule
+      // applies, so only domains with matching findings survive.
+      const domainFindings = findingTypePrefix
+        ? (findingsBySnapshot.get(latestSnapshot.id) || []).filter((finding) =>
+            finding.type.startsWith(findingTypePrefix)
+          )
+        : findingsBySnapshot.get(latestSnapshot.id) || [];
 
-      // Filter out if severity filter doesn't match AND findings were evaluated
+      // Filter out if finding criteria doesn't match AND findings were evaluated
       // Don't filter out if findings weren't evaluated (might have matching findings once evaluated)
-      if (hasSeverityFilter && domainFindings.length === 0 && findingsEvaluated) {
+      if (hasFindingCriteria && domainFindings.length === 0 && findingsEvaluated) {
         return null;
       }
 
@@ -213,7 +265,14 @@ portfolioRoutes.post('/search', async (c) => {
     trackSearch({
       tenantId,
       query,
-      filters: { tags, severities, zoneManagement },
+      filters: {
+        tags,
+        severities,
+        zoneManagement,
+        findingTypePrefix,
+        snapshotOlderThanDays,
+        coverage,
+      },
       resultCount: domainResults.length,
       durationMs: Date.now() - startTime,
     });

@@ -274,18 +274,70 @@ const drives: Record<string, (page: Page, ev: Evidence) => Promise<void>> = {
     await page.goto(`${BASE_URL}/portfolio`);
     await page.getByRole('heading', { name: /portfolio workflows/i }).waitFor({ timeout: 15_000 });
     await page.getByRole('heading', { name: /portfolio search/i }).waitFor();
-    const pending = page.waitForResponse(
-      (r) => r.url().includes('/api/portfolio/search') && r.request().method() === 'POST',
-      { timeout: 15_000 }
-    );
-    await page.getByLabel('Query').fill('example.com');
-    const res = await pending;
-    if (res.status() !== 200)
-      throw new Error(`POST /api/portfolio/search expected 200, got ${res.status()}`);
-    const json = await res.json();
-    if (!json || !Array.isArray(json.domains))
+    await page.getByRole('heading', { name: /built-in views/i }).waitFor();
+
+    async function searchRoundtrip(action: () => Promise<void>): Promise<{
+      request: Record<string, unknown>;
+      json: { domains?: unknown };
+    }> {
+      const pending = page.waitForResponse(
+        (r) => r.url().includes('/api/portfolio/search') && r.request().method() === 'POST',
+        { timeout: 15_000 }
+      );
+      await action();
+      const res = await pending;
+      if (res.status() !== 200)
+        throw new Error(`POST /api/portfolio/search expected 200, got ${res.status()}`);
+      return {
+        request: (res.request().postDataJSON() ?? {}) as Record<string, unknown>,
+        json: (await res.json()) as { domains?: unknown },
+      };
+    }
+
+    const query = await searchRoundtrip(() => page.getByLabel('Query').fill('example.com'));
+    if (!query.json || !Array.isArray(query.json.domains))
       throw new Error('portfolio search JSON missing domains[]');
-    await ev.readback('portfolio-search', json);
+
+    // Built-in views (issue #63): each button must drive the real search
+    // endpoint with the view's criteria, and toggling it off removes them.
+    const mailBroken = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /mail broken/i }).click()
+    );
+    if (mailBroken.request.findingTypePrefix !== 'mail.')
+      throw new Error(
+        `mail-broken view lost findingTypePrefix: ${JSON.stringify(mailBroken.request)}`
+      );
+    if (JSON.stringify(mailBroken.request.severities) !== JSON.stringify(['high', 'critical']))
+      throw new Error(`mail-broken view lost severities: ${JSON.stringify(mailBroken.request)}`);
+
+    const expiring = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /expiring evidence/i }).click()
+    );
+    if (expiring.request.snapshotOlderThanDays !== 30)
+      throw new Error(
+        `expiring view lost snapshotOlderThanDays: ${JSON.stringify(expiring.request)}`
+      );
+
+    const incomplete = await searchRoundtrip(() =>
+      page.getByRole('button', { name: /incomplete coverage/i }).click()
+    );
+    if (incomplete.request.coverage !== 'incomplete')
+      throw new Error(`incomplete view lost coverage: ${JSON.stringify(incomplete.request)}`);
+    const activeButton = page.getByRole('button', { name: /incomplete coverage/i });
+    if ((await activeButton.getAttribute('aria-pressed')) !== 'true')
+      throw new Error('incomplete coverage button did not become aria-pressed=true');
+
+    const cleared = await searchRoundtrip(() => activeButton.click());
+    if (cleared.request.coverage !== undefined)
+      throw new Error(`clearing the view kept view criteria: ${JSON.stringify(cleared.request)}`);
+
+    await ev.readback('portfolio-search', query.json);
+    await ev.readback('built-in-view-requests', {
+      mailBroken: mailBroken.request,
+      expiring: expiring.request,
+      incomplete: incomplete.request,
+      cleared: cleared.request,
+    });
     await ev.shot(page, 'portfolio-search');
   },
 };
