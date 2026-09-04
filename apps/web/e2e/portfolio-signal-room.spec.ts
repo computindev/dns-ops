@@ -28,6 +28,7 @@ async function mockPortfolioWorkspace(page: import('@playwright/test').Page): Pr
               ],
             },
             latestSnapshot: null,
+            expiration: { status: 'UNKNOWN' },
           },
         ],
       }),
