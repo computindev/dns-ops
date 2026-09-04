@@ -89,7 +89,7 @@ test.describe('Portfolio expiry radar', () => {
 
     await expect(page.getByRole('heading', { name: /portfolio workflows/i })).toBeVisible();
 
-    const table = page.getByRole('table');
+    const table = page.getByRole('table', { name: 'Portfolio search results by domain' });
     await expect(table).toBeVisible();
     await expect(table.getByRole('columnheader', { name: 'Expiry' })).toBeVisible();
     await expect(table.getByRole('columnheader', { name: 'Domain' })).toBeVisible();
@@ -108,7 +108,9 @@ test.describe('Portfolio expiry radar', () => {
     const expiryWindow = page.getByLabel('Expiry window');
     await expect(expiryWindow).toBeVisible();
     await expect(expiryWindow).toHaveValue('');
-    await expect(page.getByRole('table')).toBeVisible();
+    await expect(
+      page.getByRole('table', { name: 'Portfolio search results by domain' })
+    ).toBeVisible();
 
     const request = page.waitForRequest(
       (candidate) =>

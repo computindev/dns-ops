@@ -34,11 +34,16 @@ import {
   validationErrorResponse,
 } from '../middleware/validation.js';
 import type { Env } from '../types.js';
+import { drillRoutes } from './drills.js';
 
 export const portfolioRoutes = new Hono<Env>();
 
 // Apply authentication to all portfolio routes
 portfolioRoutes.use('*', requireAuth);
+
+// Live drills (issue #62): two-person-confirmed starts of the fail-closed
+// controlled-live harness for the allowlisted asorin.ai tuples.
+portfolioRoutes.route('/drills', drillRoutes);
 
 // =============================================================================
 // EXPIRATION READ MODEL (Issue #60)
