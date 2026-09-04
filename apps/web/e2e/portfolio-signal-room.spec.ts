@@ -91,7 +91,10 @@ test.describe('Portfolio Signal Room', () => {
       page.getByRole('heading', { name: 'Portfolio Search' }).locator('xpath=../..')
     ).toHaveClass(/ds-panel/);
     await expect(page.getByPlaceholder('example.com').first()).toHaveClass(/ds-input/);
-    await expect(page.getByText('Needs setup/evidence.')).toHaveClass(/ds-badge--unknown/);
+    const searchPanel = page
+      .getByRole('heading', { name: 'Portfolio Search' })
+      .locator('xpath=../..');
+    await expect(searchPanel.getByText('Needs setup/evidence.')).toHaveClass(/ds-badge--unknown/);
     const alertsPanel = page
       .locator('.portfolio-panel')
       .filter({ has: page.getByRole('heading', { name: 'Alerts', exact: true }) });
