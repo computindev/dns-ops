@@ -82,6 +82,9 @@ export async function dispatchMcpTool(
     case 'signal_list':
       value = await read.signalList(args.domainId as string | undefined);
       break;
+    case 'fleet_tape':
+      value = await read.fleetTape();
+      break;
     case 'case_get':
       value = await read.caseGet(args.caseId as string);
       break;

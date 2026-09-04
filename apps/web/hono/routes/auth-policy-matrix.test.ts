@@ -207,6 +207,8 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     policy: 'auth-write',
     notes: 'Fleet report CSV import, uses requireWritePermission',
   },
+  // 24h fleet tape digest (issue #57, read-only)
+  { path: '/api/portfolio/tape', method: 'GET', policy: 'auth-read' },
   // Findings summary (auth required)
   {
     path: '/api/snapshot/:snapshotId/findings/summary',

@@ -5,6 +5,7 @@ export const MCP_TOOL_NAMES = [
   'snapshot_compare',
   'evidence_get',
   'signal_list',
+  'fleet_tape',
   'case_get',
   'explain_case',
   'case_open',
@@ -69,6 +70,12 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     readOnly: true,
     requiredScope: 'SIGNAL_READ',
     inputSchema: { type: 'object', required: [], properties: { domainId: id } },
+  },
+  {
+    name: 'fleet_tape',
+    readOnly: true,
+    requiredScope: 'DOMAIN_READ',
+    inputSchema: { type: 'object', required: [], properties: {} },
   },
   {
     name: 'case_get',
