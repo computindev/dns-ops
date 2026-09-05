@@ -106,7 +106,8 @@ test('MCP evidence preflight initializes, discovers the complete scoped contract
   // The literal fixture stays the single source of the reviewed 12-tool
   // expectation, and the runner's exported inventory must equal it exactly.
   assert.deepEqual([...REQUIRED_MCP_TOOLS], DISCOVERY_FIXTURE);
-  assert.deepEqual(artifact.verifiedToolScopes,
+  assert.deepEqual(
+    artifact.verifiedToolScopes,
     DISCOVERY_FIXTURE.map(([name, requiredScope]) => ({ name, requiredScope }))
   );
   assert.deepEqual(
