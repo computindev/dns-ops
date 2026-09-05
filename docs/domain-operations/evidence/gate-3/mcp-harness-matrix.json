@@ -1,7 +1,7 @@
 {
   "evidenceId": "MCP-PHASE1-DETERMINISTIC-HARNESS",
-  "recordedAt": "2026-09-05T17:33:29Z",
-  "implementationSha": "57f1e4ec6dfacd7554c666ff38457a9ed78256ce",
+  "recordedAt": "2026-09-05T17:38:28Z",
+  "implementationSha": "9458997c8535ca8c2065300e55ce1cd88671f73c",
   "scope": "Deterministic non-live Phase 1 MCP contract and shared-service proof",
   "requirements": [
     {

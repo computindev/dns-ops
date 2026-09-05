@@ -227,7 +227,7 @@ Phase success measures replacement or reduction of these named checks—not a su
 - legacy-alert convergence;
 - six human playbooks;
 - `/mcp` inside `apps/web`;
-- ten required MCP tools;
+- twelve required MCP tools;
 - static MCP principals/scopes;
 - deterministic MCP harness;
 - seeded-fault evaluation;
