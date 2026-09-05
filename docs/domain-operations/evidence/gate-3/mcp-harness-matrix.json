@@ -1,11 +1,11 @@
 {
   "evidenceId": "MCP-PHASE1-DETERMINISTIC-HARNESS",
-  "recordedAt": "2026-07-29T18:32:00Z",
-  "implementationSha": "2a3b0b2d758e9b72148dbe85c9bbadc03fcaf2ad",
+  "recordedAt": "2026-09-05T17:33:29Z",
+  "implementationSha": "57f1e4ec6dfacd7554c666ff38457a9ed78256ce",
   "scope": "Deterministic non-live Phase 1 MCP contract and shared-service proof",
   "requirements": [
     {
-      "requirement": "all ten schemas and successful typed results",
+      "requirement": "all twelve schemas and successful typed results",
       "evidence": "apps/web/hono/routes/mcp.harness.test.ts invokes every closed-contract tool through JSON-RPC and asserts structuredContent."
     },
     {
@@ -39,7 +39,7 @@
   ],
   "validation": {
     "command": "RUN_LIVE_DNS_TESTS=0 bun run test",
-    "result": "2721 passed, 41 skipped"
+    "result": "3191 passed, 55 skipped"
   },
   "safety": {
     "liveDns": false,

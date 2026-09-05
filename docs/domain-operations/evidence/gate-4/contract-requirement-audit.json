@@ -32,7 +32,7 @@
       ]
     },
     {
-      "requirement": "Exactly ten static-token-hash MCP tools with tenant/scope/negative/idempotency/parity coverage",
+      "requirement": "Exactly twelve static-token-hash MCP tools with tenant/scope/negative/idempotency/parity coverage",
       "evidence": [
         "docs/domain-operations/evidence/gate-3/mcp-harness-matrix.json"
       ]

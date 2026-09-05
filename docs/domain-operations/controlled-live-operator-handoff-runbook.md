@@ -96,7 +96,8 @@ ad-hoc additions):
 | --- | --- |
 | `domain_search`, `domain_get_profile`, `domain_get_posture`, `snapshot_compare`, `evidence_get` | `DOMAIN_READ` |
 | `signal_list` | `SIGNAL_READ` |
-| `case_get` | `CASE_READ` |
+| `fleet_tape` | `DOMAIN_READ` |
+| `case_get`, `explain_case` | `CASE_READ` |
 | `case_open`, `case_set_disposition` | `CASE_WRITE` |
 | `scan_request` | `SCAN_REQUEST` |
 

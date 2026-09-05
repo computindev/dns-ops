@@ -4,7 +4,7 @@ This directory is the only repository component that may call Cloudflare for con
 
 ## MCP evidence preflight
 
-`mcp-evidence-preflight` is a harness-only discovery check for a separately deployed DNS Ops MCP endpoint. It performs no DNS/provider mutation and does not invoke any MCP tool. It first sends JSON-RPC `initialize`, then `tools/list`, and fails closed unless the authenticated principal exposes the complete Phase 1 tool contract and its required scopes: `DOMAIN_READ` (domain/evidence reads), `SIGNAL_READ`, `CASE_READ`, `CASE_WRITE`, and `SCAN_REQUEST`. The checked tools include `evidence_get` for evidence/audit review, `signal_list`, `case_get`, both case-write commands, and `scan_request`, along with the remaining closed-world Phase 1 tools.
+`mcp-evidence-preflight` is a harness-only discovery check for a separately deployed DNS Ops MCP endpoint. It performs no DNS/provider mutation and does not invoke any MCP tool. It first sends JSON-RPC `initialize`, then `tools/list`, and fails closed unless the authenticated principal exposes exactly the twelve Phase 1 closed-world tools and their required scopes: `DOMAIN_READ` (domain/evidence reads), `SIGNAL_READ`, `CASE_READ`, `CASE_WRITE`, and `SCAN_REQUEST`. The checked tools include `evidence_get` for snapshot evidence review, `signal_list`, `fleet_tape`, `case_get`, `explain_case`, both case-write commands, and `scan_request`, along with the remaining `DOMAIN_READ` discovery tools.
 
 Create a dedicated local secret file; it must be an **absolute path**, a regular non-symlink file, and mode `0600`. The command deliberately has no default secret path, so set it explicitly for each authorized run:
 

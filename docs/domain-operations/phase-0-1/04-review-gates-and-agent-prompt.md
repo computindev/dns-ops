@@ -99,7 +99,7 @@ Required evidence:
 - repository-native validation green;
 - Gate 2 correctness proof;
 - Gate 3 seeded-fault proof;
-- ten MCP tools working;
+- twelve MCP tools working;
 - static scope model working;
 - MCP negative tests green;
 - one canonical alert/signal path;
@@ -173,7 +173,7 @@ Provide:
 - case lifecycle database/audit evidence;
 - duplicate-path evidence;
 - UNKNOWN/setup UX evidence;
-- all ten MCP contract results;
+- all twelve MCP contract results;
 - scope and tenant negative tests;
 - idempotency/concurrency evidence;
 - playbook list and founder approval;
