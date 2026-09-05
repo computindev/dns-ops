@@ -2,7 +2,7 @@
   "outcomeId": "dns-ops-phase-0-1",
   "authoritySha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
   "baseSha": "32dc8268ee8f38ce11513c3c9d2106bedf18f17a",
-  "currentSha": "f207428a19eb364a9a281b0e080c4cc57a5017ba",
+  "currentSha": "318143643fa3f16e697f05decc16c4eb87133c65",
   "currentShaMeaning": "latest committed implementation or operating-content SHA verified by this checkpoint; the checkpoint commit itself is expected to be newer",
   "branch": "agent/domain-operations-phase-0-1-implementation",
   "currentGate": "GATE_3_RESTORED_PENDING_DNS_OPS_EVIDENCE",
@@ -165,5 +165,5 @@
     "Obtain authorized DNS Ops MCP access plus authorized web-session GET /api/portfolio/audit and GET /api/alerts access; run both required redacted preflights, then collect and independently verify scan, signal, case, audit, restoration, and reopen evidence for every controlled scenario",
     "Retain LIVE-01, LIVE-02, and LIVE-03 as pending until the checkpoint's missingForPass evidence is durable and correlated"
   ],
-  "updatedAt": "2026-08-06T01:37:04Z"
+  "updatedAt": "2026-09-05T17:57:05Z"
 }
