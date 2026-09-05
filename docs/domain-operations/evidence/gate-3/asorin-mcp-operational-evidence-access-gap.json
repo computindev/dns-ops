@@ -1,9 +1,9 @@
 {
   "evidenceId": "GATE3-ASORIN-MCP-OPERATIONAL-EVIDENCE-ACCESS-GAP",
   "status": "BLOCKED_BY_EXTERNAL_EVIDENCE_ACCESS",
-  "observedAt": "2026-08-05T19:50:55Z",
+  "observedAt": "2026-09-05T17:33:29Z",
   "purpose": "Static, secret-free reconciliation of the operational PASS manifest against the approved closed-world MCP contract. It identifies audit and alert evidence that is intentionally outside MCP and therefore requires an authorized web-session read path.",
-  "reviewedRevision": "0f74d02265c231b618b9140de888f873e33a1cf5",
+  "reviewedRevision": "57f1e4ec6dfacd7554c666ff38457a9ed78256ce",
   "reviewedSources": [
     "apps/web/hono/lib/mcp-tools.ts",
     "apps/web/hono/lib/mcp-read-service.ts",
@@ -24,7 +24,9 @@
       "snapshot_compare",
       "evidence_get",
       "signal_list",
+      "fleet_tape",
       "case_get",
+      "explain_case",
       "case_open",
       "case_set_disposition",
       "scan_request"

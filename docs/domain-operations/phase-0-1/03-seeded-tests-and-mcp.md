@@ -189,7 +189,7 @@ Cloudflare Access authenticates the edge; the application map authorizes DNS Ops
 
 ## 13.3 Required tools
 
-Exactly eleven tools (issue #61 added `explain_case`):
+Exactly twelve tools (issues #61/#57 added `explain_case` and `fleet_tape`):
 
 ### Read
 
@@ -200,6 +200,7 @@ domain_get_posture
 snapshot_compare
 evidence_get
 signal_list
+fleet_tape
 case_get
 explain_case
 ```
@@ -215,6 +216,12 @@ scan_request
 `scan_request` is mandatory because the full MCP loop must be exercised through MCP rather than through an application-service bypass.
 
 ## 13.4 Command controls
+
+### `fleet_tape`
+
+- requires `DOMAIN_READ`;
+- takes no arguments;
+- returns the tenant-wide 24-hour fleet tape digest of snapshot changes.
 
 ### `case_get`
 
@@ -257,7 +264,7 @@ The first MCP consumer is a deterministic harness.
 
 It must test:
 
-- all ten schemas;
+- all twelve schemas;
 - successful typed results;
 - invalid tool input;
 - invalid IDs;

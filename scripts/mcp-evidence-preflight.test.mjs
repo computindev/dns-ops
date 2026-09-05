@@ -25,6 +25,23 @@ import {
 
 const endpoint = 'https://mcp.example.test/mcp';
 const token = 'mcp-preflight-token-with-sufficient-entropy-123456';
+// Independent literal reviewed against apps/web/hono/lib/mcp-tools.ts. The
+// mocked server must never derive its inventory from REQUIRED_MCP_TOOLS, so
+// production and fixture drift cannot hide behind each other.
+const DISCOVERY_FIXTURE = Object.freeze([
+  ['domain_search', 'DOMAIN_READ'],
+  ['domain_get_profile', 'DOMAIN_READ'],
+  ['domain_get_posture', 'DOMAIN_READ'],
+  ['snapshot_compare', 'DOMAIN_READ'],
+  ['evidence_get', 'DOMAIN_READ'],
+  ['signal_list', 'SIGNAL_READ'],
+  ['fleet_tape', 'DOMAIN_READ'],
+  ['case_get', 'CASE_READ'],
+  ['explain_case', 'CASE_READ'],
+  ['case_open', 'CASE_WRITE'],
+  ['case_set_disposition', 'CASE_WRITE'],
+  ['scan_request', 'SCAN_REQUEST'],
+]);
 const publicAddresses = Object.freeze([Object.freeze({ address: '93.184.216.34', family: 4 })]);
 const resolvePublic = async () => publicAddresses;
 
@@ -45,7 +62,7 @@ function rpcResponse(id, result) {
   return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, result }) };
 }
 
-function discoveryFetch(tools = REQUIRED_MCP_TOOLS) {
+function discoveryFetch(tools = DISCOVERY_FIXTURE) {
   const calls = [];
   return {
     calls,
@@ -85,6 +102,13 @@ test('MCP evidence preflight initializes, discovers the complete scoped contract
   assert.deepEqual(
     mocked.calls.map(({ init }) => JSON.parse(init.body).method),
     ['initialize', 'tools/list']
+  );
+  // The literal fixture stays the single source of the reviewed 12-tool
+  // expectation, and the runner's exported inventory must equal it exactly.
+  assert.deepEqual([...REQUIRED_MCP_TOOLS], DISCOVERY_FIXTURE);
+  assert.deepEqual(
+    artifact.verifiedToolScopes,
+    DISCOVERY_FIXTURE.map(([name, requiredScope]) => ({ name, requiredScope }))
   );
   assert.deepEqual(
     mocked.calls.map(({ init }) => init.headers.Authorization),
@@ -181,7 +205,7 @@ test('MCP evidence preflight rejects invalid artifact destinations before a requ
 test('MCP evidence preflight fails closed and leaves no artifact when a required tool or scope is absent', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'dnsops-mcp-'));
   const artifactPath = join(directory, 'preflight.json');
-  const mocked = discoveryFetch(REQUIRED_MCP_TOOLS.filter(([name]) => name !== 'scan_request'));
+  const mocked = discoveryFetch(DISCOVERY_FIXTURE.filter(([name]) => name !== 'scan_request'));
 
   await assert.rejects(
     runMcpEvidencePreflight({
@@ -197,10 +221,50 @@ test('MCP evidence preflight fails closed and leaves no artifact when a required
   assert.deepEqual(readdirSync(directory), []);
 });
 
+test('MCP evidence preflight rejects an extra discovered tool without publishing an artifact', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-mcp-'));
+  const artifactPath = join(directory, 'preflight.json');
+  const mocked = discoveryFetch([...DISCOVERY_FIXTURE, ['provider_mutate', 'SCAN_REQUEST']]);
+
+  await assert.rejects(
+    runMcpEvidencePreflight({
+      secretFile: secret(),
+      artifactPath,
+      fetchImpl: mocked.fetch,
+      resolveHostname: resolvePublic,
+    }),
+    /MCP tools\/list failed/
+  );
+  assert.equal(existsSync(artifactPath), false);
+  assert.deepEqual(readdirSync(directory), []);
+});
+
+test('MCP evidence preflight rejects a duplicate discovered tool without publishing an artifact', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dnsops-mcp-'));
+  const artifactPath = join(directory, 'preflight.json');
+  const mocked = discoveryFetch([
+    ...DISCOVERY_FIXTURE.slice(0, 6),
+    ['fleet_tape', 'DOMAIN_READ'],
+    ...DISCOVERY_FIXTURE.slice(6),
+  ]);
+
+  await assert.rejects(
+    runMcpEvidencePreflight({
+      secretFile: secret(),
+      artifactPath,
+      fetchImpl: mocked.fetch,
+      resolveHostname: resolvePublic,
+    }),
+    /MCP tools\/list failed/
+  );
+  assert.equal(existsSync(artifactPath), false);
+  assert.deepEqual(readdirSync(directory), []);
+});
+
 test('MCP evidence preflight rejects a wrong required scope without publishing an artifact', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'dnsops-mcp-'));
   const artifactPath = join(directory, 'preflight.json');
-  const tools = REQUIRED_MCP_TOOLS.map(([name, requiredScope]) => [name, requiredScope]);
+  const tools = DISCOVERY_FIXTURE.map(([name, requiredScope]) => [name, requiredScope]);
   tools.find(([name]) => name === 'case_get')[1] = 'CASE_WRITE';
 
   await assert.rejects(
