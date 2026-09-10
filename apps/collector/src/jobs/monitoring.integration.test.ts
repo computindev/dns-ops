@@ -53,8 +53,12 @@ beforeEach(() => {
     ]),
   };
   vi.clearAllMocks();
-  // Default: fetch succeeds (so /check doesn't try to create alerts)
-  mockFetch.mockResolvedValue({ ok: true, status: 200 });
+  // Default: complete collection so /check may stamp lastCheckAt
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 201,
+    json: async () => ({ success: true, resultState: 'complete' }),
+  });
 });
 
 afterEach(() => {
@@ -616,7 +620,11 @@ describe('Monitoring Routes Tenant Isolation', () => {
       app.route('/api/monitoring', monitoringRoutes);
 
       // Suppress webhook calls for this test
-      global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, resultState: 'complete' }),
+      });
 
       const res = await app.request('/api/monitoring/check', {
         method: 'POST',
@@ -644,6 +652,96 @@ describe('Monitoring Routes Tenant Isolation', () => {
           }),
         })
       );
+    });
+
+    it('POST /check does not stamp lastCheckAt for 201 partial collection', async () => {
+      const app = new Hono<Env>();
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      (db as { updateOne: typeof updateOne }).updateOne = updateOne;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, resultState: 'partial' }),
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'collection partial',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+    });
+
+    it('POST /check creates a failure alert without stamping lastCheckAt on non-OK collect', async () => {
+      const app = new Hono<Env>();
+      const inserted: unknown[] = [];
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      const insert = vi.fn(async (_table: unknown, values: unknown) => {
+        inserted.push(values);
+        return { id: 'alert-fail', ...(values as object) };
+      });
+      (db as { updateOne: typeof updateOne; insert: typeof insert }).updateOne = updateOne;
+      (db as { insert: typeof insert }).insert = insert;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => 'resolver timeout',
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'collection failed (500)',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(inserted).toEqual([
+        expect.objectContaining({
+          title: 'Collection Failed',
+          tenantId: NORMALIZED_TENANT_ID,
+        }),
+      ]);
     });
 
     it('DELETE /domains/:id/monitor should reject deletion of other tenant domain', async () => {

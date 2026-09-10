@@ -342,7 +342,9 @@ describe('Issue #68: terminal validation outcomes do not retry', () => {
     } as never);
     // biome-ignore lint/complexity/useArrowFunction: must stay constructible
     mockedCollector.mockImplementation(function () {
-      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-due' }) };
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-due', resultState: 'complete' }),
+      };
     } as never);
     const add = vi.fn();
     vi.mocked(getCollectionQueue).mockReturnValue({ add } as never);
@@ -404,7 +406,9 @@ describe('Issue #68: terminal validation outcomes do not retry', () => {
     } as never);
     // biome-ignore lint/complexity/useArrowFunction: must stay constructible
     mockedCollector.mockImplementation(function () {
-      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-fail' }) };
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-fail', resultState: 'complete' }),
+      };
     } as never);
     vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
       new Error('canonical finalization failed')
@@ -415,6 +419,37 @@ describe('Issue #68: terminal validation outcomes do not retry', () => {
       monitoredDomainId: 'm1',
     });
     await expect(processCollectDomain(job)).rejects.toThrow('canonical finalization failed');
+    expect(updateLastCheck).not.toHaveBeenCalled();
+  });
+
+  it('does not update lastCheckAt when collection resultState is partial', async () => {
+    const updateLastCheck = vi.fn();
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return { updateLastCheck };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedDomainRepo.mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'd1',
+          tenantId: 'tenant-a',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedCollector.mockImplementation(function () {
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-partial', resultState: 'partial' }),
+      };
+    } as never);
+
+    const job = createMockJob<CollectDomainJobData>('job-due-partial', {
+      ...validCollectData(),
+      monitoredDomainId: 'm1',
+    });
+    await expect(processCollectDomain(job)).rejects.toThrow('resultState is partial');
     expect(updateLastCheck).not.toHaveBeenCalled();
   });
 });

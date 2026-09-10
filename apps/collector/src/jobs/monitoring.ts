@@ -63,7 +63,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
 
     // Get domains scheduled for this check, scoped to this tenant
     const monitoredDomains = await monitoredRepo.findActiveBySchedule(schedule, tenantId);
-    const results = [];
+    const results: Array<{ domainId: string; checked: boolean; error?: string }> = [];
 
     for (const monitored of monitoredDomains) {
       // Check if within suppression window
@@ -121,7 +121,14 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         }),
       });
 
-      if (!response.ok) {
+      let resultState: string | undefined;
+      if (response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          resultState?: unknown;
+        } | null;
+        resultState =
+          payload && typeof payload.resultState === 'string' ? payload.resultState : undefined;
+      } else {
         if (!monitored.tenantId) {
           monitoringLogger.error(`Monitored domain missing tenant ownership: ${monitored.id}`);
           continue; // Skip domain without tenant - cannot create alerts without tenant ownership
@@ -166,13 +173,24 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         }
       }
 
+      if (resultState !== 'complete') {
+        results.push({
+          domainId: monitored.domainId,
+          checked: false,
+          error: resultState
+            ? `collection ${resultState}`
+            : `collection failed (${response.status})`,
+        });
+        continue;
+      }
+
       await monitoredRepo.updateLastCheck(monitored.id, monitored.tenantId);
       results.push({ domainId: monitored.domainId, checked: true });
     }
 
     return c.json({
       schedule,
-      domainsChecked: results.length,
+      domainsChecked: results.filter((result) => result.checked).length,
       results,
     });
   } catch (error) {

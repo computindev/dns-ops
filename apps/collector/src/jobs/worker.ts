@@ -223,19 +223,31 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
       }
     }
 
-    let finalized = false;
+    let finalizationFailed = false;
     if (evidenceDomain) {
-      await finalizePersistedCanonicalConditions(db, {
-        snapshotId: result.snapshotId,
-        tenantId,
-        domainId: evidenceDomain.id,
-        domainName: evidenceDomain.normalizedName,
-      });
-      finalized = true;
+      try {
+        await finalizePersistedCanonicalConditions(db, {
+          snapshotId: result.snapshotId,
+          tenantId,
+          domainId: evidenceDomain.id,
+          domainName: evidenceDomain.normalizedName,
+        });
+      } catch (finalizationError) {
+        finalizationFailed = true;
+        throw finalizationError;
+      }
     }
 
-    if (monitoredDomainId && finalized) {
-      await new MonitoredDomainRepository(db).updateLastCheck(monitoredDomainId, tenantId);
+    if (monitoredDomainId) {
+      if (result.resultState !== 'complete') {
+        throw new Error(`Collection resultState is ${result.resultState}, not complete`);
+      }
+      if (finalizationFailed) {
+        throw new Error('Canonical finalization failed');
+      }
+      if (evidenceDomain) {
+        await new MonitoredDomainRepository(db).updateLastCheck(monitoredDomainId, tenantId);
+      }
     }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook

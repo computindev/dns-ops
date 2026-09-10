@@ -47,7 +47,11 @@ const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   process.env = { ...ORIGINAL_ENV, INTERNAL_SECRET: 'test-secret' };
   vi.clearAllMocks();
-  mockFetch.mockResolvedValue({ ok: true, status: 200 });
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 201,
+    json: async () => ({ success: true, resultState: 'complete' }),
+  });
 });
 afterEach(() => {
   process.env = ORIGINAL_ENV;
@@ -1008,7 +1012,11 @@ describe('Monitoring Routes: Null TenantId Handling', () => {
     });
     app.route('/api/monitoring', monitoringRoutes);
 
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ success: true, resultState: 'complete' }),
+    });
 
     const res = await app.request('/api/monitoring/check', {
       method: 'POST',
