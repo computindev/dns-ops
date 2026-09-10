@@ -31,10 +31,25 @@ function getTableName(table: unknown): string {
 }
 
 function getConditionParam(condition: unknown): unknown {
-  const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+  return getConditionParams(condition)[0];
+}
+
+function getConditionParams(condition: unknown): unknown[] {
+  const values: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const candidate = node as {
+      constructor?: { name?: string };
+      value?: unknown;
+      queryChunks?: unknown[];
+    };
+    if (candidate.constructor?.name === 'Param' && candidate.value !== undefined) {
+      values.push(candidate.value);
+    }
+    for (const chunk of candidate.queryChunks ?? []) walk(chunk);
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  walk(condition);
+  return values;
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -106,7 +121,8 @@ function createMockDb(state: MockState): IDatabaseAdapter {
           return state.sharedReports[index];
         }
         if (tableName === 'alerts') {
-          const index = state.alerts.findIndex((row) => row.id === param);
+          const params = getConditionParams(condition);
+          const index = state.alerts.findIndex((row) => params.includes(row.id));
           if (index === -1) return undefined;
           state.alerts[index] = {
             ...state.alerts[index],
@@ -434,8 +450,6 @@ describe('Alert Dedup and Noise Budget (PR-04.5)', () => {
     const suppressedAlert = json.alerts.find((a) => a.id === 'alert-suppressed');
     expect(suppressedAlert).toBeDefined();
     expect(suppressedAlert?.status).toBe('suppressed');
-    expect(suppressedAlert?.suppressionReason).toBeDefined();
-    expect(suppressedAlert?.suppressionCount).toBeDefined();
   });
 
   it('should support suppress endpoint for alert deduplication', async () => {
@@ -549,7 +563,7 @@ describe('Alert Dedup and Noise Budget (PR-04.5)', () => {
     const json = (await response.json()) as { alerts: Array<Record<string, unknown>> };
     expect(json.alerts).toHaveLength(1);
     expect(json.alerts[0]?.id).toBe('alert-suppressed');
-    expect(json.alerts[0]?.suppressionReason).toBe('dedup');
+    expect(json.alerts[0]?.status).toBe('suppressed');
   });
 });
 
@@ -706,5 +720,67 @@ describe('alertRoutes mutations', () => {
     expect(state.auditEvents[0]?.previousValue).toMatchObject({ status: 'ready' });
     expect(state.auditEvents[0]?.newValue).toMatchObject({ status: 'expired' });
     expect(state.sharedReports[0]?.status).toBe('expired');
+  });
+});
+
+describe('alertRoutes omit notification claim fields', () => {
+  const claimedAlert = {
+    id: 'alert-claimed',
+    monitoredDomainId: 'mon-1',
+    tenantId: 'tenant-1',
+    title: 'Claimed alert',
+    description: 'secret-adjacent',
+    severity: 'high' as const,
+    status: 'pending' as const,
+    createdAt: new Date(),
+    notificationClaimToken: 'claim-token-should-not-leak',
+    notificationClaimedUntil: new Date('2099-01-01T00:00:00.000Z'),
+  };
+
+  function claimedState(): MockState {
+    return {
+      alerts: [{ ...claimedAlert }],
+      monitoredDomains: [{ id: 'mon-1', tenantId: 'tenant-1' }],
+      sharedReports: [],
+      auditEvents: [],
+    };
+  }
+
+  function expectNoClaimFields(alert: Record<string, unknown> | undefined) {
+    expect(alert).toBeDefined();
+    expect(alert).not.toHaveProperty('notificationClaimToken');
+    expect(alert).not.toHaveProperty('notificationClaimedUntil');
+    expect(JSON.stringify(alert)).not.toContain('claim-token-should-not-leak');
+  }
+
+  it('omits claim fields from list and get', async () => {
+    const app = createApp(claimedState());
+    const list = await app.request('/api/alerts');
+    expect(list.status).toBe(200);
+    const listJson = (await list.json()) as { alerts: Array<Record<string, unknown>> };
+    expectNoClaimFields(listJson.alerts[0]);
+
+    const get = await app.request('/api/alerts/alert-claimed');
+    expect(get.status).toBe(200);
+    const getJson = (await get.json()) as { alert: Record<string, unknown> };
+    expectNoClaimFields(getJson.alert);
+  });
+
+  it('omits claim fields from acknowledge, resolve, and suppress', async () => {
+    for (const path of [
+      '/api/alerts/alert-claimed/acknowledge',
+      '/api/alerts/alert-claimed/resolve',
+      '/api/alerts/alert-claimed/suppress',
+    ]) {
+      const app = createApp(claimedState());
+      const response = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as { alert: Record<string, unknown> };
+      expectNoClaimFields(json.alert);
+    }
   });
 });

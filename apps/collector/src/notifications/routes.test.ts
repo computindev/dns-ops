@@ -6,8 +6,25 @@ import { promises as dnsPromises } from 'node:dns';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types.js';
-import { notificationRoutes } from './routes.js';
 import { installWebhookTransportMock } from './webhook.test-support.js';
+
+const alertRepo = vi.hoisted(() => ({
+  findById: vi.fn(),
+  claimPendingNotification: vi.fn(),
+  completeNotificationClaim: vi.fn(),
+  releaseNotificationClaim: vi.fn(),
+}));
+
+vi.mock('@dns-ops/db', () => ({
+  AlertRepository: class {
+    findById = alertRepo.findById;
+    claimPendingNotification = alertRepo.claimPendingNotification;
+    completeNotificationClaim = alertRepo.completeNotificationClaim;
+    releaseNotificationClaim = alertRepo.releaseNotificationClaim;
+  },
+}));
+
+import { notificationRoutes } from './routes.js';
 
 vi.mock('node:dns', () => ({
   promises: { lookup: vi.fn() },
@@ -23,12 +40,30 @@ describe('Notification Routes', () => {
 
   beforeEach(() => {
     app = new Hono<Env>();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-1');
+      c.set('db', {} as Env['Variables']['db']);
+      await next();
+    });
     app.route('/api/notify', notificationRoutes);
     vi.clearAllMocks();
     mockFetch.mockReset();
     mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
     mockHttpsRequest.mockReset();
     installWebhookTransportMock(mockHttpsRequest, mockFetch);
+    alertRepo.findById.mockResolvedValue({
+      id: 'alert-123',
+      title: 'Test Alert',
+      description: 'Test description',
+      severity: 'high',
+      tenantId: 'tenant-1',
+      status: 'pending',
+    });
+    alertRepo.claimPendingNotification.mockResolvedValue({
+      token: 'claim-token',
+      alert: { id: 'alert-123' },
+    });
+    alertRepo.completeNotificationClaim.mockResolvedValue({ status: 'sent' });
   });
 
   describe('POST /api/notify/webhook', () => {
@@ -82,19 +117,55 @@ describe('Notification Routes', () => {
       expect(json.error).toBe('Bad Request');
     });
 
-    it('returns 400 if alert fields are missing', async () => {
+    it('returns 400 if alert.id is missing', async () => {
       const response = await app.request('/api/notify/webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           webhookUrl: 'https://webhook.example.com',
-          alert: { id: 'alert-123' }, // Missing required fields
+          alert: { title: 'x' },
         }),
       });
 
       expect(response.status).toBe(400);
       const json = await response.json();
-      expect(json.message).toContain('title is required');
+      expect(json.message).toContain('alert.id is required');
+    });
+
+    it('rejects a caller-supplied tenant that does not match context', async () => {
+      const response = await app.request('/api/notify/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: 'https://webhook.example.com/alerts',
+          alert: { ...validAlert, tenantId: 'other-tenant' },
+        }),
+      });
+      expect(response.status).toBe(403);
+      expect(alertRepo.findById).not.toHaveBeenCalled();
+    });
+
+    it('loads the tenant-owned alert instead of trusting body content', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+      alertRepo.findById.mockResolvedValueOnce({
+        id: 'alert-123',
+        title: 'Stored title',
+        description: 'Stored description',
+        severity: 'high',
+        tenantId: 'tenant-1',
+        status: 'pending',
+      });
+      await app.request('/api/notify/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: 'https://webhook.example.com/alerts',
+          alert: { ...validAlert, title: 'Forged title' },
+        }),
+      });
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.title).toBe('Stored title');
+      expect(alertRepo.findById).toHaveBeenCalledWith('alert-123', 'tenant-1');
     });
 
     it('blocks SSRF attempts', async () => {

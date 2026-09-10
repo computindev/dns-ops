@@ -241,6 +241,11 @@ describe('OperationalConditionService', () => {
     const { db, rows } = createDb();
     const service = new OperationalConditionService(db);
     const first = await service.observe(observation);
+    rows.alerts[0] = {
+      ...rows.alerts[0],
+      notificationClaimToken: 'old-token',
+      notificationClaimedUntil: new Date('2026-07-28T12:00:30.000Z'),
+    };
 
     const resolved = await service.resolveCase(
       first.case.id,
@@ -255,7 +260,11 @@ describe('OperationalConditionService', () => {
     expect(resolved?.status).toBe('RESOLVED');
     if (!resolved) throw new Error('Expected case resolution fixture');
     expect(rows.internal_signals[0]).toMatchObject({ status: 'RESOLVED' });
-    expect(rows.alerts[0]).toMatchObject({ status: 'resolved' });
+    expect(rows.alerts[0]).toMatchObject({
+      status: 'resolved',
+      notificationClaimToken: null,
+      notificationClaimedUntil: null,
+    });
     expect(rows.internal_case_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -279,8 +288,17 @@ describe('OperationalConditionService', () => {
       'newer than its resolution lifecycle'
     );
 
+    rows.alerts[0] = {
+      ...rows.alerts[0],
+      notificationClaimToken: 'old-token',
+      notificationClaimedUntil: new Date('2026-07-28T12:00:30.000Z'),
+    };
     const reopened = await service.observe({ ...observation, snapshotId: 'snapshot-3' });
     expect(reopened.reopened).toEqual({ signal: true, case: true, alert: true });
+    expect(reopened.alert).toMatchObject({
+      notificationClaimToken: null,
+      notificationClaimedUntil: null,
+    });
     expect(reopened.signal.id).toBe(first.signal.id);
     expect(reopened.case.id).toBe(first.case.id);
     expect(reopened.alert.id).toBe(first.alert.id);

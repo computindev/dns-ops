@@ -32,6 +32,11 @@ function createRepo(row: {
       async (_table: unknown, values: Record<string, unknown>, condition: unknown) => {
         const params = conditionValues(condition);
         if (!params.includes(row.id) || !params.includes(row.tenantId)) return undefined;
+        if (typeof values.status === 'string' && values.status !== 'sent') {
+          if (!params.includes(row.status)) return undefined;
+          Object.assign(row, values);
+          return { ...row };
+        }
         if (values.status === 'sent') {
           if (
             row.status !== 'pending' ||
@@ -124,6 +129,32 @@ describe('AlertRepository notification claim', () => {
     const completed = await repo.completeNotificationClaim('alert-1', 'tenant-1', 'token-1');
     expect(completed).toBeUndefined();
     expect(row.status).toBe('resolved');
+  });
+
+  it('clears a stale claim on status transition so an old token cannot complete after reopen', async () => {
+    const { repo, row } = createRepo({
+      id: 'alert-1',
+      tenantId: 'tenant-1',
+      status: 'pending',
+      notificationClaimedUntil: new Date('2026-07-28T12:00:30.000Z'),
+      notificationClaimToken: 'old-token',
+    });
+    const resolved = await repo.updateStatus('alert-1', 'tenant-1', 'resolved');
+    expect(resolved?.notificationClaimToken).toBeNull();
+    expect(row.notificationClaimToken).toBeNull();
+    expect(
+      await repo.completeNotificationClaim('alert-1', 'tenant-1', 'old-token')
+    ).toBeUndefined();
+
+    row.status = 'pending';
+    const reclaimed = await repo.claimPendingNotification(
+      'alert-1',
+      'tenant-1',
+      new Date('2026-07-28T12:01:00.000Z'),
+      new Date('2026-07-28T12:00:45.000Z')
+    );
+    expect(reclaimed?.token).toBeTruthy();
+    expect(reclaimed?.token).not.toBe('old-token');
   });
 
   it('marks sent only for the owning pending claim token', async () => {

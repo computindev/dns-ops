@@ -369,7 +369,7 @@ function canTransitionAlert(currentStatus: AlertStatus, nextStatus: AlertStatus)
     case 'suppressed':
       return ['pending', 'sent', 'acknowledged'].includes(currentStatus);
     case 'sent':
-      return currentStatus === 'pending'; // webhook delivery marks pending → sent
+      return false;
     case 'pending':
       return false;
     default:
@@ -539,7 +539,15 @@ export class AlertRepository {
       return existing;
     }
 
-    const update: Partial<NewAlert> = { status };
+    if (status === 'sent') {
+      throw new Error('Use completeNotificationClaim for pending to sent');
+    }
+
+    const update: Partial<NewAlert> = {
+      status,
+      notificationClaimedUntil: null,
+      notificationClaimToken: null,
+    };
 
     if (status === 'acknowledged' && metadata?.acknowledgedBy) {
       update.acknowledgedAt = new Date();
@@ -553,7 +561,11 @@ export class AlertRepository {
       }
     }
 
-    const predicate = and(eq(alerts.id, id), eq(alerts.tenantId, tenantId));
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, existing.status)
+    );
     if (!predicate) throw new Error('Expected alert status predicate');
     return this.db.updateOne(alerts, update, predicate);
   }

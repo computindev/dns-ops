@@ -311,7 +311,13 @@ export class OperationalConditionService {
       alert =
         (await this.db.updateOne(
           alerts,
-          { status: 'pending', resolvedAt: null, resolutionNote: null },
+          {
+            status: 'pending',
+            resolvedAt: null,
+            resolutionNote: null,
+            notificationClaimedUntil: null,
+            notificationClaimToken: null,
+          },
           requiredAnd(eq(alerts.id, alert.id), eq(alerts.status, 'resolved'))
         )) ??
         (() => {
@@ -581,7 +587,13 @@ export class OperationalConditionService {
       if (alert && alert.status !== 'resolved') {
         const resolvedAlert = await tx.updateOne(
           alerts,
-          { status: 'resolved', resolvedAt: new Date(), resolutionNote: note },
+          {
+            status: 'resolved',
+            resolvedAt: new Date(),
+            resolutionNote: note,
+            notificationClaimedUntil: null,
+            notificationClaimToken: null,
+          },
           requiredAnd(
             eq(alerts.id, alert.id),
             eq(alerts.tenantId, tenantId),

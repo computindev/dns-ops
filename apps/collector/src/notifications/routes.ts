@@ -5,6 +5,7 @@
  * All webhooks go through the unified sendAlertNotification path.
  */
 
+import { AlertRepository } from '@dns-ops/db';
 import { Hono } from 'hono';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
@@ -37,13 +38,19 @@ notificationRoutes.use('*', requestBodyLimitMiddleware());
  * }
  */
 notificationRoutes.post('/webhook', async (c) => {
-  let webhookUrl: string | undefined;
   try {
-    const body = await c.req.json();
-    const { webhookUrl: url, alert, baseUrl } = body;
-    webhookUrl = url;
+    const tenantId = c.get('tenantId');
+    if (!tenantId) {
+      return c.json({ error: 'Authenticated tenant context required' }, 401);
+    }
+    const db = c.get('db');
+    if (!db) {
+      return c.json({ error: 'Database unavailable' }, 503);
+    }
 
-    // Validate required fields
+    const body = await c.req.json();
+    const { webhookUrl, alert, baseUrl } = body;
+
     if (!webhookUrl || typeof webhookUrl !== 'string') {
       return c.json(
         {
@@ -54,34 +61,39 @@ notificationRoutes.post('/webhook', async (c) => {
       );
     }
 
-    if (!alert || typeof alert !== 'object') {
+    if (!alert || typeof alert !== 'object' || typeof alert.id !== 'string' || !alert.id) {
       return c.json(
         {
           error: 'Bad Request',
-          message: 'alert is required and must be an object',
+          message: 'alert.id is required',
         },
         400
       );
     }
 
-    // Validate alert required fields
-    const requiredAlertFields = ['id', 'title', 'severity', 'domain', 'tenantId'];
-    for (const field of requiredAlertFields) {
-      if (!(field in alert)) {
-        return c.json(
-          {
-            error: 'Bad Request',
-            message: `alert.${field} is required`,
-          },
-          400
-        );
-      }
+    if (typeof alert.tenantId === 'string' && alert.tenantId !== tenantId) {
+      return c.json({ error: 'Forbidden', message: 'alert.tenantId does not match tenant' }, 403);
     }
 
-    const db = c.get('db');
+    const stored = await new AlertRepository(db).findById(alert.id, tenantId);
+    if (!stored) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
 
-    // Use the unified notification path
-    const result = await sendAlertNotification(alert.id, webhookUrl, alert, db, baseUrl);
+    const result = await sendAlertNotification(
+      stored.id,
+      webhookUrl,
+      {
+        id: stored.id,
+        title: stored.title,
+        description: stored.description,
+        severity: stored.severity,
+        domain: typeof alert.domain === 'string' ? alert.domain : '',
+        tenantId: stored.tenantId,
+      },
+      db,
+      baseUrl
+    );
 
     if (result.success) {
       return c.json(
