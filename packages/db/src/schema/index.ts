@@ -983,6 +983,8 @@ export const alerts = pgTable(
 
     // Status
     status: alertStatusEnum('status').notNull().default('pending'),
+    /** Exclusive webhook delivery lease; expired or null means the alert may be claimed. */
+    notificationClaimedUntil: timestamp('notification_claimed_until', { withTimezone: true }),
 
     // Deduplication
     dedupKey: varchar('dedup_key', { length: 200 }), // For grouping similar alerts

@@ -304,6 +304,75 @@ describe('finalizeCanonicalConditions', () => {
     );
   });
 
+  it('claims pending delivery so concurrent finalizers send once', async () => {
+    const pendingAlert = {
+      id: 'alert-1',
+      title: 'Mail DNS configuration regression',
+      description: 'x',
+      severity: 'high' as const,
+      status: 'pending' as const,
+    };
+    let claimed = false;
+    const claimPendingNotification = vi.fn(async () => {
+      if (claimed) return false;
+      claimed = true;
+      return true;
+    });
+    const send = vi.fn().mockResolvedValue({ success: true, statusUpdated: true });
+    const observer = {
+      observe: vi.fn().mockResolvedValue({
+        created: { alert: true },
+        reopened: { alert: false },
+        alert: pendingAlert,
+      }),
+    };
+    await Promise.all([
+      finalizeCanonicalConditions(input(), { observer, send, claimPendingNotification }),
+      finalizeCanonicalConditions(input(), { observer, send, claimPendingNotification }),
+    ]);
+    expect(claimPendingNotification).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the claim after a failed send and keeps it after status persistence failure', async () => {
+    const pendingAlert = {
+      id: 'alert-1',
+      title: 'Mail DNS configuration regression',
+      description: 'x',
+      severity: 'high' as const,
+      status: 'pending' as const,
+    };
+    const claimPendingNotification = vi.fn().mockResolvedValue(true);
+    const releaseNotificationClaim = vi.fn();
+    const observer = {
+      observe: vi.fn().mockResolvedValue({
+        created: { alert: true },
+        reopened: { alert: false },
+        alert: pendingAlert,
+      }),
+    };
+    await expect(
+      finalizeCanonicalConditions(input(), {
+        observer,
+        send: vi.fn().mockResolvedValue({ success: false, error: 'webhook 500' }),
+        claimPendingNotification,
+        releaseNotificationClaim,
+      })
+    ).rejects.toThrow('webhook 500');
+    expect(releaseNotificationClaim).toHaveBeenCalledWith('alert-1', 'tenant-1');
+
+    releaseNotificationClaim.mockClear();
+    await expect(
+      finalizeCanonicalConditions(input(), {
+        observer,
+        send: vi.fn().mockResolvedValue({ success: true, statusUpdated: false }),
+        claimPendingNotification,
+        releaseNotificationClaim,
+      })
+    ).rejects.toThrow('Alert sent status was not persisted');
+    expect(releaseNotificationClaim).not.toHaveBeenCalled();
+  });
+
   it('does not resend a canonical alert after it is marked sent', async () => {
     const send = vi.fn().mockResolvedValue({ success: true });
     const observer = {

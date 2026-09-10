@@ -1,5 +1,6 @@
 import type { InternalSignalKind } from '@dns-ops/contracts';
 import {
+  AlertRepository,
   FindingRepository,
   type IDatabaseAdapter,
   MonitoredDomainRepository,
@@ -110,17 +111,39 @@ type CanonicalAlertSender = (
   alertId: string,
   webhookUrl: string,
   alert: CanonicalConditionOutcome['alert']
-) => Promise<{ success: boolean; error?: string } | undefined>;
+) => Promise<{ success: boolean; error?: string; statusUpdated?: boolean } | undefined>;
+
+const NOTIFICATION_LEASE_MS = 30_000;
 
 async function deliverCanonicalAlert(
   outcome: CanonicalConditionOutcome,
-  webhookUrl: string | undefined,
-  send: CanonicalAlertSender
+  input: { tenantId: string; webhookUrl?: string },
+  dependencies: {
+    send: CanonicalAlertSender;
+    claimPendingNotification?: (alertId: string, tenantId: string) => Promise<boolean>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string) => Promise<void>;
+  }
 ) {
-  if (!webhookUrl || !needsCanonicalDelivery(outcome)) return;
-  const result = await send(outcome.alert.id, webhookUrl, outcome.alert);
-  if (result?.success !== true) {
-    throw new Error(result?.error || 'Canonical alert delivery failed');
+  if (!input.webhookUrl || !needsCanonicalDelivery(outcome)) return;
+  if (dependencies.claimPendingNotification) {
+    const claimed = await dependencies.claimPendingNotification(outcome.alert.id, input.tenantId);
+    if (!claimed) return;
+  }
+  let posted = false;
+  try {
+    const result = await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
+    posted = result?.success === true;
+    if (result?.statusUpdated === false) {
+      throw new Error(result.error || 'Alert sent status was not persisted');
+    }
+    if (!posted) {
+      throw new Error(result?.error || 'Canonical alert delivery failed');
+    }
+  } catch (error) {
+    if (!posted) {
+      await dependencies.releaseNotificationClaim?.(outcome.alert.id, input.tenantId);
+    }
+    throw error;
   }
 }
 
@@ -149,6 +172,7 @@ export async function finalizePersistedCanonicalConditions(
     new FindingRepository(db).findBySnapshotId(input.snapshotId),
   ]);
   const observer = new OperationalConditionService(db);
+  const alerts = new AlertRepository(db);
   return finalizeCanonicalConditions(
     {
       tenantId: input.tenantId,
@@ -166,6 +190,17 @@ export async function finalizePersistedCanonicalConditions(
     {
       observer,
       resolver: observer,
+      claimPendingNotification: async (alertId, tenantId) => {
+        const claimed = await alerts.claimPendingNotification(
+          alertId,
+          tenantId,
+          new Date(Date.now() + NOTIFICATION_LEASE_MS)
+        );
+        return Boolean(claimed);
+      },
+      releaseNotificationClaim: async (alertId, tenantId) => {
+        await alerts.releaseNotificationClaim(alertId, tenantId);
+      },
       send: (alertId, webhookUrl, alert) =>
         sendAlertNotification(
           alertId,
@@ -196,6 +231,8 @@ export async function finalizeCanonicalConditions(
     observer: CanonicalConditionObserver;
     resolver?: CanonicalConditionResolver;
     send: CanonicalAlertSender;
+    claimPendingNotification?: (alertId: string, tenantId: string) => Promise<boolean>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string) => Promise<void>;
   }
 ) {
   const evaluation = evaluateOperationalConditions(input);
@@ -216,7 +253,7 @@ export async function finalizeCanonicalConditions(
           : undefined,
     });
     outcomes.push(outcome);
-    await deliverCanonicalAlert(outcome, input.webhookUrl, dependencies.send);
+    await deliverCanonicalAlert(outcome, input, dependencies);
   }
   if (dependencies.resolver) {
     const activeConditionKeys = evaluation.observations.map(

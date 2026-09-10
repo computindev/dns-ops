@@ -5,7 +5,7 @@
  * and template overrides.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import {
   type Alert,
@@ -448,6 +448,37 @@ export class AlertRepository {
 
   async create(data: NewAlert): Promise<Alert> {
     return this.db.insert(alerts, data);
+  }
+
+  async claimPendingNotification(
+    id: string,
+    tenantId: string,
+    leaseUntil: Date,
+    now = new Date()
+  ): Promise<Alert | undefined> {
+    const claimable = or(
+      isNull(alerts.notificationClaimedUntil),
+      lt(alerts.notificationClaimedUntil, now)
+    );
+    if (!claimable) throw new Error('Expected notification claim predicate');
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending'),
+      claimable
+    );
+    if (!predicate) throw new Error('Expected notification claim predicate');
+    return this.db.updateOne(alerts, { notificationClaimedUntil: leaseUntil }, predicate);
+  }
+
+  async releaseNotificationClaim(id: string, tenantId: string): Promise<Alert | undefined> {
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending')
+    );
+    if (!predicate) throw new Error('Expected notification release predicate');
+    return this.db.updateOne(alerts, { notificationClaimedUntil: null }, predicate);
   }
 
   async updateStatus(

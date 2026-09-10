@@ -782,9 +782,26 @@ describe('evaluateOperationalConditions', () => {
     expect(future.observations).toEqual([]);
     expect(future.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
     expect(malformedValidTo.observations).toEqual([]);
-    expect(malformedValidTo.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(malformedValidTo.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
     expect(malformedBoolean.observations).toEqual([]);
     expect(malformedBoolean.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
     expect(healthy.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
+  });
+
+  it('rejects impossible, date-only, and offset TLS validTo as unknown', () => {
+    const cases = ['2027-02-31T00:00:00.000Z', '2027-01-01', '2027-01-01T00:00:00+00:00'];
+    for (const validTo of cases) {
+      const result = evaluateOperationalConditions({
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        snapshotComplete: true,
+        baselines: [tlsBaseline],
+        probes: [tlsProbe(now, { validTo })],
+        findings: [],
+        now,
+      });
+      expect(result.observations).toEqual([]);
+      expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
+    }
   });
 });

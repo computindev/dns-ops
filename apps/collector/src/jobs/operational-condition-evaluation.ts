@@ -100,6 +100,27 @@ function matchingTlsProbe(
   });
 }
 
+const RFC3339_UTC = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
+function isCanonicalRfc3339Utc(value: string): boolean {
+  const match = RFC3339_UTC.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) return false;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return false;
+  const iso = new Date(parsed).toISOString();
+  const canonical = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+  return iso.startsWith(canonical);
+}
+
 function parseTlsEvidence(probe: PersistedConditionProbe):
   | {
       status: 'conclusive';
@@ -117,7 +138,6 @@ function parseTlsEvidence(probe: PersistedConditionProbe):
   if (data.check !== 'TLS_CERTIFICATE') return { status: 'MALFORMED' };
   if (data.status !== 'OBSERVED' || !data.evidence) return { status: 'UNKNOWN' };
   const evidence = data.evidence;
-  const validTo = typeof evidence.validTo === 'string' ? Date.parse(evidence.validTo) : Number.NaN;
   if (
     evidence.kind !== 'TLS_CERTIFICATE' ||
     typeof evidence.hostname !== 'string' ||
@@ -126,11 +146,12 @@ function parseTlsEvidence(probe: PersistedConditionProbe):
     (evidence.port as number) < 1 ||
     (evidence.port as number) > 65535 ||
     typeof evidence.hostnameAuthorized !== 'boolean' ||
-    typeof evidence.chainAuthorized !== 'boolean' ||
-    typeof evidence.validTo !== 'string' ||
-    Number.isNaN(validTo)
+    typeof evidence.chainAuthorized !== 'boolean'
   ) {
     return { status: 'MALFORMED' };
+  }
+  if (typeof evidence.validTo !== 'string' || !isCanonicalRfc3339Utc(evidence.validTo)) {
+    return { status: 'UNKNOWN' };
   }
   return {
     status: 'conclusive',
