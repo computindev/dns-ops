@@ -1,7 +1,7 @@
 import {
   type InternalSignalKind,
   normalizeOperationalDiscriminator,
-  type OperationalConditionBaselinePolicy,
+  parseSupportedOperationalBaseline,
   type SupportedOperationalBaseline,
 } from '@dns-ops/contracts';
 import { and, eq, isNull, type SQL } from 'drizzle-orm';
@@ -34,6 +34,20 @@ type BaselinePolicyInput =
         SupportedOperationalBaseline,
         { signalKind: 'MAIL_DNS_CONFIGURATION_REGRESSION' }
       >['policy'];
+    }
+  | {
+      kind: 'REDIRECT_TOPOLOGY_REGRESSION';
+      policy: Extract<
+        SupportedOperationalBaseline,
+        { signalKind: 'REDIRECT_TOPOLOGY_REGRESSION' }
+      >['policy'];
+    }
+  | {
+      kind: 'HOMEPAGE_INDEXABILITY_REGRESSION';
+      policy: Extract<
+        SupportedOperationalBaseline,
+        { signalKind: 'HOMEPAGE_INDEXABILITY_REGRESSION' }
+      >['policy'];
     };
 
 export type AcceptOperationalBaseline = BaselinePolicyInput & {
@@ -48,22 +62,12 @@ export type AcceptOperationalBaseline = BaselinePolicyInput & {
   userAgent?: string | null;
 };
 
-function assertPolicy(
-  input: AcceptOperationalBaseline
-): asserts input is AcceptOperationalBaseline {
-  if (input.kind === 'TLS_CERTIFICATE_REGRESSION') {
-    const policy = input.policy as OperationalConditionBaselinePolicy;
-    if (
-      policy.kind !== 'TLS_CERTIFICATE' ||
-      typeof policy.requireHostnameAuthorized !== 'boolean' ||
-      typeof policy.requireChainAuthorized !== 'boolean' ||
-      !Number.isInteger(policy.minimumRemainingValiditySeconds) ||
-      policy.minimumRemainingValiditySeconds < 0
-    )
-      throw new Error('Invalid TLS certificate baseline policy');
-    return;
-  }
-  if (input.policy.kind !== 'SPF_PRESENT') throw new Error('Invalid SPF baseline policy');
+function parsedBaseline(input: AcceptOperationalBaseline) {
+  return parseSupportedOperationalBaseline({
+    signalKind: input.kind,
+    policy: input.policy,
+    discriminator: input.discriminator,
+  });
 }
 
 export class OperationalBaselineRepository {
@@ -104,8 +108,8 @@ export class OperationalBaselineRepository {
     if (!Number.isInteger(input.maxEvidenceAgeSeconds) || input.maxEvidenceAgeSeconds < 1) {
       throw new Error('Baseline max evidence age must be a positive integer');
     }
-    assertPolicy(input);
-    const discriminator = normalizeOperationalDiscriminator(input.discriminator);
+    const parsed = parsedBaseline(input);
+    const discriminator = parsed.discriminator;
     return this.db.transaction(async (tx) => {
       const domain = await tx.selectOne(domains, eq(domains.id, input.domainId));
       const snapshot = await tx.selectOne(snapshots, eq(snapshots.id, input.sourceSnapshotId));
@@ -137,10 +141,10 @@ export class OperationalBaselineRepository {
       const baseline = await tx.insert(operationalConditionBaselines, {
         tenantId: input.tenantId,
         domainId: input.domainId,
-        kind: input.kind,
+        kind: parsed.signalKind,
         discriminator,
         sourceSnapshotId: input.sourceSnapshotId,
-        policy: input.policy,
+        policy: parsed.policy,
         maxEvidenceAgeSeconds: input.maxEvidenceAgeSeconds,
         acceptedBy: input.actorId,
       });

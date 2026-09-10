@@ -56,7 +56,19 @@ function createApp(
   ] as never[];
   const profiles: Array<Record<string, unknown>> = [];
   const baselines: Array<Record<string, unknown>> = [];
-  const probes = [
+  const probes: Array<{
+    id: string;
+    snapshotId: string;
+    probeType: string;
+    status: string;
+    hostname: string;
+    port: number;
+    success: boolean;
+    errorMessage: string | null;
+    probedAt: Date;
+    responseTimeMs: number | null;
+    probeData: unknown;
+  }> = [
     {
       id: 'probe-1',
       snapshotId: 'snapshot-1',
@@ -81,8 +93,17 @@ function createApp(
       if (table === probeObservations) return values.includes('snapshot-1') ? probes : [];
       if (table === domainProfiles)
         return profiles.filter((profile) => values.includes(profile.tenantId));
-      if (table === operationalConditionBaselines)
-        return baselines.filter((baseline) => values.includes(baseline.tenantId));
+      if (table === operationalConditionBaselines) {
+        const kindQuery = values.some(
+          (value) => typeof value === 'string' && /_REGRESSION$/.test(value)
+        );
+        return baselines.filter((baseline) => {
+          if (!values.includes(baseline.tenantId) || baseline.supersededAt) return false;
+          if (kindQuery && !values.includes(baseline.kind)) return false;
+          if (kindQuery && !values.includes(baseline.discriminator)) return false;
+          return true;
+        });
+      }
       return [];
     },
     async selectOne(table: unknown, condition: unknown) {
@@ -122,10 +143,19 @@ function createApp(
       }
       throw new Error('Unexpected insert');
     },
-    async updateOne(table: unknown, values: Record<string, unknown>) {
+    async updateOne(table: unknown, values: Record<string, unknown>, condition?: unknown) {
       if (table === domainProfiles && profiles[0]) {
         Object.assign(profiles[0] as object, values);
         return profiles[0];
+      }
+      if (table === operationalConditionBaselines) {
+        const id = params(condition).find(
+          (value) => typeof value === 'string' && String(value).startsWith('baseline-')
+        );
+        const row = baselines.find((baseline) => baseline.id === id);
+        if (!row) return undefined;
+        Object.assign(row, values);
+        return row;
       }
       return undefined;
     },
@@ -143,7 +173,7 @@ function createApp(
     await next();
   });
   app.route('/', domainProfileRoutes);
-  return { app, audits };
+  return { app, audits, probes, baselines };
 }
 
 describe('domainProfileRoutes', () => {
@@ -269,7 +299,185 @@ describe('domainProfileRoutes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       snapshotId: 'snapshot-1',
-      evidence: [{ probeType: 'tls_cert' }],
+      evidence: [{ probeType: 'tls_cert', freshness: 'NOT_BASELINE_GATED' }],
+    });
+  });
+
+  it('accepts operator-declared redirect and indexability baselines', async () => {
+    const { app, audits } = createApp();
+    const redirect = await app.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        sourceSnapshotId: 'snapshot-1',
+        discriminator: 'https://www.example.com/',
+        maxEvidenceAgeSeconds: 60,
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://www.example.com/',
+          expectedFinalUrl: 'https://example.com/',
+        },
+      }),
+    });
+    const indexability = await app.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signalKind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        sourceSnapshotId: 'snapshot-1',
+        discriminator: 'https://example.com/',
+        maxEvidenceAgeSeconds: 60,
+        policy: {
+          kind: 'HOMEPAGE_INDEXABILITY',
+          requestedUrl: 'https://example.com/',
+          requireIndexable: true,
+        },
+      }),
+    });
+    expect(redirect.status).toBe(201);
+    expect(indexability.status).toBe(201);
+    await expect(redirect.json()).resolves.toMatchObject({
+      baseline: {
+        kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://www.example.com/',
+      },
+    });
+    expect(audits).toHaveLength(2);
+  });
+
+  it('rejects a redirect discriminator that does not match the declared start URL', async () => {
+    const { app } = createApp();
+    const response = await app.request('/example.com/baselines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        sourceSnapshotId: 'snapshot-1',
+        discriminator: 'https://apex.example.com/',
+        maxEvidenceAgeSeconds: 60,
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://www.example.com/',
+          expectedFinalUrl: 'https://example.com/',
+        },
+      }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('exposes HTTP redirect and indexability freshness against accepted baselines only', async () => {
+    const { app, probes, baselines } = createApp();
+    probes.push(
+      {
+        id: 'probe-redirect',
+        snapshotId: 'snapshot-1',
+        probeType: 'http',
+        status: 'success',
+        hostname: 'www.example.com',
+        port: 443,
+        success: true,
+        errorMessage: null,
+        probedAt: new Date(),
+        responseTimeMs: 12,
+        probeData: {
+          check: 'REDIRECT_TOPOLOGY',
+          status: 'OBSERVED',
+          evidence: {
+            kind: 'HTTP_REDIRECT',
+            startUrl: 'https://www.example.com/',
+            hops: [
+              {
+                url: 'https://www.example.com/',
+                status: 301,
+                observedAt: '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            finalUrl: 'https://example.com/',
+            truncated: false,
+          },
+        },
+      },
+      {
+        id: 'probe-index',
+        snapshotId: 'snapshot-1',
+        probeType: 'http',
+        status: 'success',
+        hostname: 'example.com',
+        port: 443,
+        success: true,
+        errorMessage: null,
+        probedAt: new Date(Date.now() - 120_000),
+        responseTimeMs: 18,
+        probeData: {
+          check: 'HOMEPAGE_INDEXABILITY',
+          status: 'OBSERVED',
+          evidence: {
+            kind: 'HOMEPAGE_INDEXABILITY',
+            requestedUrl: 'https://example.com/',
+            finalUrl: 'https://example.com/',
+            responseStatus: 200,
+            xRobotsTags: [],
+            metaRobots: [],
+            bodyBytesInspected: 100,
+            bodyTruncated: false,
+          },
+        },
+      },
+      {
+        id: 'probe-reachability',
+        snapshotId: 'snapshot-1',
+        probeType: 'http',
+        status: 'success',
+        hostname: 'example.com',
+        port: 443,
+        success: true,
+        errorMessage: null,
+        probedAt: new Date(),
+        responseTimeMs: 9,
+        probeData: {
+          check: 'HTTP_REACHABILITY',
+          status: 'OBSERVED',
+          evidence: { kind: 'HTTP_REACHABILITY', url: 'https://example.com/' },
+        },
+      }
+    );
+    const missing = await app.request('/example.com/evidence');
+    await expect(missing.json()).resolves.toMatchObject({
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ id: 'probe-redirect', freshness: 'MISSING_BASELINE' }),
+        expect.objectContaining({ id: 'probe-index', freshness: 'MISSING_BASELINE' }),
+        expect.objectContaining({ id: 'probe-reachability', freshness: 'NOT_BASELINE_GATED' }),
+      ]),
+    });
+    baselines.push(
+      {
+        id: 'baseline-redirect',
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://www.example.com/',
+        maxEvidenceAgeSeconds: 60,
+        supersededAt: null,
+      },
+      {
+        id: 'baseline-index',
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        discriminator: 'https://example.com/',
+        maxEvidenceAgeSeconds: 60,
+        supersededAt: null,
+      }
+    );
+    const gated = await app.request('/example.com/evidence');
+    await expect(gated.json()).resolves.toMatchObject({
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ id: 'probe-redirect', freshness: 'CURRENT' }),
+        expect.objectContaining({ id: 'probe-index', freshness: 'STALE' }),
+        expect.objectContaining({ id: 'probe-reachability', freshness: 'NOT_BASELINE_GATED' }),
+        expect.objectContaining({ probeType: 'tls_cert', freshness: 'NOT_BASELINE_GATED' }),
+      ]),
     });
   });
 });

@@ -1,8 +1,11 @@
 import {
+  type HomepageIndexabilityBaselinePolicy,
   type InternalSignalKind,
   internalConditionKey,
   normalizeOperationalDiscriminator,
   type OperationalConditionBaselinePolicy,
+  operationalHttpDiscriminator,
+  type RedirectTopologyBaselinePolicy,
 } from '@dns-ops/contracts';
 
 export interface PersistedConditionBaseline {
@@ -40,9 +43,25 @@ export interface SetupEvidenceResult {
   action: 'ACCEPT_BASELINE' | 'RUN_FRESH_SCAN';
 }
 
+export type EvaluatedConditionOutcome =
+  | 'HEALTHY'
+  | 'FAULTY'
+  | 'UNKNOWN'
+  | 'STALE'
+  | 'MALFORMED'
+  | 'TRUNCATED';
+
+export interface EvaluatedConditionKey {
+  conditionKey: string;
+  kind: InternalSignalKind;
+  discriminator: string;
+  outcome: EvaluatedConditionOutcome;
+}
+
 export interface ConditionEvaluation {
   observations: CanonicalConditionObservation[];
   setupEvidence: SetupEvidenceResult[];
+  evaluatedConditionKeys: EvaluatedConditionKey[];
 }
 
 interface TlsProbeData {
@@ -82,6 +101,162 @@ function setup(
   };
 }
 
+function evaluated(
+  tenantId: string,
+  domainId: string,
+  kind: InternalSignalKind,
+  discriminator: string,
+  outcome: EvaluatedConditionOutcome
+): EvaluatedConditionKey {
+  return {
+    conditionKey: internalConditionKey(tenantId, domainId, kind, discriminator),
+    kind,
+    discriminator,
+    outcome,
+  };
+}
+
+function emptyEvaluation(): ConditionEvaluation {
+  return { observations: [], setupEvidence: [], evaluatedConditionKeys: [] };
+}
+
+function probeCheck(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const check = (value as { check?: unknown }).check;
+  return typeof check === 'string' ? check : undefined;
+}
+
+function matchingHttpProbe(
+  probes: PersistedConditionProbe[],
+  check: 'REDIRECT_TOPOLOGY' | 'HOMEPAGE_INDEXABILITY',
+  discriminator: string,
+  urlFromEvidence: (evidence: unknown) => unknown
+): PersistedConditionProbe | undefined {
+  return probes.find((candidate) => {
+    if (probeCheck(candidate.probeData) !== check) return false;
+    const evidence =
+      candidate.probeData && typeof candidate.probeData === 'object'
+        ? (candidate.probeData as { evidence?: unknown }).evidence
+        : undefined;
+    try {
+      return operationalHttpDiscriminator(String(urlFromEvidence(evidence))) === discriminator;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isFresh(
+  probe: PersistedConditionProbe,
+  baseline: PersistedConditionBaseline,
+  now: Date
+): boolean {
+  return now.getTime() - probe.probedAt.getTime() <= baseline.maxEvidenceAgeSeconds * 1000;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function hasNoindex(values: string[]): boolean {
+  return values.some((value) => {
+    const token = value.trim().toLowerCase();
+    return token === 'noindex' || token === 'none';
+  });
+}
+
+type InconclusiveReason = 'UNKNOWN' | 'MALFORMED' | 'TRUNCATED';
+
+function parseRedirectEvidence(
+  probe: PersistedConditionProbe
+): { status: 'conclusive'; startUrl: string; finalUrl: string } | { status: InconclusiveReason } {
+  if (!probe.success || !probe.probeData || typeof probe.probeData !== 'object') {
+    return { status: 'UNKNOWN' };
+  }
+  const data = probe.probeData as {
+    check?: unknown;
+    status?: unknown;
+    evidence?: Record<string, unknown>;
+  };
+  if (data.check !== 'REDIRECT_TOPOLOGY') return { status: 'MALFORMED' };
+  if (data.status !== 'OBSERVED' || !data.evidence) return { status: 'UNKNOWN' };
+  const evidence = data.evidence;
+  if (
+    evidence.kind !== 'HTTP_REDIRECT' ||
+    typeof evidence.startUrl !== 'string' ||
+    typeof evidence.finalUrl !== 'string' ||
+    typeof evidence.truncated !== 'boolean' ||
+    !Array.isArray(evidence.hops)
+  ) {
+    return { status: 'MALFORMED' };
+  }
+  if (evidence.truncated || evidence.hops.length === 0) return { status: 'TRUNCATED' };
+  try {
+    return {
+      status: 'conclusive',
+      startUrl: operationalHttpDiscriminator(evidence.startUrl),
+      finalUrl: operationalHttpDiscriminator(evidence.finalUrl),
+    };
+  } catch {
+    return { status: 'MALFORMED' };
+  }
+}
+
+function parseIndexabilityEvidence(
+  probe: PersistedConditionProbe
+):
+  | { status: 'conclusive'; requestedUrl: string; noindex: boolean }
+  | { status: InconclusiveReason } {
+  if (!probe.success || !probe.probeData || typeof probe.probeData !== 'object') {
+    return { status: 'UNKNOWN' };
+  }
+  const data = probe.probeData as {
+    check?: unknown;
+    status?: unknown;
+    evidence?: Record<string, unknown>;
+  };
+  if (data.check !== 'HOMEPAGE_INDEXABILITY') return { status: 'MALFORMED' };
+  if (data.status !== 'OBSERVED' || !data.evidence) return { status: 'UNKNOWN' };
+  const evidence = data.evidence;
+  if (
+    evidence.kind !== 'HOMEPAGE_INDEXABILITY' ||
+    typeof evidence.requestedUrl !== 'string' ||
+    typeof evidence.finalUrl !== 'string' ||
+    typeof evidence.responseStatus !== 'number' ||
+    typeof evidence.bodyTruncated !== 'boolean' ||
+    !isStringArray(evidence.xRobotsTags) ||
+    !isStringArray(evidence.metaRobots)
+  ) {
+    return { status: 'MALFORMED' };
+  }
+  const noindex = hasNoindex(evidence.xRobotsTags) || hasNoindex(evidence.metaRobots);
+  if (evidence.bodyTruncated && !noindex) return { status: 'TRUNCATED' };
+  try {
+    return {
+      status: 'conclusive',
+      requestedUrl: operationalHttpDiscriminator(evidence.requestedUrl),
+      noindex,
+    };
+  } catch {
+    return { status: 'MALFORMED' };
+  }
+}
+
+function recordInconclusive(
+  result: ConditionEvaluation,
+  input: { tenantId: string; domainId: string },
+  kind: InternalSignalKind,
+  discriminator: string,
+  outcome: InconclusiveReason | 'STALE'
+) {
+  result.setupEvidence.push(
+    setup(kind, discriminator, outcome === 'STALE' ? 'EVIDENCE_STALE' : 'EVIDENCE_UNAVAILABLE')
+  );
+  result.evaluatedConditionKeys.push(
+    evaluated(input.tenantId, input.domainId, kind, discriminator, outcome)
+  );
+}
+
 /**
  * Converts already-persisted, complete collection results into canonical observations.
  * It intentionally has no network, persistence, or notification dependency.
@@ -95,7 +270,7 @@ export function evaluateOperationalConditions(input: {
   findings: PersistedConditionFinding[];
   now: Date;
 }): ConditionEvaluation {
-  const result: ConditionEvaluation = { observations: [], setupEvidence: [] };
+  const result = emptyEvaluation();
   if (!input.snapshotComplete) return result;
 
   for (const baseline of input.baselines) {
@@ -110,27 +285,36 @@ export function evaluateOperationalConditions(input: {
         );
       });
       if (!probe) {
-        result.setupEvidence.push(setup(baseline.kind, discriminator, 'EVIDENCE_UNAVAILABLE'));
+        recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
         continue;
       }
-      if (input.now.getTime() - probe.probedAt.getTime() > baseline.maxEvidenceAgeSeconds * 1000) {
-        result.setupEvidence.push(setup(baseline.kind, discriminator, 'EVIDENCE_STALE'));
+      if (!isFresh(probe, baseline, input.now)) {
+        recordInconclusive(result, input, baseline.kind, discriminator, 'STALE');
         continue;
       }
       const evidence = (probe.probeData as TlsProbeData).evidence;
       const policy = baseline.policy;
       if (policy.kind !== 'TLS_CERTIFICATE') {
-        result.setupEvidence.push(setup(baseline.kind, discriminator, 'EVIDENCE_UNAVAILABLE'));
+        recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
         continue;
       }
       const insufficientValidity =
         Date.parse(evidence.validTo) - input.now.getTime() <
         policy.minimumRemainingValiditySeconds * 1000;
-      if (
+      const faulty =
         (policy.requireHostnameAuthorized && !evidence.hostnameAuthorized) ||
         (policy.requireChainAuthorized && !evidence.chainAuthorized) ||
-        insufficientValidity
-      ) {
+        insufficientValidity;
+      result.evaluatedConditionKeys.push(
+        evaluated(
+          input.tenantId,
+          input.domainId,
+          baseline.kind,
+          discriminator,
+          faulty ? 'FAULTY' : 'HEALTHY'
+        )
+      );
+      if (faulty) {
         result.observations.push({
           kind: baseline.kind,
           discriminator,
@@ -154,11 +338,20 @@ export function evaluateOperationalConditions(input: {
 
     if (baseline.kind === 'MAIL_DNS_CONFIGURATION_REGRESSION') {
       if (baseline.policy.kind !== 'SPF_PRESENT' || discriminator !== 'spf') {
-        result.setupEvidence.push(setup(baseline.kind, discriminator, 'EVIDENCE_UNAVAILABLE'));
+        recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
         continue;
       }
       const finding = input.findings.find(
         (candidate) => candidate.type === 'mail.no-spf-record' && !candidate.reviewOnly
+      );
+      result.evaluatedConditionKeys.push(
+        evaluated(
+          input.tenantId,
+          input.domainId,
+          baseline.kind,
+          discriminator,
+          finding ? 'FAULTY' : 'HEALTHY'
+        )
       );
       if (finding) {
         result.observations.push({
@@ -173,7 +366,164 @@ export function evaluateOperationalConditions(input: {
           evidence: { findingId: finding.id, findingType: finding.type },
         });
       }
+      continue;
+    }
+
+    if (baseline.kind === 'REDIRECT_TOPOLOGY_REGRESSION') {
+      const policy = baseline.policy;
+      if (policy.kind !== 'REDIRECT_TOPOLOGY') {
+        recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
+        continue;
+      }
+      evaluateRedirect(result, input, baseline, discriminator, policy);
+      continue;
+    }
+
+    if (baseline.kind === 'HOMEPAGE_INDEXABILITY_REGRESSION') {
+      const policy = baseline.policy;
+      if (policy.kind !== 'HOMEPAGE_INDEXABILITY') {
+        recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
+        continue;
+      }
+      evaluateIndexability(result, input, baseline, discriminator, policy);
     }
   }
   return result;
+}
+
+function evaluateRedirect(
+  result: ConditionEvaluation,
+  input: {
+    tenantId: string;
+    domainId: string;
+    probes: PersistedConditionProbe[];
+    now: Date;
+  },
+  baseline: PersistedConditionBaseline,
+  discriminator: string,
+  policy: RedirectTopologyBaselinePolicy
+) {
+  const probe = matchingHttpProbe(
+    input.probes,
+    'REDIRECT_TOPOLOGY',
+    discriminator,
+    (evidence) => (evidence as { startUrl?: unknown } | undefined)?.startUrl
+  );
+  if (!probe) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+    return;
+  }
+  if (!isFresh(probe, baseline, input.now)) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'STALE');
+    return;
+  }
+  const parsed = parseRedirectEvidence(probe);
+  if (parsed.status !== 'conclusive') {
+    recordInconclusive(result, input, baseline.kind, discriminator, parsed.status);
+    return;
+  }
+  let expectedFinalUrl: string;
+  try {
+    expectedFinalUrl = operationalHttpDiscriminator(policy.expectedFinalUrl);
+  } catch {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
+    return;
+  }
+  const faulty = parsed.finalUrl !== expectedFinalUrl;
+  result.evaluatedConditionKeys.push(
+    evaluated(
+      input.tenantId,
+      input.domainId,
+      baseline.kind,
+      discriminator,
+      faulty ? 'FAULTY' : 'HEALTHY'
+    )
+  );
+  if (!faulty) return;
+  const evidence = (probe.probeData as { evidence: Record<string, unknown> }).evidence;
+  result.observations.push({
+    kind: baseline.kind,
+    discriminator,
+    conditionKey: internalConditionKey(
+      input.tenantId,
+      input.domainId,
+      baseline.kind,
+      discriminator
+    ),
+    evidence: {
+      probeKind: 'REDIRECT_TOPOLOGY',
+      probedAt: probe.probedAt.toISOString(),
+      startUrl: evidence.startUrl,
+      finalUrl: evidence.finalUrl,
+      expectedFinalUrl: policy.expectedFinalUrl,
+      truncated: evidence.truncated,
+    },
+  });
+}
+
+function evaluateIndexability(
+  result: ConditionEvaluation,
+  input: {
+    tenantId: string;
+    domainId: string;
+    probes: PersistedConditionProbe[];
+    now: Date;
+  },
+  baseline: PersistedConditionBaseline,
+  discriminator: string,
+  policy: HomepageIndexabilityBaselinePolicy
+) {
+  const probe = matchingHttpProbe(
+    input.probes,
+    'HOMEPAGE_INDEXABILITY',
+    discriminator,
+    (evidence) => (evidence as { requestedUrl?: unknown } | undefined)?.requestedUrl
+  );
+  if (!probe) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+    return;
+  }
+  if (!isFresh(probe, baseline, input.now)) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'STALE');
+    return;
+  }
+  const parsed = parseIndexabilityEvidence(probe);
+  if (parsed.status !== 'conclusive') {
+    recordInconclusive(result, input, baseline.kind, discriminator, parsed.status);
+    return;
+  }
+  const indexable = !parsed.noindex;
+  const faulty = policy.requireIndexable ? !indexable : indexable;
+  result.evaluatedConditionKeys.push(
+    evaluated(
+      input.tenantId,
+      input.domainId,
+      baseline.kind,
+      discriminator,
+      faulty ? 'FAULTY' : 'HEALTHY'
+    )
+  );
+  if (!faulty) return;
+  const evidence = (probe.probeData as { evidence: Record<string, unknown> }).evidence;
+  result.observations.push({
+    kind: baseline.kind,
+    discriminator,
+    conditionKey: internalConditionKey(
+      input.tenantId,
+      input.domainId,
+      baseline.kind,
+      discriminator
+    ),
+    evidence: {
+      probeKind: 'HOMEPAGE_INDEXABILITY',
+      probedAt: probe.probedAt.toISOString(),
+      requestedUrl: evidence.requestedUrl,
+      finalUrl: evidence.finalUrl,
+      responseStatus: evidence.responseStatus,
+      xRobotsTags: evidence.xRobotsTags,
+      metaRobots: evidence.metaRobots,
+      bodyTruncated: evidence.bodyTruncated,
+      requireIndexable: policy.requireIndexable,
+    },
+  });
 }
