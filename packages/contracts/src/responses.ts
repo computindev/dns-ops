@@ -85,6 +85,7 @@ export interface Alert {
   description: string;
   severity: Severity;
   triggeredByFindingId?: string | null;
+  signalId?: string | null;
   status: 'pending' | 'sent' | 'suppressed' | 'acknowledged' | 'resolved';
   dedupKey?: string | null;
   acknowledgedAt?: Date | null;

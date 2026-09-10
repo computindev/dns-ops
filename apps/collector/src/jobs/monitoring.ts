@@ -18,8 +18,27 @@ const monitoringLogger = createLogger({
   minLevel: 'info',
 });
 
-// Alert type for type annotations
 type Alert = Awaited<ReturnType<AlertRepository['findPending']>>[number];
+
+function toPublicAlert(alert: Alert) {
+  return {
+    id: alert.id,
+    monitoredDomainId: alert.monitoredDomainId,
+    title: alert.title,
+    description: alert.description,
+    severity: alert.severity,
+    triggeredByFindingId: alert.triggeredByFindingId,
+    signalId: alert.signalId ?? null,
+    status: alert.status,
+    dedupKey: alert.dedupKey,
+    acknowledgedAt: alert.acknowledgedAt,
+    acknowledgedBy: alert.acknowledgedBy,
+    resolvedAt: alert.resolvedAt,
+    resolutionNote: alert.resolutionNote,
+    tenantId: alert.tenantId,
+    createdAt: alert.createdAt,
+  };
+}
 
 export const monitoringRoutes = new Hono<Env>();
 monitoringRoutes.use('*', requestBodyLimitMiddleware());
@@ -183,7 +202,7 @@ monitoringRoutes.get('/alerts/pending', internalOnlyMiddleware, async (c) => {
   try {
     const alertRepo = new AlertRepository(db);
     const alerts = await alertRepo.findPending(tenantId);
-    return c.json({ alerts, count: alerts.length });
+    return c.json({ alerts: alerts.map(toPublicAlert), count: alerts.length });
   } catch (_error) {
     return c.json({ error: 'Failed to fetch alerts' }, 500);
   }
@@ -210,7 +229,10 @@ monitoringRoutes.post('/alerts/:alertId/acknowledge', internalOnlyMiddleware, as
   try {
     const alertRepo = new AlertRepository(db);
     const alert = await alertRepo.acknowledge(alertId, tenantId, actorId);
-    return c.json({ alert });
+    if (!alert) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (_error) {
     return c.json({ error: 'Failed to acknowledge alert' }, 500);
   }
@@ -238,7 +260,10 @@ monitoringRoutes.post('/alerts/:alertId/resolve', internalOnlyMiddleware, async 
   try {
     const alertRepo = new AlertRepository(db);
     const alert = await alertRepo.resolve(alertId, tenantId, resolutionNote);
-    return c.json({ alert });
+    if (!alert) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (_error) {
     return c.json({ error: 'Failed to resolve alert' }, 500);
   }
