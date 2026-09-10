@@ -147,6 +147,12 @@ collectDomainRoutes.post('/domain', async (c) => {
       const snapshotRepo = new SnapshotRepository(db);
       const latestSnapshot = await snapshotRepo.findRecentByDomain(domain.id);
       if (latestSnapshot) {
+        await finalizePersistedCanonicalConditions(db, {
+          snapshotId: latestSnapshot.id,
+          tenantId,
+          domainId: domain.id,
+          domainName: domain.normalizedName,
+        });
         logger.info('Collection skipped - recent snapshot exists', {
           domain: normalizedDomain,
           domainId: domain.id,

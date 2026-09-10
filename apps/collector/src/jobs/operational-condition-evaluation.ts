@@ -78,15 +78,71 @@ interface TlsProbeData {
   };
 }
 
-function isTlsProbeData(value: unknown): value is TlsProbeData {
-  if (!value || typeof value !== 'object') return false;
-  const data = value as Partial<TlsProbeData>;
-  return (
-    data.check === 'TLS_CERTIFICATE' &&
-    data.status === 'OBSERVED' &&
-    !!data.evidence &&
-    data.evidence.kind === 'TLS_CERTIFICATE'
-  );
+function matchingTlsProbe(
+  probes: PersistedConditionProbe[],
+  discriminator: string
+): PersistedConditionProbe | undefined {
+  return probes.find((candidate) => {
+    if (probeCheck(candidate.probeData) !== 'TLS_CERTIFICATE') return false;
+    const evidence =
+      candidate.probeData && typeof candidate.probeData === 'object'
+        ? (candidate.probeData as { evidence?: unknown }).evidence
+        : undefined;
+    if (!evidence || typeof evidence !== 'object') return false;
+    const hostname = (evidence as { hostname?: unknown }).hostname;
+    const port = (evidence as { port?: unknown }).port;
+    if (typeof hostname !== 'string' || !Number.isInteger(port)) return false;
+    try {
+      return normalizeOperationalDiscriminator(`${hostname}:${port}`) === discriminator;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function parseTlsEvidence(probe: PersistedConditionProbe):
+  | {
+      status: 'conclusive';
+      evidence: TlsProbeData['evidence'];
+    }
+  | { status: InconclusiveReason } {
+  if (!probe.success || !probe.probeData || typeof probe.probeData !== 'object') {
+    return { status: 'UNKNOWN' };
+  }
+  const data = probe.probeData as {
+    check?: unknown;
+    status?: unknown;
+    evidence?: Record<string, unknown>;
+  };
+  if (data.check !== 'TLS_CERTIFICATE') return { status: 'MALFORMED' };
+  if (data.status !== 'OBSERVED' || !data.evidence) return { status: 'UNKNOWN' };
+  const evidence = data.evidence;
+  const validTo = typeof evidence.validTo === 'string' ? Date.parse(evidence.validTo) : Number.NaN;
+  if (
+    evidence.kind !== 'TLS_CERTIFICATE' ||
+    typeof evidence.hostname !== 'string' ||
+    evidence.hostname.length === 0 ||
+    !Number.isInteger(evidence.port) ||
+    (evidence.port as number) < 1 ||
+    (evidence.port as number) > 65535 ||
+    typeof evidence.hostnameAuthorized !== 'boolean' ||
+    typeof evidence.chainAuthorized !== 'boolean' ||
+    typeof evidence.validTo !== 'string' ||
+    Number.isNaN(validTo)
+  ) {
+    return { status: 'MALFORMED' };
+  }
+  return {
+    status: 'conclusive',
+    evidence: {
+      kind: 'TLS_CERTIFICATE',
+      hostname: evidence.hostname,
+      port: evidence.port as number,
+      hostnameAuthorized: evidence.hostnameAuthorized,
+      chainAuthorized: evidence.chainAuthorized,
+      validTo: evidence.validTo,
+    },
+  };
 }
 
 function setup(
@@ -340,15 +396,12 @@ export function evaluateOperationalConditions(input: {
   for (const baseline of input.baselines) {
     const discriminator = normalizeOperationalDiscriminator(baseline.discriminator);
     if (baseline.kind === 'TLS_CERTIFICATE_REGRESSION') {
-      const probe = input.probes.find((candidate) => {
-        if (!candidate.success || !isTlsProbeData(candidate.probeData)) return false;
-        return (
-          normalizeOperationalDiscriminator(
-            `${candidate.probeData.evidence.hostname}:${candidate.probeData.evidence.port}`
-          ) === discriminator
-        );
-      });
+      const probe = matchingTlsProbe(input.probes, discriminator);
       if (!probe) {
+        recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+        continue;
+      }
+      if (probe.probedAt.getTime() > input.now.getTime()) {
         recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
         continue;
       }
@@ -356,12 +409,17 @@ export function evaluateOperationalConditions(input: {
         recordInconclusive(result, input, baseline.kind, discriminator, 'STALE');
         continue;
       }
-      const evidence = (probe.probeData as TlsProbeData).evidence;
+      const parsed = parseTlsEvidence(probe);
+      if (parsed.status !== 'conclusive') {
+        recordInconclusive(result, input, baseline.kind, discriminator, parsed.status);
+        continue;
+      }
       const policy = baseline.policy;
       if (policy.kind !== 'TLS_CERTIFICATE') {
         recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
         continue;
       }
+      const evidence = parsed.evidence;
       const insufficientValidity =
         Date.parse(evidence.validTo) - input.now.getTime() <
         policy.minimumRemainingValiditySeconds * 1000;

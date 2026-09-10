@@ -24,6 +24,7 @@ export interface CanonicalConditionOutcome {
     title: string;
     description: string;
     severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+    status?: 'pending' | 'sent' | 'suppressed' | 'acknowledged' | 'resolved';
   };
 }
 
@@ -92,9 +93,40 @@ function presentation(
   }
 }
 
+function needsCanonicalDelivery(outcome: CanonicalConditionOutcome): boolean {
+  const status = outcome.alert.status;
+  if (
+    status === 'sent' ||
+    status === 'suppressed' ||
+    status === 'acknowledged' ||
+    status === 'resolved'
+  ) {
+    return false;
+  }
+  return outcome.created.alert || outcome.reopened.alert || status === 'pending';
+}
+
+type CanonicalAlertSender = (
+  alertId: string,
+  webhookUrl: string,
+  alert: CanonicalConditionOutcome['alert']
+) => Promise<{ success: boolean; error?: string } | undefined>;
+
+async function deliverCanonicalAlert(
+  outcome: CanonicalConditionOutcome,
+  webhookUrl: string | undefined,
+  send: CanonicalAlertSender
+) {
+  if (!webhookUrl || !needsCanonicalDelivery(outcome)) return;
+  const result = await send(outcome.alert.id, webhookUrl, outcome.alert);
+  if (result?.success !== true) {
+    throw new Error(result?.error || 'Canonical alert delivery failed');
+  }
+}
+
 /**
  * The sole canonical notification boundary. Evaluator output never sends directly;
- * only a newly-created or reopened canonical alert is delivered.
+ * created, reopened, or still-pending canonical alerts are delivered.
  */
 export async function finalizePersistedCanonicalConditions(
   db: IDatabaseAdapter,
@@ -163,11 +195,7 @@ export async function finalizeCanonicalConditions(
   dependencies: {
     observer: CanonicalConditionObserver;
     resolver?: CanonicalConditionResolver;
-    send: (
-      alertId: string,
-      webhookUrl: string,
-      alert: CanonicalConditionOutcome['alert']
-    ) => Promise<unknown>;
+    send: CanonicalAlertSender;
   }
 ) {
   const evaluation = evaluateOperationalConditions(input);
@@ -188,9 +216,7 @@ export async function finalizeCanonicalConditions(
           : undefined,
     });
     outcomes.push(outcome);
-    if (input.webhookUrl && (outcome.created.alert || outcome.reopened.alert)) {
-      await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
-    }
+    await deliverCanonicalAlert(outcome, input.webhookUrl, dependencies.send);
   }
   if (dependencies.resolver) {
     const activeConditionKeys = evaluation.observations.map(

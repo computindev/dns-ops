@@ -245,6 +245,83 @@ describe('finalizeCanonicalConditions', () => {
     );
     expect(resolver.resolveCase).not.toHaveBeenCalled();
   });
+
+  it('does not resolve an active TLS case from malformed or future evidence', async () => {
+    const conditionKey = 'tenant-1:domain-1:TLS_CERTIFICATE_REGRESSION:www.example.com:443';
+    const resolver = {
+      listCases: vi.fn().mockResolvedValue([
+        {
+          case: { id: 'case-tls', status: 'OPEN' },
+          signal: { conditionKey },
+        },
+      ]),
+      resolveCase: vi.fn(),
+    };
+    const observer = { observe: vi.fn() };
+    const send = vi.fn();
+    await finalizeCanonicalConditions(tlsMalformedInput(), { observer, resolver, send });
+    await finalizeCanonicalConditions(tlsFutureInput(), { observer, resolver, send });
+    expect(observer.observe).not.toHaveBeenCalled();
+    expect(resolver.resolveCase).not.toHaveBeenCalled();
+  });
+
+  it('retries a pending canonical webhook and fails finalization when send fails', async () => {
+    const pendingAlert = {
+      id: 'alert-1',
+      title: 'Mail DNS configuration regression',
+      description: 'x',
+      severity: 'high' as const,
+      status: 'pending' as const,
+    };
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ success: false, error: 'webhook 500' })
+      .mockResolvedValueOnce({ success: true });
+    const observer = {
+      observe: vi
+        .fn()
+        .mockResolvedValueOnce({
+          created: { alert: true },
+          reopened: { alert: false },
+          alert: pendingAlert,
+        })
+        .mockResolvedValueOnce({
+          created: { alert: false },
+          reopened: { alert: false },
+          alert: pendingAlert,
+        }),
+    };
+    await expect(finalizeCanonicalConditions(input(), { observer, send })).rejects.toThrow(
+      'webhook 500'
+    );
+    await finalizeCanonicalConditions(input(), { observer, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(
+      2,
+      'alert-1',
+      'https://hooks.example.test/alerts',
+      pendingAlert
+    );
+  });
+
+  it('does not resend a canonical alert after it is marked sent', async () => {
+    const send = vi.fn().mockResolvedValue({ success: true });
+    const observer = {
+      observe: vi.fn().mockResolvedValue({
+        created: { alert: false },
+        reopened: { alert: false },
+        alert: {
+          id: 'alert-1',
+          title: 'Mail DNS configuration regression',
+          description: 'x',
+          severity: 'high' as const,
+          status: 'sent' as const,
+        },
+      }),
+    };
+    await finalizeCanonicalConditions(input(), { observer, send });
+    expect(send).not.toHaveBeenCalled();
+  });
 });
 
 const redirectBaseline = {
@@ -330,6 +407,58 @@ function redirectUnknownInput() {
     baselines: [redirectBaseline],
     findings: [],
     probes: [],
+  };
+}
+
+const tlsBaseline = {
+  tenantId: 'tenant-1',
+  domainId: 'domain-1',
+  kind: 'TLS_CERTIFICATE_REGRESSION' as const,
+  discriminator: 'www.example.com:443',
+  maxEvidenceAgeSeconds: 3600,
+  policy: {
+    kind: 'TLS_CERTIFICATE' as const,
+    requireHostnameAuthorized: true,
+    requireChainAuthorized: true,
+    minimumRemainingValiditySeconds: 0,
+  },
+};
+
+function tlsProbe(probedAt: Date, overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    probedAt,
+    probeData: {
+      check: 'TLS_CERTIFICATE' as const,
+      status: 'OBSERVED' as const,
+      evidence: {
+        kind: 'TLS_CERTIFICATE' as const,
+        hostname: 'www.example.com',
+        port: 443,
+        hostnameAuthorized: true,
+        chainAuthorized: true,
+        validTo: '2027-01-01T00:00:00.000Z',
+        ...overrides,
+      },
+    },
+  };
+}
+
+function tlsMalformedInput() {
+  return {
+    ...input(),
+    baselines: [tlsBaseline],
+    findings: [],
+    probes: [tlsProbe(now, { validTo: 'not-a-date' })],
+  };
+}
+
+function tlsFutureInput() {
+  return {
+    ...input(),
+    baselines: [tlsBaseline],
+    findings: [],
+    probes: [tlsProbe(new Date(now.getTime() + 60_000))],
   };
 }
 

@@ -741,4 +741,50 @@ describe('evaluateOperationalConditions', () => {
     expect(indexability.observations).toEqual([]);
     expect(indexability.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
   });
+
+  it('rejects malformed and future TLS evidence instead of treating it as healthy', () => {
+    const future = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [tlsBaseline],
+      probes: [tlsProbe(new Date(now.getTime() + 60_000))],
+      findings: [],
+      now,
+    });
+    const malformedValidTo = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [tlsBaseline],
+      probes: [tlsProbe(now, { validTo: 'not-a-date' })],
+      findings: [],
+      now,
+    });
+    const malformedBoolean = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [tlsBaseline],
+      probes: [tlsProbe(now, { hostnameAuthorized: 'yes' as unknown as boolean })],
+      findings: [],
+      now,
+    });
+    const healthy = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [tlsBaseline],
+      probes: [tlsProbe()],
+      findings: [],
+      now,
+    });
+    expect(future.observations).toEqual([]);
+    expect(future.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
+    expect(malformedValidTo.observations).toEqual([]);
+    expect(malformedValidTo.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(malformedBoolean.observations).toEqual([]);
+    expect(malformedBoolean.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(healthy.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
+  });
 });

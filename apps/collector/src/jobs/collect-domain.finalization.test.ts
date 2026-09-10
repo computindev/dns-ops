@@ -93,4 +93,83 @@ describe('collect-domain canonical finalization', () => {
       code: 'COLLECTION_ERROR',
     });
   });
+
+  it('retries finalization on a recent snapshot and still dedups collection', async () => {
+    const collect = vi.fn();
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepository).mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'domain-1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(SnapshotRepository).mockImplementation(function () {
+      return {
+        findRecentByDomain: async () => ({
+          id: 'snap-recent',
+          createdAt: new Date(),
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DNSCollector).mockImplementation(function () {
+      return { collect };
+    } as never);
+
+    const response = await app().request('/api/collect/domain', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ domain: 'example.com' }),
+    });
+
+    expect(collect).not.toHaveBeenCalled();
+    expect(finalizePersistedCanonicalConditions).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ snapshotId: 'snap-recent', domainId: 'domain-1' })
+    );
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      reason: 'recent_collection_exists',
+      snapshotId: 'snap-recent',
+    });
+  });
+
+  it('returns 500 when recent-snapshot finalization retry fails', async () => {
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepository).mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'domain-1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(SnapshotRepository).mockImplementation(function () {
+      return {
+        findRecentByDomain: async () => ({
+          id: 'snap-recent',
+          createdAt: new Date(),
+        }),
+      };
+    } as never);
+    vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
+      new Error('canonical finalization failed')
+    );
+
+    const response = await app().request('/api/collect/domain', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ domain: 'example.com' }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Collection failed',
+      code: 'COLLECTION_ERROR',
+    });
+  });
 });
