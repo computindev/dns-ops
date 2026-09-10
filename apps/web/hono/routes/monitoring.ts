@@ -31,6 +31,14 @@ async function findTenantMonitoredDomain(
   );
 }
 
+function ownedDomainName(
+  domain: { name: string; tenantId: string | null } | undefined,
+  tenantId: string
+): string {
+  if (!domain || domain.tenantId !== tenantId) return 'Unknown';
+  return domain.name;
+}
+
 function isUniqueConstraintError(error: unknown, constraintName: string): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -61,7 +69,7 @@ monitoringRoutes.get('/domains', async (c) => {
       const domain = await domainRepo.findById(md.domainId);
       return {
         ...md,
-        domainName: domain?.name || 'Unknown',
+        domainName: ownedDomainName(domain, tenantId),
       };
     })
   );
@@ -90,7 +98,7 @@ monitoringRoutes.get('/domains/:id', async (c) => {
   return c.json({
     monitoredDomain: {
       ...monitoredDomain,
-      domainName: domain?.name || 'Unknown',
+      domainName: ownedDomainName(domain, tenantId),
     },
   });
 });

@@ -66,7 +66,11 @@ import { DomainRepository } from '@dns-ops/db';
 import type { Job } from 'bullmq';
 import { DNSCollector } from '../dns/collector.js';
 import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
-import type { CollectDomainJobData, MonitoringRefreshJobData } from './queue.js';
+import {
+  type CollectDomainJobData,
+  getCollectionQueue,
+  type MonitoringRefreshJobData,
+} from './queue.js';
 import {
   classifyWorkerFailure,
   processCollectDomain,
@@ -252,6 +256,49 @@ describe('Issue #68: terminal validation outcomes do not retry', () => {
     const result = await processMonitoringRefresh(job);
     expect(result.success).toBe(true);
     expect(result.queued).toBe(0);
+  });
+
+  it('skips scheduled refresh when monitored tenant does not match domain tenant', async () => {
+    const add = vi.fn();
+    vi.mocked(getCollectionQueue).mockReturnValueOnce({ add } as never);
+    const { MonitoredDomainRepository, DomainRepository: DomainRepo } = await import('@dns-ops/db');
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return {
+        findActiveBySchedule: async () => [
+          {
+            id: 'm1',
+            tenantId: 'tenant-a',
+            domainId: 'd1',
+            isActive: true,
+            lastCheckAt: null,
+          },
+        ],
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepo).mockImplementation(function () {
+      return {
+        findById: async () => ({
+          id: 'd1',
+          tenantId: 'tenant-b',
+          name: 'secret.example',
+          normalizedName: 'secret.example',
+        }),
+      };
+    } as never);
+
+    const job = createMockJob<MonitoringRefreshJobData>('job-scheduled-mismatch', {
+      monitoredDomainId: 'scheduled',
+      domainId: 'scheduled',
+      domainName: 'scheduled',
+      schedule: 'daily',
+      tenantId: 'system',
+    });
+    const queued = await processMonitoringRefresh(job);
+    expect(queued.success).toBe(true);
+    expect(queued.queued).toBe(0);
+    expect(add).not.toHaveBeenCalled();
   });
 });
 

@@ -742,6 +742,22 @@ describe('evaluateOperationalConditions', () => {
     expect(indexability.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
   });
 
+  it('classifies non-2xx homepage indexability as unknown, not healthy', () => {
+    for (const responseStatus of [301, 404, 500]) {
+      const result = evaluateOperationalConditions({
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        snapshotComplete: true,
+        baselines: [indexabilityBaseline],
+        probes: [indexabilityProbe(now, { responseStatus })],
+        findings: [],
+        now,
+      });
+      expect(result.observations).toEqual([]);
+      expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
+    }
+  });
+
   it('rejects malformed and future TLS evidence instead of treating it as healthy', () => {
     const future = evaluateOperationalConditions({
       tenantId: 'tenant-1',

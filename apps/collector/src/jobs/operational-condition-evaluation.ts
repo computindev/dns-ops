@@ -378,6 +378,10 @@ function parseIndexabilityEvidence(
   ) {
     return { status: 'MALFORMED' };
   }
+  const responseStatus = evidence.responseStatus as number;
+  if (responseStatus < 200 || responseStatus > 299) {
+    return { status: 'UNKNOWN' };
+  }
   const noindex = hasNoindex(evidence.xRobotsTags) || hasNoindex(evidence.metaRobots);
   if (evidence.bodyTruncated && !noindex) return { status: 'TRUNCATED' };
   return { status: 'conclusive', requestedUrl, noindex };

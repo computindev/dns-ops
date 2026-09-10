@@ -91,13 +91,10 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
 
       // Look up domain name
       const domain = await domainRepo.findById(monitored.domainId);
-      if (!domain) {
-        monitoringLogger.error(`Domain not found for monitored domain: ${monitored.domainId}`);
-        continue;
-      }
-
-      if (!monitored.tenantId || domain.tenantId !== monitored.tenantId) {
-        monitoringLogger.error(`Monitored domain tenant ownership mismatch: ${monitored.id}`);
+      if (!domain || domain.tenantId !== monitored.tenantId) {
+        monitoringLogger.error(
+          `Skipping monitored domain with missing or mismatched tenant ownership: ${monitored.id}`
+        );
         continue;
       }
       const internalSecret = process.env.INTERNAL_SECRET;

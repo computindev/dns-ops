@@ -345,8 +345,8 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
         // Look up domain details
         const domain = await domainRepo.findById(monitored.domainId);
-        if (!domain) {
-          logger.warn('Domain not found for monitored domain', {
+        if (!domain || domain.tenantId !== monitored.tenantId) {
+          logger.warn('Skipping monitored domain with missing or mismatched tenant ownership', {
             monitoredDomainId: monitored.id,
             domainId: monitored.domainId,
           });

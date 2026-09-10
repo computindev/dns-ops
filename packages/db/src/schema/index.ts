@@ -755,6 +755,11 @@ export const monitoredDomains = pgTable(
     tenantIdx: index('monitored_domain_tenant_idx').on(table.tenantId),
     activeIdx: index('monitored_domain_active_idx').on(table.isActive),
     scheduleIdx: index('monitored_domain_schedule_idx').on(table.schedule),
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'monitored_domain_domain_tenant_fk',
+    }).onDelete('cascade'),
   })
 );
 

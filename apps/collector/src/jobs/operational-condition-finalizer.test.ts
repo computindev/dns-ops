@@ -265,6 +265,33 @@ describe('finalizeCanonicalConditions', () => {
     expect(resolver.resolveCase).not.toHaveBeenCalled();
   });
 
+  it('does not resolve an active indexability case from 404 or 500 evidence', async () => {
+    const conditionKey = 'tenant-1:domain-1:HOMEPAGE_INDEXABILITY_REGRESSION:https://example.com/';
+    const resolver = {
+      listCases: vi.fn().mockResolvedValue([
+        {
+          case: { id: 'case-index', status: 'OPEN' },
+          signal: { conditionKey },
+        },
+      ]),
+      resolveCase: vi.fn(),
+    };
+    const observer = { observe: vi.fn() };
+    const send = vi.fn();
+    await finalizeCanonicalConditions(indexabilityStatusInput(404), {
+      observer,
+      resolver,
+      send,
+    });
+    await finalizeCanonicalConditions(indexabilityStatusInput(500), {
+      observer,
+      resolver,
+      send,
+    });
+    expect(observer.observe).not.toHaveBeenCalled();
+    expect(resolver.resolveCase).not.toHaveBeenCalled();
+  });
+
   it('retries a pending canonical webhook and fails finalization when send fails', async () => {
     const pendingAlert = {
       id: 'alert-1',
@@ -570,6 +597,34 @@ function tlsFutureInput() {
     baselines: [tlsBaseline],
     findings: [],
     probes: [tlsProbe(new Date(now.getTime() + 60_000))],
+  };
+}
+
+function indexabilityStatusInput(responseStatus: number) {
+  return {
+    ...input(),
+    baselines: [indexabilityBaseline],
+    findings: [],
+    probes: [
+      {
+        success: true,
+        probedAt: now,
+        probeData: {
+          check: 'HOMEPAGE_INDEXABILITY' as const,
+          status: 'OBSERVED' as const,
+          evidence: {
+            kind: 'HOMEPAGE_INDEXABILITY' as const,
+            requestedUrl: 'https://example.com/',
+            finalUrl: 'https://example.com/',
+            responseStatus,
+            xRobotsTags: [] as string[],
+            metaRobots: [] as string[],
+            bodyBytesInspected: 2048,
+            bodyTruncated: false,
+          },
+        },
+      },
+    ],
   };
 }
 
