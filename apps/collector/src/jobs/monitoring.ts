@@ -261,7 +261,10 @@ monitoringRoutes.post('/alerts/:alertId/resolve', internalOnlyMiddleware, async 
       return c.json({ error: 'Alert not found' }, 404);
     }
     return c.json({ alert: toPublicAlert(alert) });
-  } catch (_error) {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('fresh conclusive evidence')) {
+      return c.json({ error: error.message }, 409);
+    }
     return c.json({ error: 'Failed to resolve alert' }, 500);
   }
 });

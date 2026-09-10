@@ -1,4 +1,6 @@
 import {
+  collectedIndexabilityUrl,
+  collectedRedirectStartUrls,
   type InternalSignalKind,
   normalizeOperationalDiscriminator,
   parseSupportedOperationalBaseline,
@@ -115,6 +117,23 @@ export class OperationalBaselineRepository {
       const snapshot = await tx.selectOne(snapshots, eq(snapshots.id, input.sourceSnapshotId));
       if (!domain || domain.tenantId !== input.tenantId || snapshot?.domainId !== input.domainId) {
         throw new Error('Baseline source snapshot is outside the tenant domain');
+      }
+      const hostname =
+        typeof domain.normalizedName === 'string' ? domain.normalizedName : domain.name;
+      if (typeof hostname !== 'string' || !hostname) {
+        throw new Error('Baseline domain hostname is unavailable');
+      }
+      if (
+        parsed.signalKind === 'REDIRECT_TOPOLOGY_REGRESSION' &&
+        !collectedRedirectStartUrls(hostname).includes(parsed.policy.startUrl)
+      ) {
+        throw new Error('Redirect start URL must be a collected http(s) origin root');
+      }
+      if (
+        parsed.signalKind === 'HOMEPAGE_INDEXABILITY_REGRESSION' &&
+        parsed.policy.requestedUrl !== collectedIndexabilityUrl(hostname)
+      ) {
+        throw new Error('Homepage indexability URL must be the HTTPS apex root');
       }
       if (snapshot.resultState !== 'complete') {
         throw new Error('Baseline source snapshot must be complete');

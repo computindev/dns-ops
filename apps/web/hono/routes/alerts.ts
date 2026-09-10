@@ -447,7 +447,11 @@ alertRoutes.post('/:id/resolve', requireWritePermission, async (c) => {
 
     return c.json({ alert: toPublicAlert(alert) });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Invalid alert transition')) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('Invalid alert transition') ||
+        error.message.includes('fresh conclusive evidence'))
+    ) {
       return c.json({ error: error.message }, 409);
     }
     throw error;

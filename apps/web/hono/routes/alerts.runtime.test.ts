@@ -652,6 +652,37 @@ describe('alertRoutes mutations', () => {
     expect(state.alerts[1]?.status).toBe('pending');
   });
 
+  it('rejects generic resolve of a signal-linked canonical alert', async () => {
+    const state: MockState = {
+      alerts: [
+        {
+          id: 'alert-canonical',
+          monitoredDomainId: 'mon-1',
+          tenantId: 'tenant-1',
+          title: 'Redirect regression',
+          description: 'Needs evidence',
+          severity: 'high',
+          status: 'pending',
+          signalId: 'signal-1',
+          createdAt: new Date(),
+        },
+      ],
+      monitoredDomains: [{ id: 'mon-1', tenantId: 'tenant-1' }],
+      sharedReports: [],
+      auditEvents: [],
+    };
+    const app = createApp(state);
+    const response = await app.request('/api/alerts/alert-canonical/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolutionNote: 'Looks fixed' }),
+    });
+    expect(response.status).toBe(409);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toContain('fresh conclusive evidence');
+    expect(state.alerts[0]?.status).toBe('pending');
+  });
+
   it('audits alert suppression', async () => {
     const state: MockState = {
       alerts: [

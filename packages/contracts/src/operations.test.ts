@@ -152,6 +152,28 @@ describe('parseSupportedOperationalBaseline', () => {
         policy: { kind: 'SPF_PRESENT' },
       })
     ).toThrow('Invalid SPF baseline policy');
+    expect(() =>
+      parseSupportedOperationalBaseline({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://www.example.com/path',
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://www.example.com/path',
+          expectedFinalUrl: 'https://example.com/',
+        },
+      })
+    ).toThrow('collected http(s) origin root');
+    expect(() =>
+      parseSupportedOperationalBaseline({
+        signalKind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        discriminator: 'https://www.example.com/',
+        policy: {
+          kind: 'HOMEPAGE_INDEXABILITY',
+          requestedUrl: 'https://www.example.com/',
+          requireIndexable: true,
+        },
+      })
+    ).toThrow('HTTPS apex root');
   });
 
   it('rejects credentialed, non-http, and IP literal policy URLs', () => {

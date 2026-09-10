@@ -133,6 +133,38 @@ export function operationalHttpDiscriminator(url: string): string {
   return normalizeOperationalDiscriminator(normalizeOperationalHttpUrl(url));
 }
 
+function isHttpOriginRoot(url: string): boolean {
+  const parsed = new URL(url);
+  return parsed.pathname === '/' && parsed.search === '';
+}
+
+export function collectedRedirectStartUrls(hostname: string): string[] {
+  const host = hostname.replace(/\.$/, '').toLowerCase();
+  return [`http://${host}/`, `https://${host}/`, `http://www.${host}/`, `https://www.${host}/`];
+}
+
+export function collectedIndexabilityUrl(hostname: string): string {
+  return `https://${hostname.replace(/\.$/, '').toLowerCase()}/`;
+}
+
+function assertCollectedRedirectStart(url: string): void {
+  const parsed = new URL(url);
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isHttpOriginRoot(url)) {
+    throw new Error('Redirect start URL must be a collected http(s) origin root');
+  }
+}
+
+function assertCollectedIndexabilityTarget(url: string): void {
+  const parsed = new URL(url);
+  if (
+    parsed.protocol !== 'https:' ||
+    !isHttpOriginRoot(url) ||
+    parsed.hostname.startsWith('www.')
+  ) {
+    throw new Error('Homepage indexability URL must be the HTTPS apex root');
+  }
+}
+
 function requireMatchingHttpDiscriminator(
   discriminator: string,
   url: string,
@@ -213,6 +245,7 @@ export function parseSupportedOperationalBaseline(input: {
     }
     const startUrl = normalizeOperationalHttpUrl(policy.startUrl);
     const expectedFinalUrl = normalizeOperationalHttpUrl(policy.expectedFinalUrl);
+    assertCollectedRedirectStart(startUrl);
     return {
       signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
       discriminator: requireMatchingHttpDiscriminator(
@@ -232,6 +265,7 @@ export function parseSupportedOperationalBaseline(input: {
       throw new Error('Invalid homepage indexability baseline policy');
     }
     const requestedUrl = normalizeOperationalHttpUrl(policy.requestedUrl);
+    assertCollectedIndexabilityTarget(requestedUrl);
     return {
       signalKind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
       discriminator: requireMatchingHttpDiscriminator(

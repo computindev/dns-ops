@@ -542,6 +542,9 @@ export class AlertRepository {
     if (status === 'sent') {
       throw new Error('Use completeNotificationClaim for pending to sent');
     }
+    if (status === 'resolved' && existing.signalId) {
+      throw new Error('Canonical alert cannot be resolved without fresh conclusive evidence');
+    }
 
     const update: Partial<NewAlert> = {
       status,

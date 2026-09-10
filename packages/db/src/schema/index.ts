@@ -1012,6 +1012,10 @@ export const alerts = pgTable(
     monitoredIdx: index('alert_monitored_idx').on(table.monitoredDomainId),
     statusIdx: index('alert_status_idx').on(table.status),
     tenantIdx: index('alert_tenant_idx').on(table.tenantId),
+    notificationClaimIdx: index('alert_notification_claim_idx').on(
+      table.status,
+      table.notificationClaimedUntil
+    ),
     dedupIdx: index('alert_dedup_idx').on(table.dedupKey),
     signalUnique: uniqueIndex('alert_signal_unique').on(table.signalId),
     createdIdx: index('alert_created_idx').on(table.createdAt),

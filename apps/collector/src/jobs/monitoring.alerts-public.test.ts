@@ -101,4 +101,18 @@ describe('monitoring alert responses omit claim fields', () => {
     const json = (await response.json()) as { alert: Record<string, unknown> };
     expectNoClaimFields(json.alert);
   });
+
+  it('rejects generic resolve of a signal-linked canonical alert', async () => {
+    alertRepo.resolve.mockRejectedValueOnce(
+      new Error('Canonical alert cannot be resolved without fresh conclusive evidence')
+    );
+    const response = await app.request('/api/monitoring/alerts/alert-1/resolve', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ resolutionNote: 'Looks fixed' }),
+    });
+    expect(response.status).toBe(409);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toContain('fresh conclusive evidence');
+  });
 });
