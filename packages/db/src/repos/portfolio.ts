@@ -305,12 +305,17 @@ export class MonitoredDomainRepository {
     schedule: 'hourly' | 'daily' | 'weekly',
     tenantId?: string
   ): Promise<MonitoredDomain[]> {
-    const results = await this.db.select(monitoredDomains);
-    return results.filter((r) => {
-      if (r.schedule !== schedule || !r.isActive) return false;
-      if (tenantId && r.tenantId !== tenantId) return false;
-      return true;
-    });
+    const active = and(
+      eq(monitoredDomains.schedule, schedule),
+      eq(monitoredDomains.isActive, true)
+    );
+    if (!active) return [];
+    const predicate = tenantId ? and(active, eq(monitoredDomains.tenantId, tenantId)) : active;
+    if (!predicate) return [];
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<MonitoredDomain | undefined> {
@@ -345,12 +350,12 @@ export class MonitoredDomainRepository {
     return this.db.updateOne(monitoredDomains, { ...data, updatedAt: new Date() }, predicate);
   }
 
-  async updateLastCheck(id: string): Promise<void> {
-    await this.db.updateOne(
-      monitoredDomains,
-      { lastCheckAt: new Date() },
-      eq(monitoredDomains.id, id)
-    );
+  async updateLastCheck(id: string, tenantId?: string): Promise<void> {
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.id, id);
+    if (!predicate) return;
+    await this.db.updateOne(monitoredDomains, { lastCheckAt: new Date() }, predicate);
   }
 
   async delete(id: string, tenantId?: string): Promise<void> {

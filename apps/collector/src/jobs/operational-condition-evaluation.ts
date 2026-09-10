@@ -91,9 +91,9 @@ function matchingTlsProbe(
     if (!evidence || typeof evidence !== 'object') return false;
     const hostname = (evidence as { hostname?: unknown }).hostname;
     const port = (evidence as { port?: unknown }).port;
-    if (typeof hostname !== 'string' || !Number.isInteger(port)) return false;
+    if (typeof hostname !== 'string' || hostname.length === 0) return false;
     try {
-      return normalizeOperationalDiscriminator(`${hostname}:${port}`) === discriminator;
+      return normalizeOperationalDiscriminator(`${hostname}:${String(port)}`) === discriminator;
     } catch {
       return false;
     }

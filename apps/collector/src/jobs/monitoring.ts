@@ -166,7 +166,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         }
       }
 
-      await monitoredRepo.updateLastCheck(monitored.id);
+      await monitoredRepo.updateLastCheck(monitored.id, monitored.tenantId);
       results.push({ domainId: monitored.domainId, checked: true });
     }
 

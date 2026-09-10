@@ -823,8 +823,45 @@ describe('Monitoring Routes: Null TenantId Handling', () => {
         if (name === 'alerts') return Promise.resolve([...alerts, ...createdAlerts]);
         return Promise.resolve([]);
       },
-      selectWhere: (_table: unknown, _condition: unknown) => {
-        if (monitoredDomains.length > 0) return Promise.resolve(monitoredDomains);
+      selectWhere: (_table: unknown, condition: unknown) => {
+        const params: unknown[] = [];
+        const walk = (node: unknown) => {
+          if (node == null) return;
+          if (typeof node === 'string' || typeof node === 'boolean' || typeof node === 'number') {
+            params.push(node);
+            return;
+          }
+          if (typeof node !== 'object') return;
+          const candidate = node as { value?: unknown; queryChunks?: unknown[] };
+          if (
+            candidate.value !== undefined &&
+            (typeof candidate.value === 'string' ||
+              typeof candidate.value === 'boolean' ||
+              typeof candidate.value === 'number')
+          ) {
+            params.push(candidate.value);
+          }
+          if (Array.isArray(candidate.value)) candidate.value.forEach(walk);
+          for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+        };
+        walk(condition);
+        if (monitoredDomains.length > 0) {
+          return Promise.resolve(
+            monitoredDomains.filter((row) => {
+              const extras = params.filter(
+                (value) =>
+                  value !== row.domainId &&
+                  value !== row.id &&
+                  value !== row.schedule &&
+                  value !== true &&
+                  value !== false
+              );
+              if (extras.length > 0 && !extras.includes(row.tenantId)) return false;
+              if (params.includes(row.schedule)) return !params.includes(true) || row.isActive;
+              return extras.includes(row.tenantId) || extras.length === 0;
+            })
+          );
+        }
         if (alerts.length > 0) return Promise.resolve(alerts);
         return Promise.resolve([]);
       },

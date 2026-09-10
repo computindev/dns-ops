@@ -121,10 +121,48 @@ function createMockDb(
       return Promise.resolve([]);
     },
 
-    selectWhere: (table: unknown, _condition: unknown) => {
+    selectWhere: (table: unknown, condition: unknown) => {
       const name = getTableName(table);
+      const params: unknown[] = [];
+      const walk = (node: unknown) => {
+        if (node == null) return;
+        if (typeof node === 'string' || typeof node === 'boolean' || typeof node === 'number') {
+          params.push(node);
+          return;
+        }
+        if (typeof node !== 'object') return;
+        const candidate = node as { value?: unknown; queryChunks?: unknown[] };
+        if (
+          candidate.value !== undefined &&
+          (typeof candidate.value === 'string' ||
+            typeof candidate.value === 'boolean' ||
+            typeof candidate.value === 'number')
+        ) {
+          params.push(candidate.value);
+        }
+        if (Array.isArray(candidate.value)) candidate.value.forEach(walk);
+        for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+      };
+      walk(condition);
       if (tableMatches(name)) {
-        if (name.includes('monitored')) return Promise.resolve(monitoredDomains);
+        if (name.includes('monitored')) {
+          return Promise.resolve(
+            monitoredDomains.filter((row) => {
+              const extras = params.filter(
+                (value) =>
+                  value !== row.domainId &&
+                  value !== row.id &&
+                  value !== row.schedule &&
+                  value !== true &&
+                  value !== false
+              );
+              if (extras.length > 0 && !extras.includes(row.tenantId)) return false;
+              if (params.includes(row.domainId) || params.includes(row.id)) return true;
+              if (params.includes(row.schedule)) return !params.includes(true) || row.isActive;
+              return extras.includes(row.tenantId) || extras.length === 0;
+            })
+          );
+        }
         if (name.includes('alert')) return Promise.resolve(alerts);
         if (name.includes('domain')) return Promise.resolve(domains);
       }

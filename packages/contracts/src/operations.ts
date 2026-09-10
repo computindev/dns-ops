@@ -83,10 +83,14 @@ export interface OperationalConditionBaseline {
 export function normalizeOperationalDiscriminator(discriminator: string): string {
   const normalized = discriminator.trim().toLowerCase();
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
-    return normalizeOperationalHttpUrl(normalized);
+    const url = normalizeOperationalHttpUrl(normalized);
+    if (url.length > 512) {
+      throw new Error('Signal discriminator must contain 1-512 characters');
+    }
+    return url;
   }
-  if (!normalized || normalized.length > 64) {
-    throw new Error('Signal discriminator must contain 1-64 characters');
+  if (!normalized || normalized.length > 512) {
+    throw new Error('Signal discriminator must contain 1-512 characters');
   }
   return normalized;
 }
@@ -199,7 +203,7 @@ export function parseSupportedOperationalBaseline(input: {
   discriminator: unknown;
 }): ParsedOperationalBaseline {
   if (typeof input.discriminator !== 'string') {
-    throw new Error('Signal discriminator must contain 1-64 characters');
+    throw new Error('Signal discriminator must contain 1-512 characters');
   }
   if (!isRecord(input.policy) || typeof input.policy.kind !== 'string') {
     throw new Error('Unsupported baseline policy');

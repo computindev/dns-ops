@@ -799,7 +799,7 @@ export const operationalConditionBaselines = pgTable(
     tenantId: uuid('tenant_id').notNull(),
     domainId: uuid('domain_id').notNull(),
     kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
-    discriminator: varchar('discriminator', { length: 64 }).notNull(),
+    discriminator: varchar('discriminator', { length: 512 }).notNull(),
     sourceSnapshotId: uuid('source_snapshot_id')
       .notNull()
       .references(() => snapshots.id),
@@ -869,7 +869,7 @@ export const internalSignals = pgTable(
       .notNull()
       .references(() => domains.id, { onDelete: 'cascade' }),
     kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
-    conditionKey: varchar('condition_key', { length: 500 }).notNull(),
+    conditionKey: varchar('condition_key', { length: 1024 }).notNull(),
     status: internalSignalStatusEnum('status').notNull().default('ACTIVE'),
     firstSeenSnapshotId: uuid('first_seen_snapshot_id').references(() => snapshots.id),
     lastSeenSnapshotId: uuid('last_seen_snapshot_id').references(() => snapshots.id),

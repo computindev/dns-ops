@@ -16,10 +16,13 @@ describe('internalConditionKey', () => {
   it('rejects empty and oversized discriminators', () => {
     expect(() =>
       internalConditionKey('tenant', 'domain', 'HTTP_ENDPOINT_UNAVAILABLE', ' ')
-    ).toThrow('1-64');
-    expect(() =>
+    ).toThrow('1-512');
+    expect(
       internalConditionKey('tenant', 'domain', 'HTTP_ENDPOINT_UNAVAILABLE', 'x'.repeat(65))
-    ).toThrow('1-64');
+    ).toBe(`tenant:domain:HTTP_ENDPOINT_UNAVAILABLE:${'x'.repeat(65)}`);
+    expect(() =>
+      internalConditionKey('tenant', 'domain', 'HTTP_ENDPOINT_UNAVAILABLE', 'x'.repeat(513))
+    ).toThrow('1-512');
   });
 });
 

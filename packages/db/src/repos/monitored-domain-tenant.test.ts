@@ -59,4 +59,55 @@ describe('MonitoredDomainRepository tenant predicates', () => {
     await repo.delete('mon-b', 'tenant-b');
     expect(rows.some((row) => row.id === 'mon-b')).toBe(false);
   });
+
+  it('includes tenantId in findActiveBySchedule and updateLastCheck SQL', async () => {
+    const rows = [
+      {
+        id: 'mon-a',
+        domainId: 'dom-1',
+        tenantId: 'tenant-a',
+        schedule: 'daily',
+        isActive: true,
+        createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      },
+      {
+        id: 'mon-b',
+        domainId: 'dom-2',
+        tenantId: 'tenant-b',
+        schedule: 'daily',
+        isActive: true,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ];
+    const selectWhere = vi.fn(async (_table: unknown, condition: unknown) => {
+      const params = conditionValues(condition);
+      return rows.filter(
+        (row) =>
+          params.includes(row.schedule) && params.includes(true) && params.includes(row.tenantId)
+      );
+    });
+    const updateOne = vi.fn(async (_table: unknown, _values: unknown, condition: unknown) => {
+      const params = conditionValues(condition);
+      return rows.find((row) => params.includes(row.id) && params.includes(row.tenantId));
+    });
+    const db = { selectWhere, updateOne } as unknown as IDatabaseAdapter;
+    const repo = new MonitoredDomainRepository(db);
+
+    await expect(repo.findActiveBySchedule('daily', 'tenant-a')).resolves.toMatchObject([
+      { id: 'mon-a', tenantId: 'tenant-a' },
+    ]);
+    expect(conditionValues(selectWhere.mock.calls[0]?.[1])).toEqual(
+      expect.arrayContaining(['daily', true, 'tenant-a'])
+    );
+
+    await repo.updateLastCheck('mon-a', 'tenant-a');
+    expect(conditionValues(updateOne.mock.calls[0]?.[2])).toEqual(
+      expect.arrayContaining(['mon-a', 'tenant-a'])
+    );
+    await repo.updateLastCheck('mon-b', 'tenant-a');
+    expect(updateOne.mock.calls[1]?.[2]).toBeDefined();
+    expect(conditionValues(updateOne.mock.calls[1]?.[2])).toEqual(
+      expect.arrayContaining(['mon-b', 'tenant-a'])
+    );
+  });
 });

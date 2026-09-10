@@ -786,6 +786,15 @@ describe('evaluateOperationalConditions', () => {
       findings: [],
       now,
     });
+    const malformedPort = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [tlsBaseline],
+      probes: [tlsProbe(now, { port: '443' as unknown as number })],
+      findings: [],
+      now,
+    });
     const healthy = evaluateOperationalConditions({
       tenantId: 'tenant-1',
       domainId: 'domain-1',
@@ -801,6 +810,8 @@ describe('evaluateOperationalConditions', () => {
     expect(malformedValidTo.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
     expect(malformedBoolean.observations).toEqual([]);
     expect(malformedBoolean.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(malformedPort.observations).toEqual([]);
+    expect(malformedPort.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
     expect(healthy.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
   });
 
