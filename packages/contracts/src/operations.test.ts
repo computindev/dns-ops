@@ -160,6 +160,8 @@ describe('parseSupportedOperationalBaseline', () => {
       'credentials'
     );
     expect(() => normalizeOperationalHttpUrl('https://127.0.0.1/')).toThrow('registered hostname');
+    expect(() => normalizeOperationalHttpUrl('https://localhost/')).toThrow('registered hostname');
+    expect(() => normalizeOperationalHttpUrl('https://intranet/')).toThrow('registered hostname');
     expect(() => operationalHttpDiscriminator(`https://example.com/${'x'.repeat(80)}`)).toThrow(
       '1-64'
     );

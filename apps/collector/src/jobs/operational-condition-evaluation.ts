@@ -262,7 +262,9 @@ function parseRedirectEvidence(
   if (!first || !last || first.url !== startUrl || last.url !== finalUrl) {
     return { status: 'MALFORMED' };
   }
-  if (!redirectChainIsLinked(chain)) return { status: 'MALFORMED' };
+  if (isRedirectStatus(last.status) || !redirectChainIsLinked(chain)) {
+    return { status: 'MALFORMED' };
+  }
   return { status: 'conclusive', startUrl, finalUrl };
 }
 
@@ -282,11 +284,17 @@ function parseIndexabilityEvidence(
   if (data.check !== 'HOMEPAGE_INDEXABILITY') return { status: 'MALFORMED' };
   if (data.status !== 'OBSERVED' || !data.evidence) return { status: 'UNKNOWN' };
   const evidence = data.evidence;
+  const requestedUrl = canonicalHttpUrl(evidence.requestedUrl);
+  const finalUrl = canonicalHttpUrl(evidence.finalUrl);
   if (
     evidence.kind !== 'HOMEPAGE_INDEXABILITY' ||
-    typeof evidence.requestedUrl !== 'string' ||
-    typeof evidence.finalUrl !== 'string' ||
-    typeof evidence.responseStatus !== 'number' ||
+    !requestedUrl ||
+    !finalUrl ||
+    !Number.isInteger(evidence.responseStatus) ||
+    (evidence.responseStatus as number) < 100 ||
+    (evidence.responseStatus as number) > 599 ||
+    !Number.isInteger(evidence.bodyBytesInspected) ||
+    (evidence.bodyBytesInspected as number) < 0 ||
     typeof evidence.bodyTruncated !== 'boolean' ||
     !isStringArray(evidence.xRobotsTags) ||
     !isStringArray(evidence.metaRobots)
@@ -295,15 +303,7 @@ function parseIndexabilityEvidence(
   }
   const noindex = hasNoindex(evidence.xRobotsTags) || hasNoindex(evidence.metaRobots);
   if (evidence.bodyTruncated && !noindex) return { status: 'TRUNCATED' };
-  try {
-    return {
-      status: 'conclusive',
-      requestedUrl: operationalHttpDiscriminator(evidence.requestedUrl),
-      noindex,
-    };
-  } catch {
-    return { status: 'MALFORMED' };
-  }
+  return { status: 'conclusive', requestedUrl, noindex };
 }
 
 function recordInconclusive(

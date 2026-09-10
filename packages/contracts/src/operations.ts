@@ -111,9 +111,20 @@ export function normalizeOperationalHttpUrl(value: string): string {
   if (parsed.username || parsed.password) {
     throw new Error('Operational HTTP URL must not include credentials');
   }
-  if (!parsed.hostname || hostnameLooksLikeIp(parsed.hostname)) {
+  const hostname = parsed.hostname.replace(/\.$/, '').toLowerCase();
+  if (
+    !hostname ||
+    hostname.length > 253 ||
+    hostname.includes('/') ||
+    hostname.includes(':') ||
+    hostname.includes('[') ||
+    hostname.includes(']') ||
+    !hostname.includes('.') ||
+    hostnameLooksLikeIp(hostname)
+  ) {
     throw new Error('Operational HTTP URL requires a registered hostname');
   }
+  parsed.hostname = hostname;
   parsed.hash = '';
   return parsed.href;
 }

@@ -652,6 +652,70 @@ describe('evaluateOperationalConditions', () => {
     expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
   });
 
+  it('rejects a terminal 3xx hop as malformed, not conclusive', () => {
+    const result = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: [
+            hop('https://www.example.com/', 301, now, 'https://example.com/'),
+            hop('https://example.com/', 302, now, 'https://www.example.com/'),
+          ],
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(result.observations).toEqual([]);
+    expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('rejects malformed indexability status, byte count, and final URL', () => {
+    const badStatus = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [indexabilityBaseline],
+      probes: [indexabilityProbe(now, { responseStatus: 200.5, xRobotsTags: ['noindex'] })],
+      findings: [],
+      now,
+    });
+    const outOfRange = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [indexabilityBaseline],
+      probes: [indexabilityProbe(now, { responseStatus: 99, xRobotsTags: ['noindex'] })],
+      findings: [],
+      now,
+    });
+    const negativeBytes = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [indexabilityBaseline],
+      probes: [indexabilityProbe(now, { bodyBytesInspected: -1, xRobotsTags: ['noindex'] })],
+      findings: [],
+      now,
+    });
+    const badFinalUrl = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [indexabilityBaseline],
+      probes: [indexabilityProbe(now, { finalUrl: 'not-a-url', xRobotsTags: ['noindex'] })],
+      findings: [],
+      now,
+    });
+    for (const result of [badStatus, outOfRange, negativeBytes, badFinalUrl]) {
+      expect(result.observations).toEqual([]);
+      expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    }
+  });
+
   it('rejects future-dated HTTP evidence instead of treating it as current', () => {
     const future = new Date(now.getTime() + 60_000);
     const redirect = evaluateOperationalConditions({
