@@ -42,6 +42,22 @@ export interface CanonicalConditionObserver {
   }): Promise<CanonicalConditionOutcome>;
 }
 
+export interface CanonicalConditionResolver {
+  listCases(
+    tenantId: string,
+    domainId?: string
+  ): Promise<Array<{ case: { id: string; status: string }; signal: { conditionKey: string } }>>;
+  resolveCase(
+    caseId: string,
+    tenantId: string,
+    verificationSnapshotId: string,
+    evidence: {
+      activeConditionKeys: string[];
+      evaluatedConditionKeys: Array<{ conditionKey: string; outcome: string }>;
+    }
+  ): Promise<unknown>;
+}
+
 function presentation(
   kind: InternalSignalKind
 ): Pick<CanonicalConditionOutcome['alert'], 'title' | 'description' | 'severity'> {
@@ -56,6 +72,19 @@ function presentation(
       return {
         title: 'Mail DNS configuration regression',
         description: 'A baseline-required SPF record is missing from the completed scan.',
+        severity: 'high',
+      };
+    case 'REDIRECT_TOPOLOGY_REGRESSION':
+      return {
+        title: 'Redirect topology regression',
+        description: 'Fresh HTTP redirect evidence violates the accepted operational baseline.',
+        severity: 'high',
+      };
+    case 'HOMEPAGE_INDEXABILITY_REGRESSION':
+      return {
+        title: 'Homepage indexability regression',
+        description:
+          'Fresh homepage indexability evidence violates the accepted operational baseline.',
         severity: 'high',
       };
     default:
@@ -104,6 +133,7 @@ export async function finalizePersistedCanonicalConditions(
     },
     {
       observer,
+      resolver: observer,
       send: (alertId, webhookUrl, alert) =>
         sendAlertNotification(
           alertId,
@@ -132,6 +162,7 @@ export async function finalizeCanonicalConditions(
   },
   dependencies: {
     observer: CanonicalConditionObserver;
+    resolver?: CanonicalConditionResolver;
     send: (
       alertId: string,
       webhookUrl: string,
@@ -159,6 +190,24 @@ export async function finalizeCanonicalConditions(
     outcomes.push(outcome);
     if (input.webhookUrl && (outcome.created.alert || outcome.reopened.alert)) {
       await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
+    }
+  }
+  if (dependencies.resolver) {
+    const activeConditionKeys = evaluation.observations.map(
+      (observation) => observation.conditionKey
+    );
+    const openCases = await dependencies.resolver.listCases(input.tenantId, input.domainId);
+    for (const item of openCases) {
+      if (item.case.status === 'RESOLVED' || item.case.status === 'DISMISSED') continue;
+      const evaluated = evaluation.evaluatedConditionKeys.find(
+        (entry) => entry.conditionKey === item.signal.conditionKey
+      );
+      if (evaluated?.outcome !== 'HEALTHY') continue;
+      if (activeConditionKeys.includes(item.signal.conditionKey)) continue;
+      await dependencies.resolver.resolveCase(item.case.id, input.tenantId, input.snapshotId, {
+        activeConditionKeys,
+        evaluatedConditionKeys: evaluation.evaluatedConditionKeys,
+      });
     }
   }
   return { evaluation, outcomes };

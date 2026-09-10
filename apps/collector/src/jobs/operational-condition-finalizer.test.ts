@@ -104,4 +104,259 @@ describe('finalizeCanonicalConditions', () => {
     expect(observer.observe).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('creates and notifies stable redirect and indexability regressions', async () => {
+    const send = vi.fn().mockResolvedValue({ success: true });
+    const observer = {
+      observe: vi
+        .fn()
+        .mockResolvedValueOnce({
+          created: { alert: true },
+          reopened: { alert: false },
+          alert: {
+            id: 'alert-redirect',
+            title: 'Redirect topology regression',
+            description: 'x',
+            severity: 'high' as const,
+          },
+        })
+        .mockResolvedValueOnce({
+          created: { alert: true },
+          reopened: { alert: false },
+          alert: {
+            id: 'alert-index',
+            title: 'Homepage indexability regression',
+            description: 'x',
+            severity: 'high' as const,
+          },
+        }),
+    };
+    const redirectResult = await finalizeCanonicalConditions(redirectFaultInput(), {
+      observer,
+      send,
+    });
+    const indexResult = await finalizeCanonicalConditions(indexabilityFaultInput(), {
+      observer,
+      send,
+    });
+    expect(redirectResult.evaluation.observations).toMatchObject([
+      { kind: 'REDIRECT_TOPOLOGY_REGRESSION' },
+    ]);
+    expect(indexResult.evaluation.observations).toMatchObject([
+      { kind: 'HOMEPAGE_INDEXABILITY_REGRESSION' },
+    ]);
+    expect(observer.observe).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        title: 'Redirect topology regression',
+        severity: 'high',
+      })
+    );
+    expect(observer.observe).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        title: 'Homepage indexability regression',
+        severity: 'high',
+      })
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('notifies only a reopened redirect regression, not a duplicate open', async () => {
+    const send = vi.fn().mockResolvedValue({ success: true });
+    const alert = {
+      id: 'alert-redirect',
+      title: 'Redirect topology regression',
+      description: 'x',
+      severity: 'high' as const,
+    };
+    const observer = {
+      observe: vi
+        .fn()
+        .mockResolvedValueOnce({ created: { alert: false }, reopened: { alert: false }, alert })
+        .mockResolvedValueOnce({
+          created: { alert: false },
+          reopened: { alert: true },
+          alert: { ...alert, id: 'alert-reopened' },
+        }),
+    };
+    await finalizeCanonicalConditions(redirectFaultInput(), { observer, send });
+    await finalizeCanonicalConditions(redirectFaultInput(), { observer, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'alert-reopened',
+      'https://hooks.example.test/alerts',
+      expect.objectContaining({ id: 'alert-reopened' })
+    );
+  });
+
+  it('resolves only conclusive healthy evidence and never unknown or setup-only', async () => {
+    const conditionKey = 'tenant-1:domain-1:REDIRECT_TOPOLOGY_REGRESSION:https://www.example.com/';
+    const resolver = {
+      listCases: vi.fn().mockResolvedValue([
+        {
+          case: { id: 'case-1', status: 'OPEN' },
+          signal: { conditionKey },
+        },
+      ]),
+      resolveCase: vi.fn(),
+    };
+    const observer = { observe: vi.fn() };
+    const send = vi.fn();
+
+    await finalizeCanonicalConditions(redirectHealthyInput(), {
+      observer,
+      resolver,
+      send,
+    });
+    expect(observer.observe).not.toHaveBeenCalled();
+    expect(resolver.resolveCase).toHaveBeenCalledWith(
+      'case-1',
+      'tenant-1',
+      'snapshot-1',
+      expect.objectContaining({
+        activeConditionKeys: [],
+        evaluatedConditionKeys: [expect.objectContaining({ conditionKey, outcome: 'HEALTHY' })],
+      })
+    );
+
+    resolver.resolveCase.mockClear();
+    await finalizeCanonicalConditions(redirectUnknownInput(), {
+      observer,
+      resolver,
+      send,
+    });
+    expect(resolver.resolveCase).not.toHaveBeenCalled();
+    expect(observer.observe).not.toHaveBeenCalled();
+
+    await finalizeCanonicalConditions(
+      {
+        ...redirectFaultInput(),
+        probes: [
+          redirectProbe(new Date(now.getTime() - 4000), {
+            finalUrl: 'https://phishing.example.net/',
+          }),
+        ],
+        baselines: [{ ...redirectBaseline, maxEvidenceAgeSeconds: 1 }],
+      },
+      { observer, resolver, send }
+    );
+    expect(resolver.resolveCase).not.toHaveBeenCalled();
+  });
 });
+
+const redirectBaseline = {
+  tenantId: 'tenant-1',
+  domainId: 'domain-1',
+  kind: 'REDIRECT_TOPOLOGY_REGRESSION' as const,
+  discriminator: 'https://www.example.com/',
+  maxEvidenceAgeSeconds: 3600,
+  policy: {
+    kind: 'REDIRECT_TOPOLOGY' as const,
+    startUrl: 'https://www.example.com/',
+    expectedFinalUrl: 'https://example.com/',
+  },
+};
+
+const indexabilityBaseline = {
+  tenantId: 'tenant-1',
+  domainId: 'domain-1',
+  kind: 'HOMEPAGE_INDEXABILITY_REGRESSION' as const,
+  discriminator: 'https://example.com/',
+  maxEvidenceAgeSeconds: 3600,
+  policy: {
+    kind: 'HOMEPAGE_INDEXABILITY' as const,
+    requestedUrl: 'https://example.com/',
+    requireIndexable: true,
+  },
+};
+
+function hop(url: string, status: number, location?: string) {
+  return {
+    url,
+    status,
+    ...(location === undefined ? {} : { location }),
+    resolvedAddresses: ['1.1.1.1'],
+    observedAt: now.toISOString(),
+  };
+}
+
+function redirectProbe(probedAt = now, overrides: Record<string, unknown> = {}) {
+  const startUrl =
+    typeof overrides.startUrl === 'string' ? overrides.startUrl : 'https://www.example.com/';
+  const finalUrl =
+    typeof overrides.finalUrl === 'string' ? overrides.finalUrl : 'https://example.com/';
+  return {
+    success: true,
+    probedAt,
+    probeData: {
+      check: 'REDIRECT_TOPOLOGY' as const,
+      status: 'OBSERVED' as const,
+      evidence: {
+        kind: 'HTTP_REDIRECT' as const,
+        startUrl,
+        hops: [hop(startUrl, 301, finalUrl), hop(finalUrl, 200)],
+        finalUrl,
+        truncated: false,
+        ...overrides,
+      },
+    },
+  };
+}
+
+function redirectFaultInput() {
+  return {
+    ...input(),
+    baselines: [redirectBaseline],
+    findings: [],
+    probes: [redirectProbe(now, { finalUrl: 'https://phishing.example.net/' })],
+  };
+}
+
+function redirectHealthyInput() {
+  return {
+    ...input(),
+    baselines: [redirectBaseline],
+    findings: [],
+    probes: [redirectProbe()],
+  };
+}
+
+function redirectUnknownInput() {
+  return {
+    ...input(),
+    baselines: [redirectBaseline],
+    findings: [],
+    probes: [],
+  };
+}
+
+function indexabilityFaultInput() {
+  return {
+    ...input(),
+    baselines: [indexabilityBaseline],
+    findings: [],
+    probes: [
+      {
+        success: true,
+        probedAt: now,
+        probeData: {
+          check: 'HOMEPAGE_INDEXABILITY' as const,
+          status: 'OBSERVED' as const,
+          evidence: {
+            kind: 'HOMEPAGE_INDEXABILITY' as const,
+            requestedUrl: 'https://example.com/',
+            finalUrl: 'https://example.com/',
+            responseStatus: 200,
+            xRobotsTags: ['noindex'],
+            metaRobots: ['nofollow'],
+            bodyBytesInspected: 2048,
+            bodyTruncated: false,
+          },
+        },
+      },
+    ],
+  };
+}

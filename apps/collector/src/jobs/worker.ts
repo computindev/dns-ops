@@ -217,22 +217,12 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
     }
 
     if (evidenceDomain) {
-      try {
-        await finalizePersistedCanonicalConditions(db, {
-          snapshotId: result.snapshotId,
-          tenantId,
-          domainId: evidenceDomain.id,
-          domainName: evidenceDomain.normalizedName,
-        });
-      } catch (finalizationError) {
-        logger.warn('Canonical condition finalization failed (non-fatal)', {
-          snapshotId: result.snapshotId,
-          error:
-            finalizationError instanceof Error
-              ? finalizationError.message
-              : String(finalizationError),
-        });
-      }
+      await finalizePersistedCanonicalConditions(db, {
+        snapshotId: result.snapshotId,
+        tenantId,
+        domainId: evidenceDomain.id,
+        domainName: evidenceDomain.normalizedName,
+      });
     }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook

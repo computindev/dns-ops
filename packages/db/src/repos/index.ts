@@ -31,6 +31,7 @@ export {
   type ObserveOperationalCondition,
   type OperationalConditionResult,
   OperationalConditionService,
+  type ResolveCaseEvidence,
 } from './operations.js';
 // Parity evidence repositories
 export {

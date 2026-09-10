@@ -43,6 +43,13 @@ export interface OperationalConditionResult {
   reopened: { signal: boolean; case: boolean; alert: boolean };
 }
 
+export interface ResolveCaseEvidence {
+  activeConditionKeys: string[];
+  evaluatedConditionKeys: Array<{ conditionKey: string; outcome: string }>;
+}
+
+const CONCLUSIVE_OUTCOMES = new Set(['HEALTHY', 'FAULTY']);
+
 function requiredAnd(...conditions: SQL[]): SQL {
   const condition = and(...conditions);
   if (!condition) throw new Error('Expected at least one database predicate');
@@ -154,10 +161,11 @@ class InternalCaseRepository {
       RESOLVED: ['OPEN'],
       DISMISSED: ['OPEN'],
     };
-    if (current.status !== status && !allowed[current.status].includes(status)) {
-      throw new Error(`Invalid case transition: ${current.status} -> ${status}`);
+    const fromStatus = current.status;
+    if (fromStatus !== status && !allowed[fromStatus].includes(status)) {
+      throw new Error(`Invalid case transition: ${fromStatus} -> ${status}`);
     }
-    if (current.status === status) return current;
+    if (fromStatus === status) return current;
     if (status === 'RESOLVED' && !metadata.verificationSnapshotId) {
       throw new Error('Verified service evidence is required for case resolution');
     }
@@ -187,7 +195,8 @@ class InternalCaseRepository {
       update,
       requiredAnd(
         eq(internalCases.id, current.id),
-        eq(internalCases.status, current.status),
+        eq(internalCases.tenantId, current.tenantId),
+        eq(internalCases.status, fromStatus),
         eq(internalCases.version, current.version)
       )
     );
@@ -196,7 +205,7 @@ class InternalCaseRepository {
       caseId: current.id,
       tenantId: current.tenantId,
       actorId: metadata.actorId ?? 'system',
-      fromStatus: current.status,
+      fromStatus,
       toStatus: status,
       note: metadata.note,
       disposition: metadata.disposition,
@@ -454,36 +463,56 @@ export class OperationalConditionService {
       if (current.version !== input.expectedVersion) {
         throw operationConflict('Case version is stale');
       }
-      const updated = await tx.updateOne(
-        internalCases,
-        {
-          disposition: input.disposition.trim(),
-          version: current.version + 1,
-          updatedAt: new Date(),
-        },
-        requiredAnd(
-          eq(internalCases.id, current.id),
-          eq(internalCases.tenantId, input.tenantId),
-          eq(internalCases.version, input.expectedVersion)
-        )
-      );
+      const trimmed = input.disposition.trim();
+      const fromStatus = current.status;
+      const previous = {
+        disposition: current.disposition,
+        status: fromStatus,
+        version: current.version,
+      };
+      const updated =
+        fromStatus === 'OPEN'
+          ? await new InternalCaseRepository(tx).transition(current, 'ACKNOWLEDGED', {
+              actorId: input.actorId,
+              disposition: trimmed,
+            })
+          : await tx.updateOne(
+              internalCases,
+              {
+                disposition: trimmed,
+                version: current.version + 1,
+                updatedAt: new Date(),
+              },
+              requiredAnd(
+                eq(internalCases.id, current.id),
+                eq(internalCases.tenantId, input.tenantId),
+                eq(internalCases.status, fromStatus),
+                eq(internalCases.version, input.expectedVersion)
+              )
+            );
       if (!updated) throw operationConflict('Case changed during disposition update');
-      await tx.insert(internalCaseEvents, {
-        caseId: current.id,
-        tenantId: input.tenantId,
-        actorId: input.actorId,
-        fromStatus: current.status,
-        toStatus: current.status,
-        disposition: updated.disposition,
-      });
+      if (fromStatus !== 'OPEN') {
+        await tx.insert(internalCaseEvents, {
+          caseId: current.id,
+          tenantId: input.tenantId,
+          actorId: input.actorId,
+          fromStatus: current.status,
+          toStatus: current.status,
+          disposition: updated.disposition,
+        });
+      }
       await tx.insert(auditEvents, {
         action: 'mcp_case_disposition_set',
         entityType: 'internal_case',
         entityId: current.id,
         tenantId: input.tenantId,
         actorId: input.actorId,
-        previousValue: { disposition: current.disposition, version: current.version },
-        newValue: { disposition: updated.disposition, version: updated.version },
+        previousValue: previous,
+        newValue: {
+          disposition: updated.disposition,
+          status: updated.status,
+          version: updated.version,
+        },
       });
       return updated;
     });
@@ -493,7 +522,7 @@ export class OperationalConditionService {
     caseId: string,
     tenantId: string,
     verificationSnapshotId: string,
-    activeConditionKeys: string[],
+    evidence: ResolveCaseEvidence,
     note?: string,
     actorId = 'system'
   ): Promise<InternalCase | null> {
@@ -517,8 +546,9 @@ export class OperationalConditionService {
       const lastObservedSnapshot = signal.lastSeenSnapshotId
         ? await tx.selectOne(snapshots, eq(snapshots.id, signal.lastSeenSnapshotId))
         : null;
-      if (!domain || domain.tenantId !== tenantId)
+      if (!domain || domain.tenantId !== tenantId || domain.id !== signal.domainId) {
         throw new Error('Verification snapshot not found');
+      }
       if (
         snapshot.createdAt <= internalCase.updatedAt ||
         (lastObservedSnapshot && snapshot.createdAt <= lastObservedSnapshot.createdAt) ||
@@ -527,7 +557,16 @@ export class OperationalConditionService {
       ) {
         throw new Error('Fresh complete evidence is required to resolve this case');
       }
-      if (activeConditionKeys.includes(signal.conditionKey)) {
+      const evaluated = evidence.evaluatedConditionKeys.find(
+        (entry) => entry.conditionKey === signal.conditionKey
+      );
+      if (!evaluated || !CONCLUSIVE_OUTCOMES.has(evaluated.outcome)) {
+        throw new Error('Unknown or setup-only evidence cannot resolve this case');
+      }
+      if (
+        evidence.activeConditionKeys.includes(signal.conditionKey) ||
+        evaluated.outcome !== 'HEALTHY'
+      ) {
         throw new Error('Verification evidence still reproduces the operational condition');
       }
 
@@ -543,9 +582,26 @@ export class OperationalConditionService {
         const resolvedAlert = await tx.updateOne(
           alerts,
           { status: 'resolved', resolvedAt: new Date(), resolutionNote: note },
-          requiredAnd(eq(alerts.id, alert.id), eq(alerts.status, alert.status))
+          requiredAnd(
+            eq(alerts.id, alert.id),
+            eq(alerts.tenantId, tenantId),
+            eq(alerts.status, alert.status)
+          )
         );
         if (!resolvedAlert) throw operationConflict('Alert changed during resolution');
+        await tx.insert(auditEvents, {
+          action: 'alert_resolved',
+          entityType: 'alert',
+          entityId: alert.id,
+          tenantId,
+          actorId,
+          previousValue: { status: alert.status },
+          newValue: {
+            status: 'resolved',
+            verificationSnapshotId,
+            caseId: internalCase.id,
+          },
+        });
       }
       return resolved;
     });

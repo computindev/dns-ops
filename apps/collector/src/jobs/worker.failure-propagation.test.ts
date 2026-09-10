@@ -46,6 +46,10 @@ vi.mock('./operational-condition-finalizer.js', () => ({
   finalizePersistedCanonicalConditions: vi.fn().mockResolvedValue({ outcomes: [] }),
 }));
 
+vi.mock('../probes/domain-evidence.js', () => ({
+  collectAndPersistDomainEvidence: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('./queue.js', () => ({
   getRedisConnection: vi.fn().mockReturnValue({}),
   getCollectionQueue: vi.fn().mockReturnValue({
@@ -61,6 +65,7 @@ vi.mock('./queue.js', () => ({
 import { DomainRepository } from '@dns-ops/db';
 import type { Job } from 'bullmq';
 import { DNSCollector } from '../dns/collector.js';
+import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
 import type { CollectDomainJobData, MonitoringRefreshJobData } from './queue.js';
 import {
   classifyWorkerFailure,
@@ -137,6 +142,71 @@ describe('Issue #68: retryable failures reach BullMQ retries', () => {
     expect(result.success).toBe(true);
     expect(result.snapshotId).toBe('snap-42');
     expect(collect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('canonical finalization failures are operational failures', () => {
+  it('throws collect-domain finalization failures instead of returning success', async () => {
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible for `new DomainRepository()`
+    mockedDomainRepo.mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'domain-1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible for `new DNSCollector()`
+    mockedCollector.mockImplementation(function () {
+      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-final' }) };
+    } as never);
+    vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
+      new Error('canonical finalization failed')
+    );
+
+    const job = createMockJob<CollectDomainJobData>('job-finalization-1', validCollectData());
+    await expect(processCollectDomain(job)).rejects.toThrow('canonical finalization failed');
+  });
+
+  it('throws monitoring-refresh finalization failures instead of returning success', async () => {
+    const { MonitoredDomainRepository, DomainRepository: DomainRepo } = await import('@dns-ops/db');
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return {
+        findById: async () => ({
+          id: 'm1',
+          tenantId: 't1',
+          domainId: 'd1',
+          isActive: true,
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepo).mockImplementation(function () {
+      return {
+        findById: async () => ({
+          id: 'd1',
+          tenantId: 't1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible for `new DNSCollector()`
+    mockedCollector.mockImplementation(function () {
+      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-monitor' }) };
+    } as never);
+    vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
+      new Error('canonical finalization failed')
+    );
+
+    const job = createMockJob<MonitoringRefreshJobData>('job-finalization-2', {
+      monitoredDomainId: 'm1',
+      domainId: 'd1',
+      domainName: 'example.com',
+      schedule: 'daily',
+      tenantId: 't1',
+    });
+    await expect(processMonitoringRefresh(job)).rejects.toThrow('canonical finalization failed');
   });
 });
 

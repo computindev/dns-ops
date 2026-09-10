@@ -186,22 +186,12 @@ collectDomainRoutes.post('/domain', async (c) => {
           error: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
         });
       }
-      try {
-        await finalizePersistedCanonicalConditions(db, {
-          snapshotId: result.snapshotId,
-          tenantId,
-          domainId: collectedDomain.id,
-          domainName: collectedDomain.normalizedName,
-        });
-      } catch (finalizationError) {
-        logger.warn('Canonical condition finalization failed (non-fatal)', {
-          snapshotId: result.snapshotId,
-          error:
-            finalizationError instanceof Error
-              ? finalizationError.message
-              : String(finalizationError),
-        });
-      }
+      await finalizePersistedCanonicalConditions(db, {
+        snapshotId: result.snapshotId,
+        tenantId,
+        domainId: collectedDomain.id,
+        domainName: collectedDomain.normalizedName,
+      });
     }
 
     trackCollectionResult({
