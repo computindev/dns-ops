@@ -937,7 +937,13 @@ describe('Monitoring Routes Response Contracts', () => {
     const existingDomain = makeMonitoredDomain({ domainId: 'existing-dom' });
 
     app.use('*', async (c, next) => {
-      c.set('db', createMockDb({ monitoredDomains: [existingDomain] }));
+      c.set(
+        'db',
+        createMockDb({
+          domains: [makeDomain({ id: 'existing-dom' })],
+          monitoredDomains: [existingDomain],
+        })
+      );
       c.set('tenantId', NORMALIZED_TENANT_ID);
       c.set('actorId', ACTOR_ID);
       await next();
@@ -959,7 +965,13 @@ describe('Monitoring Routes Response Contracts', () => {
     const app = new Hono<Env>();
 
     app.use('*', async (c, next) => {
-      c.set('db', createMockDb({ monitoredDomains: [] }));
+      c.set(
+        'db',
+        createMockDb({
+          domains: [makeDomain({ id: 'new-dom' })],
+          monitoredDomains: [],
+        })
+      );
       c.set('tenantId', NORMALIZED_TENANT_ID);
       c.set('actorId', ACTOR_ID);
       await next();

@@ -343,10 +343,13 @@ monitoringRoutes.post('/domains/:domainId/monitor', internalOnlyMiddleware, asyn
   }
 
   try {
-    const monitoredRepo = new MonitoredDomainRepository(db);
+    const domain = await new DomainRepository(db).findById(domainId);
+    if (!domain || domain.tenantId !== tenantId) {
+      return c.json({ error: 'Domain not found' }, 404);
+    }
 
-    // Check if already monitored
-    const existing = await monitoredRepo.findByDomainId(domainId);
+    const monitoredRepo = new MonitoredDomainRepository(db);
+    const existing = await monitoredRepo.findByDomainId(domainId, tenantId);
     if (existing) {
       return c.json({ error: 'Domain is already monitored', monitored: existing }, 409);
     }
