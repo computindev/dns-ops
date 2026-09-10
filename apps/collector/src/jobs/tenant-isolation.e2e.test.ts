@@ -118,15 +118,25 @@ class InMemoryMockDb implements IDatabaseAdapter {
       return Promise.resolve(this.whereData.templateOverrides || []);
     if (tableName === 'domain_tags') return Promise.resolve(this.whereData.domainTags || []);
     if (tableName === 'monitored_domains') {
-      // Extract domainId from eq() condition for findByDomainId
-      const domainId = this._extractId(_condition);
-      if (domainId) {
-        const filtered = (this.whereData.monitoredDomains || []).filter(
-          (m) => m.domainId === domainId
-        );
-        return Promise.resolve(filtered);
-      }
-      return Promise.resolve(this.whereData.monitoredDomains || []);
+      const rows = this.whereData.monitoredDomains || [];
+      const values = this._extractValues(_condition);
+      const domainIds = values.filter((value) => rows.some((row) => row.domainId === value));
+      const ids = values.filter((value) => rows.some((row) => row.id === value));
+      const tenants = values.filter((value) => rows.some((row) => row.tenantId === value));
+      const unknownKeys = values.filter(
+        (value) =>
+          typeof value === 'string' &&
+          !rows.some((row) => row.domainId === value || row.id === value || row.tenantId === value)
+      );
+      if (unknownKeys.length > 0) return Promise.resolve([]);
+      return Promise.resolve(
+        rows.filter((row) => {
+          if (domainIds.length > 0 && !domainIds.includes(row.domainId)) return false;
+          if (ids.length > 0 && !ids.includes(row.id)) return false;
+          if (tenants.length > 0 && !tenants.includes(row.tenantId)) return false;
+          return true;
+        })
+      );
     }
     return Promise.resolve([]);
   }
@@ -165,6 +175,24 @@ class InMemoryMockDb implements IDatabaseAdapter {
       return Promise.resolve(item || null);
     }
     return Promise.resolve(null);
+  }
+
+  private _extractValues(condition: unknown): unknown[] {
+    const values: unknown[] = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== 'object') return;
+      const candidate = node as {
+        constructor?: { name?: string };
+        value?: unknown;
+        queryChunks?: unknown[];
+      };
+      if (candidate.constructor?.name === 'Param' && candidate.value !== undefined) {
+        values.push(candidate.value);
+      }
+      for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+    };
+    walk(condition);
+    return values;
   }
 
   private _extractId(condition: unknown): string | null {

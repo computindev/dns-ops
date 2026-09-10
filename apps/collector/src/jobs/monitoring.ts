@@ -394,18 +394,13 @@ monitoringRoutes.delete('/domains/:domainId/monitor', internalOnlyMiddleware, as
 
   try {
     const monitoredRepo = new MonitoredDomainRepository(db);
-    const existing = await monitoredRepo.findByDomainId(domainId);
+    const existing = await monitoredRepo.findByDomainId(domainId, tenantId);
 
     if (!existing) {
       return c.json({ error: 'Domain is not monitored' }, 404);
     }
 
-    // Tenant isolation: only the owning tenant can delete their monitored domain
-    if (existing.tenantId !== tenantId) {
-      return c.json({ error: 'Domain is not monitored' }, 404);
-    }
-
-    await monitoredRepo.delete(existing.id);
+    await monitoredRepo.delete(existing.id, tenantId);
     return c.json({ success: true });
   } catch (_error) {
     return c.json({ error: 'Failed to stop monitoring' }, 500);

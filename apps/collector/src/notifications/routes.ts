@@ -5,7 +5,7 @@
  * All webhooks go through the unified sendAlertNotification path.
  */
 
-import { AlertRepository } from '@dns-ops/db';
+import { AlertRepository, DomainRepository, MonitoredDomainRepository } from '@dns-ops/db';
 import { Hono } from 'hono';
 import { getCollectorLogger } from '../middleware/error-tracking.js';
 import { requestBodyLimitMiddleware } from '../middleware/request-body-limit.js';
@@ -80,6 +80,18 @@ notificationRoutes.post('/webhook', async (c) => {
       return c.json({ error: 'Alert not found' }, 404);
     }
 
+    const monitored = await new MonitoredDomainRepository(db).findById(
+      stored.monitoredDomainId,
+      tenantId
+    );
+    if (!monitored) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+    const domain = await new DomainRepository(db).findById(monitored.domainId);
+    if (!domain || domain.tenantId !== tenantId) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+
     const result = await sendAlertNotification(
       stored.id,
       webhookUrl,
@@ -88,7 +100,7 @@ notificationRoutes.post('/webhook', async (c) => {
         title: stored.title,
         description: stored.description,
         severity: stored.severity,
-        domain: typeof alert.domain === 'string' ? alert.domain : '',
+        domain: domain.normalizedName || domain.name,
         tenantId: stored.tenantId,
       },
       db,

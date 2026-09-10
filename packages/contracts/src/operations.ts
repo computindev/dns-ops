@@ -82,6 +82,9 @@ export interface OperationalConditionBaseline {
 
 export function normalizeOperationalDiscriminator(discriminator: string): string {
   const normalized = discriminator.trim().toLowerCase();
+  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+    return normalizeOperationalHttpUrl(normalized);
+  }
   if (!normalized || normalized.length > 64) {
     throw new Error('Signal discriminator must contain 1-64 characters');
   }

@@ -174,6 +174,20 @@ describe('parseSupportedOperationalBaseline', () => {
         },
       })
     ).toThrow('HTTPS apex root');
+    const longHost = `abcdefghijklmnopqrstuvwxyz0123456789abcd.example.com`;
+    const longStart = `https://www.${longHost}/`;
+    expect(longStart.length).toBeGreaterThan(64);
+    expect(
+      parseSupportedOperationalBaseline({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: longStart,
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: longStart,
+          expectedFinalUrl: `https://${longHost}/`,
+        },
+      }).discriminator
+    ).toBe(longStart);
   });
 
   it('rejects credentialed, non-http, and IP literal policy URLs', () => {
@@ -184,8 +198,19 @@ describe('parseSupportedOperationalBaseline', () => {
     expect(() => normalizeOperationalHttpUrl('https://127.0.0.1/')).toThrow('registered hostname');
     expect(() => normalizeOperationalHttpUrl('https://localhost/')).toThrow('registered hostname');
     expect(() => normalizeOperationalHttpUrl('https://intranet/')).toThrow('registered hostname');
-    expect(() => operationalHttpDiscriminator(`https://example.com/${'x'.repeat(80)}`)).toThrow(
-      '1-64'
+    expect(operationalHttpDiscriminator(`https://example.com/${'x'.repeat(80)}`)).toBe(
+      `https://example.com/${'x'.repeat(80)}`
     );
+    expect(() =>
+      parseSupportedOperationalBaseline({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: `https://example.com/${'x'.repeat(80)}`,
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: `https://example.com/${'x'.repeat(80)}`,
+          expectedFinalUrl: 'https://example.com/',
+        },
+      })
+    ).toThrow('collected http(s) origin root');
   });
 });

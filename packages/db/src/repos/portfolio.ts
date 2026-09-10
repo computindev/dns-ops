@@ -313,13 +313,20 @@ export class MonitoredDomainRepository {
     });
   }
 
+  async findById(id: string, tenantId: string): Promise<MonitoredDomain | undefined> {
+    const predicate = and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId));
+    if (!predicate) return undefined;
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results[0];
+  }
+
   async findByDomainId(domainId: string, tenantId?: string): Promise<MonitoredDomain | undefined> {
-    const results = await this.db.selectWhere(
-      monitoredDomains,
-      eq(monitoredDomains.domainId, domainId)
-    );
-    const filtered = tenantId ? results.filter((r) => r.tenantId === tenantId) : results;
-    return filtered[0];
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.domainId, domainId), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.domainId, domainId);
+    if (!predicate) return undefined;
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results[0];
   }
 
   async create(data: NewMonitoredDomain): Promise<MonitoredDomain> {
@@ -328,13 +335,14 @@ export class MonitoredDomainRepository {
 
   async update(
     id: string,
-    data: Partial<NewMonitoredDomain>
+    data: Partial<NewMonitoredDomain>,
+    tenantId?: string
   ): Promise<MonitoredDomain | undefined> {
-    return this.db.updateOne(
-      monitoredDomains,
-      { ...data, updatedAt: new Date() },
-      eq(monitoredDomains.id, id)
-    );
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.id, id);
+    if (!predicate) return undefined;
+    return this.db.updateOne(monitoredDomains, { ...data, updatedAt: new Date() }, predicate);
   }
 
   async updateLastCheck(id: string): Promise<void> {
@@ -345,8 +353,12 @@ export class MonitoredDomainRepository {
     );
   }
 
-  async delete(id: string): Promise<void> {
-    await this.db.deleteOne(monitoredDomains, eq(monitoredDomains.id, id));
+  async delete(id: string, tenantId?: string): Promise<void> {
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.id, id);
+    if (!predicate) return;
+    await this.db.deleteOne(monitoredDomains, predicate);
   }
 }
 

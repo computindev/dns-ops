@@ -8,19 +8,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../types.js';
 import { installWebhookTransportMock } from './webhook.test-support.js';
 
-const alertRepo = vi.hoisted(() => ({
+const repos = vi.hoisted(() => ({
   findById: vi.fn(),
   claimPendingNotification: vi.fn(),
   completeNotificationClaim: vi.fn(),
   releaseNotificationClaim: vi.fn(),
+  findMonitoredById: vi.fn(),
+  findDomainById: vi.fn(),
 }));
 
 vi.mock('@dns-ops/db', () => ({
   AlertRepository: class {
-    findById = alertRepo.findById;
-    claimPendingNotification = alertRepo.claimPendingNotification;
-    completeNotificationClaim = alertRepo.completeNotificationClaim;
-    releaseNotificationClaim = alertRepo.releaseNotificationClaim;
+    findById = repos.findById;
+    claimPendingNotification = repos.claimPendingNotification;
+    completeNotificationClaim = repos.completeNotificationClaim;
+    releaseNotificationClaim = repos.releaseNotificationClaim;
+  },
+  MonitoredDomainRepository: class {
+    findById = repos.findMonitoredById;
+  },
+  DomainRepository: class {
+    findById = repos.findDomainById;
   },
 }));
 
@@ -51,19 +59,31 @@ describe('Notification Routes', () => {
     mockLookup.mockReset().mockResolvedValue({ address: '93.184.216.34', family: 4 });
     mockHttpsRequest.mockReset();
     installWebhookTransportMock(mockHttpsRequest, mockFetch);
-    alertRepo.findById.mockResolvedValue({
+    repos.findById.mockResolvedValue({
       id: 'alert-123',
       title: 'Test Alert',
       description: 'Test description',
       severity: 'high',
       tenantId: 'tenant-1',
       status: 'pending',
+      monitoredDomainId: 'mon-1',
     });
-    alertRepo.claimPendingNotification.mockResolvedValue({
+    repos.claimPendingNotification.mockResolvedValue({
       token: 'claim-token',
       alert: { id: 'alert-123' },
     });
-    alertRepo.completeNotificationClaim.mockResolvedValue({ status: 'sent' });
+    repos.completeNotificationClaim.mockResolvedValue({ status: 'sent' });
+    repos.findMonitoredById.mockResolvedValue({
+      id: 'mon-1',
+      domainId: 'dom-1',
+      tenantId: 'tenant-1',
+    });
+    repos.findDomainById.mockResolvedValue({
+      id: 'dom-1',
+      tenantId: 'tenant-1',
+      name: 'example.com',
+      normalizedName: 'example.com',
+    });
   });
 
   describe('POST /api/notify/webhook', () => {
@@ -142,18 +162,19 @@ describe('Notification Routes', () => {
         }),
       });
       expect(response.status).toBe(403);
-      expect(alertRepo.findById).not.toHaveBeenCalled();
+      expect(repos.findById).not.toHaveBeenCalled();
     });
 
     it('loads the tenant-owned alert instead of trusting body content', async () => {
       mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
-      alertRepo.findById.mockResolvedValueOnce({
+      repos.findById.mockResolvedValueOnce({
         id: 'alert-123',
         title: 'Stored title',
         description: 'Stored description',
         severity: 'high',
         tenantId: 'tenant-1',
         status: 'pending',
+        monitoredDomainId: 'mon-1',
       });
       await app.request('/api/notify/webhook', {
         method: 'POST',
@@ -165,7 +186,38 @@ describe('Notification Routes', () => {
       });
       const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(callBody.title).toBe('Stored title');
-      expect(alertRepo.findById).toHaveBeenCalledWith('alert-123', 'tenant-1');
+      expect(repos.findById).toHaveBeenCalledWith('alert-123', 'tenant-1');
+    });
+
+    it('uses the stored domain name and ignores a forged alert.domain', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+      const response = await app.request('/api/notify/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: 'https://webhook.example.com/alerts',
+          alert: { ...validAlert, domain: 'evil.example' },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.domain).toBe('example.com');
+      expect(callBody.domain360Link).toContain('/domain/example.com');
+      expect(JSON.stringify(callBody)).not.toContain('evil.example');
+    });
+
+    it('returns 404 when monitored domain ownership is missing', async () => {
+      repos.findMonitoredById.mockResolvedValueOnce(undefined);
+      const response = await app.request('/api/notify/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: 'https://webhook.example.com/alerts',
+          alert: validAlert,
+        }),
+      });
+      expect(response.status).toBe(404);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('blocks SSRF attempts', async () => {
