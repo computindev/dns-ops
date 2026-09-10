@@ -62,7 +62,7 @@ vi.mock('./queue.js', () => ({
   },
 }));
 
-import { DomainRepository } from '@dns-ops/db';
+import { DomainRepository, MonitoredDomainRepository } from '@dns-ops/db';
 import type { Job } from 'bullmq';
 import { DNSCollector } from '../dns/collector.js';
 import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
@@ -299,6 +299,123 @@ describe('Issue #68: terminal validation outcomes do not retry', () => {
     expect(queued.success).toBe(true);
     expect(queued.queued).toBe(0);
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it('queues monitoredDomainId and skips due refresh after successful collection+finalization', async () => {
+    const updateLastCheck = vi.fn();
+    let lastCheckAt: Date | null = null;
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return {
+        findActiveBySchedule: async () => [
+          {
+            id: 'm1',
+            tenantId: 'tenant-a',
+            domainId: 'd1',
+            isActive: true,
+            lastCheckAt,
+          },
+        ],
+        findByDomainId: async () => ({ id: 'm1', tenantId: 'tenant-a' }),
+        updateLastCheck: async (id: string, tenantId?: string) => {
+          updateLastCheck(id, tenantId);
+          lastCheckAt = new Date();
+        },
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedDomainRepo.mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'd1',
+          tenantId: 'tenant-a',
+          name: 'example.com',
+          normalizedName: 'example.com',
+        }),
+        findById: async () => ({
+          id: 'd1',
+          tenantId: 'tenant-a',
+          name: 'example.com',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedCollector.mockImplementation(function () {
+      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-due' }) };
+    } as never);
+    const add = vi.fn();
+    vi.mocked(getCollectionQueue).mockReturnValue({ add } as never);
+
+    const scheduled = createMockJob<MonitoringRefreshJobData>('job-due-1', {
+      monitoredDomainId: 'scheduled',
+      domainId: 'scheduled',
+      domainName: 'scheduled',
+      schedule: 'daily',
+      tenantId: 'system',
+    });
+    await expect(processMonitoringRefresh(scheduled)).resolves.toMatchObject({
+      success: true,
+      queued: 1,
+    });
+    expect(add).toHaveBeenCalledWith(
+      'collect-example.com',
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        domain: 'example.com',
+        monitoredDomainId: 'm1',
+      }),
+      expect.any(Object)
+    );
+
+    const collectJob = createMockJob<CollectDomainJobData>(
+      'job-due-collect',
+      add.mock.calls[0]?.[1]
+    );
+    await expect(processCollectDomain(collectJob)).resolves.toMatchObject({
+      success: true,
+      snapshotId: 'snap-due',
+    });
+    expect(updateLastCheck).toHaveBeenCalledWith('m1', 'tenant-a');
+
+    add.mockClear();
+    await expect(processMonitoringRefresh(scheduled)).resolves.toMatchObject({
+      success: true,
+      queued: 0,
+    });
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('does not update lastCheckAt when canonical finalization fails', async () => {
+    const updateLastCheck = vi.fn();
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return { updateLastCheck };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedDomainRepo.mockImplementation(function () {
+      return {
+        findByNameForTenant: async () => ({
+          id: 'd1',
+          tenantId: 'tenant-a',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedCollector.mockImplementation(function () {
+      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-fail' }) };
+    } as never);
+    vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
+      new Error('canonical finalization failed')
+    );
+
+    const job = createMockJob<CollectDomainJobData>('job-due-fail', {
+      ...validCollectData(),
+      monitoredDomainId: 'm1',
+    });
+    await expect(processCollectDomain(job)).rejects.toThrow('canonical finalization failed');
+    expect(updateLastCheck).not.toHaveBeenCalled();
   });
 });
 

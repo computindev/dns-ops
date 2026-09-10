@@ -171,8 +171,15 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
   snapshotId?: string;
   error?: string;
 }> {
-  const { tenantId, domain, zoneManagement, triggeredBy, includeMailRecords, dkimSelectors } =
-    job.data;
+  const {
+    tenantId,
+    domain,
+    zoneManagement,
+    triggeredBy,
+    includeMailRecords,
+    dkimSelectors,
+    monitoredDomainId,
+  } = job.data;
   const startTime = Date.now();
 
   trackJobStart({
@@ -216,6 +223,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
       }
     }
 
+    let finalized = false;
     if (evidenceDomain) {
       await finalizePersistedCanonicalConditions(db, {
         snapshotId: result.snapshotId,
@@ -223,6 +231,11 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
         domainId: evidenceDomain.id,
         domainName: evidenceDomain.normalizedName,
       });
+      finalized = true;
+    }
+
+    if (monitoredDomainId && finalized) {
+      await new MonitoredDomainRepository(db).updateLastCheck(monitoredDomainId, tenantId);
     }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook
@@ -362,6 +375,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
             zoneManagement: domain.zoneManagement || 'unknown',
             triggeredBy: `monitoring:${schedule}`,
             includeMailRecords: true,
+            monitoredDomainId: monitored.id,
           },
           {
             jobId: `monitoring-${monitored.id}-${Date.now()}`,

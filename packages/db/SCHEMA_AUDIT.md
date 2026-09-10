@@ -183,13 +183,14 @@ END $$;
 
 3. **Apply Migration:** Run `npx drizzle-kit migrate` or apply the SQL directly to sync the database.
 
-4. **Prevention:** Run the drift check script in CI:
+4. **Prevention:** `check-drift` inventories release-runner SQL vs the stale Drizzle journal; it does not certify catalog parity. Run:
    ```bash
    cd packages/db
    bun run build
    bun run check-drift
+   DATABASE_URL=postgres://... bun run verify-migrations
    ```
-   See `scripts/check-drift.ts` for CI integration details.
+   See `scripts/check-drift.ts`. Catalog parity requires `verify-migrations`.
 
 ---
 
