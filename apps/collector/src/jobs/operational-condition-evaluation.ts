@@ -164,7 +164,9 @@ function canonicalHttpUrl(value: unknown): string | null {
   }
 }
 
-function parseRedirectHop(value: unknown): { url: string; status: number } | null {
+function parseRedirectHop(
+  value: unknown
+): { url: string; status: number; location?: string } | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const hop = value as Record<string, unknown>;
   const url = canonicalHttpUrl(hop.url);
@@ -181,7 +183,36 @@ function parseRedirectHop(value: unknown): { url: string; status: number } | nul
   ) {
     return null;
   }
-  return { url, status: hop.status as number };
+  return {
+    url,
+    status: hop.status as number,
+    location: typeof hop.location === 'string' ? hop.location : undefined,
+  };
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status >= 300 && status <= 399;
+}
+
+function resolvedHopLocation(hopUrl: string, location: string): string | null {
+  try {
+    return canonicalHttpUrl(new URL(location, hopUrl).href);
+  } catch {
+    return null;
+  }
+}
+
+function redirectChainIsLinked(
+  hops: Array<{ url: string; status: number; location?: string }>
+): boolean {
+  for (let index = 0; index < hops.length - 1; index += 1) {
+    const hop = hops[index];
+    const next = hops[index + 1];
+    if (!hop || !next || !isRedirectStatus(hop.status) || !hop.location) return false;
+    const resolved = resolvedHopLocation(hop.url, hop.location);
+    if (!resolved || resolved !== next.url) return false;
+  }
+  return true;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -225,11 +256,13 @@ function parseRedirectEvidence(
   const finalUrl = canonicalHttpUrl(evidence.finalUrl);
   const hops = evidence.hops.map(parseRedirectHop);
   if (!startUrl || !finalUrl || hops.some((hop) => !hop)) return { status: 'MALFORMED' };
-  const first = hops[0];
-  const last = hops[hops.length - 1];
+  const chain = hops.filter((hop): hop is NonNullable<typeof hop> => Boolean(hop));
+  const first = chain[0];
+  const last = chain[chain.length - 1];
   if (!first || !last || first.url !== startUrl || last.url !== finalUrl) {
     return { status: 'MALFORMED' };
   }
+  if (!redirectChainIsLinked(chain)) return { status: 'MALFORMED' };
   return { status: 'conclusive', startUrl, finalUrl };
 }
 

@@ -59,20 +59,17 @@ const indexabilityBaseline = {
   },
 };
 
+const hop = (url: string, status: number, probedAt = now, location?: string) => ({
+  url,
+  status,
+  ...(location === undefined ? {} : { location }),
+  resolvedAddresses: ['1.1.1.1'],
+  observedAt: probedAt.toISOString(),
+});
+
 const redirectHops = (startUrl: string, finalUrl: string, probedAt = now) => [
-  {
-    url: startUrl,
-    status: 301,
-    location: finalUrl,
-    resolvedAddresses: ['1.1.1.1'],
-    observedAt: probedAt.toISOString(),
-  },
-  {
-    url: finalUrl,
-    status: 200,
-    resolvedAddresses: ['1.1.1.1'],
-    observedAt: probedAt.toISOString(),
-  },
+  hop(startUrl, 301, probedAt, finalUrl),
+  hop(finalUrl, 200, probedAt),
 ];
 
 const redirectProbe = (
@@ -570,6 +567,89 @@ describe('evaluateOperationalConditions', () => {
     expect(unlinkedFinal.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
     expect(unlinkedStart.observations).toEqual([]);
     expect(unlinkedStart.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('treats a non-redirect intermediate hop as malformed, not conclusive', () => {
+    const result = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: [
+            hop('https://www.example.com/', 301, now, 'https://cdn.example.com/'),
+            hop('https://cdn.example.com/', 200, now, 'https://example.com/'),
+            hop('https://example.com/', 200, now),
+          ],
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(result.observations).toEqual([]);
+    expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('treats a mismatched hop Location as malformed, not conclusive', () => {
+    const result = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: [
+            hop('https://www.example.com/', 301, now, 'https://other.example.com/'),
+            hop('https://example.com/', 200, now),
+          ],
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(result.observations).toEqual([]);
+    expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('treats a missing hop Location as malformed, not conclusive', () => {
+    const result = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: [hop('https://www.example.com/', 301, now), hop('https://example.com/', 200, now)],
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(result.observations).toEqual([]);
+    expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('accepts a valid multi-hop 3xx Location chain as conclusive', () => {
+    const result = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: [
+            hop('https://www.example.com/', 301, now, 'https://cdn.example.com/'),
+            hop('https://cdn.example.com/', 302, now, 'https://example.com/'),
+            hop('https://example.com/', 200, now),
+          ],
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(result.observations).toEqual([]);
+    expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
   });
 
   it('rejects future-dated HTTP evidence instead of treating it as current', () => {
