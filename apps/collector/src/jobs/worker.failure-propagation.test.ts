@@ -197,7 +197,9 @@ describe('canonical finalization failures are operational failures', () => {
     } as never);
     // biome-ignore lint/complexity/useArrowFunction: must stay constructible for `new DNSCollector()`
     mockedCollector.mockImplementation(function () {
-      return { collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-monitor' }) };
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-monitor', resultState: 'complete' }),
+      };
     } as never);
     vi.mocked(finalizePersistedCanonicalConditions).mockRejectedValueOnce(
       new Error('canonical finalization failed')
@@ -211,6 +213,85 @@ describe('canonical finalization failures are operational failures', () => {
       tenantId: 't1',
     });
     await expect(processMonitoringRefresh(job)).rejects.toThrow('canonical finalization failed');
+  });
+
+  it('throws and does not stamp lastCheckAt when monitoring-refresh resultState is partial', async () => {
+    const updateLastCheck = vi.fn();
+    const { MonitoredDomainRepository, DomainRepository: DomainRepo } = await import('@dns-ops/db');
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return {
+        findById: async () => ({ id: 'm1', tenantId: 't1', domainId: 'd1' }),
+        updateLastCheck,
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepo).mockImplementation(function () {
+      return {
+        findById: async () => ({
+          id: 'd1',
+          tenantId: 't1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedCollector.mockImplementation(function () {
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-partial', resultState: 'partial' }),
+      };
+    } as never);
+
+    const job = createMockJob<MonitoringRefreshJobData>('job-refresh-partial', {
+      monitoredDomainId: 'm1',
+      domainId: 'd1',
+      domainName: 'example.com',
+      schedule: 'daily',
+      tenantId: 't1',
+    });
+    await expect(processMonitoringRefresh(job)).rejects.toThrow('resultState is partial');
+    expect(updateLastCheck).not.toHaveBeenCalled();
+  });
+
+  it('stamps lastCheckAt after complete monitoring-refresh finalization', async () => {
+    const updateLastCheck = vi.fn();
+    const { MonitoredDomainRepository, DomainRepository: DomainRepo } = await import('@dns-ops/db');
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(MonitoredDomainRepository).mockImplementation(function () {
+      return {
+        findById: async () => ({ id: 'm1', tenantId: 't1', domainId: 'd1' }),
+        updateLastCheck,
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    vi.mocked(DomainRepo).mockImplementation(function () {
+      return {
+        findById: async () => ({
+          id: 'd1',
+          tenantId: 't1',
+          normalizedName: 'example.com',
+        }),
+      };
+    } as never);
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
+    mockedCollector.mockImplementation(function () {
+      return {
+        collect: vi.fn().mockResolvedValue({ snapshotId: 'snap-ok', resultState: 'complete' }),
+      };
+    } as never);
+
+    const job = createMockJob<MonitoringRefreshJobData>('job-refresh-complete', {
+      monitoredDomainId: 'm1',
+      domainId: 'd1',
+      domainName: 'example.com',
+      schedule: 'daily',
+      tenantId: 't1',
+    });
+    await expect(processMonitoringRefresh(job)).resolves.toMatchObject({
+      success: true,
+      snapshotId: 'snap-ok',
+    });
+    expect(updateLastCheck).toHaveBeenCalledWith('m1', 't1');
   });
 });
 

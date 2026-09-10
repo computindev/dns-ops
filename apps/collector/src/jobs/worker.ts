@@ -462,6 +462,16 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
     const collector = new DNSCollector(config, db);
     const result = await collector.collect();
+    const monitoredRepo = new MonitoredDomainRepository(db);
+    const monitored = await monitoredRepo.findById(monitoredDomainId, tenantId);
+    if (!monitored || monitored.domainId !== domain.id || monitored.tenantId !== tenantId) {
+      throw new UnrecoverableError(
+        `Monitored domain ${monitoredDomainId} is outside the monitoring tenant`
+      );
+    }
+    if (result.resultState !== 'complete') {
+      throw new Error(`Collection resultState is ${result.resultState}, not complete`);
+    }
 
     try {
       await collectAndPersistDomainEvidence(db, {
@@ -493,6 +503,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
       });
       throw finalizationError;
     }
+    await monitoredRepo.updateLastCheck(monitoredDomainId, tenantId);
 
     await job.updateProgress(100);
 

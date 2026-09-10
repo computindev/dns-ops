@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   formatReleaseMigrationReport,
@@ -46,5 +47,12 @@ describe('inspectReleaseMigrationInventory', () => {
     const inventory = inspectReleaseMigrationInventory(dir);
     expect(inventory.journalMissingFiles).toEqual(['0000_missing']);
     expect(inventory.drizzleMetadataStale).toBe(true);
+  });
+
+  it('inventories 0026 among release-runner SQL beyond the Drizzle journal', () => {
+    const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
+    const inventory = inspectReleaseMigrationInventory(migrationsDir);
+    expect(inventory.sqlFiles).toContain('0026_widen_alert_dedup_key.sql');
+    expect(inventory.sqlBeyondJournal).toContain('0026_widen_alert_dedup_key');
   });
 });

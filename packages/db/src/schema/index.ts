@@ -993,7 +993,7 @@ export const alerts = pgTable(
     notificationClaimToken: varchar('notification_claim_token', { length: 64 }),
 
     // Deduplication
-    dedupKey: varchar('dedup_key', { length: 200 }), // For grouping similar alerts
+    dedupKey: varchar('dedup_key', { length: 1024 }), // tenant:domain:kind:discriminator
 
     // Acknowledgment
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),

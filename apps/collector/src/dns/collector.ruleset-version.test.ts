@@ -294,4 +294,49 @@ describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {
     };
     expect(findingRepo.createMany).not.toHaveBeenCalled();
   });
+
+  it('rethrows when evaluation coverage persistence fails', async () => {
+    const { RulesEngine } = await import('@dns-ops/rules');
+    vi.mocked(RulesEngine).mockImplementationOnce(function () {
+      this.evaluate = vi.fn().mockImplementation(() => {
+        throw new Error('ruleset exploded');
+      });
+    } as unknown as typeof RulesEngine);
+    const { SnapshotRepository } = await import('@dns-ops/db');
+    vi.mocked(SnapshotRepository).mockImplementationOnce(function () {
+      this.create = vi.fn().mockResolvedValue({ id: 'snapshot-1' });
+      this.updateRulesetVersion = vi.fn().mockResolvedValue(undefined);
+      this.updateEvaluationCoverage = vi
+        .fn()
+        .mockRejectedValue(new Error('coverage persist failed'));
+    } as never);
+
+    const collector = new DNSCollector(baseConfig, mockDb);
+    vi.spyOn(
+      collector as unknown as { discoverAuthoritativeServers: () => Promise<string[]> },
+      'discoverAuthoritativeServers'
+    ).mockResolvedValue([]);
+    vi.spyOn(
+      collector as unknown as {
+        collectFromVantage: (
+          queries: unknown[],
+          vantage: { type: string; identifier: string }
+        ) => Promise<unknown[]>;
+      },
+      'collectFromVantage'
+    ).mockResolvedValue([
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+        responseCode: 0,
+      },
+    ]);
+
+    await expect(collector.collect()).rejects.toThrow('coverage persist failed');
+  });
 });

@@ -522,4 +522,40 @@ describe('domainProfileRoutes', () => {
       ]),
     });
   });
+
+  it('does not treat future-dated TLS evidence as current', async () => {
+    const { app, probes, baselines } = createApp();
+    probes.push({
+      id: 'probe-tls-future',
+      snapshotId: 'snapshot-1',
+      probeType: 'tls_cert',
+      status: 'success',
+      hostname: 'example.com',
+      port: 443,
+      success: true,
+      errorMessage: null,
+      probedAt: new Date(Date.now() + 120_000),
+      responseTimeMs: 20,
+      probeData: {
+        check: 'TLS_CERTIFICATE',
+        status: 'OBSERVED',
+        evidence: { hostname: 'example.com', port: 443 },
+      },
+    });
+    baselines.push({
+      id: 'baseline-tls',
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      kind: 'TLS_CERTIFICATE_REGRESSION',
+      discriminator: 'example.com:443',
+      maxEvidenceAgeSeconds: 60,
+      supersededAt: null,
+    });
+    const response = await app.request('/example.com/evidence');
+    await expect(response.json()).resolves.toMatchObject({
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ id: 'probe-tls-future', freshness: 'STALE' }),
+      ]),
+    });
+  });
 });

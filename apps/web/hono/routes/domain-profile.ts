@@ -66,7 +66,8 @@ function gatedEvidenceFreshness(
   if (data?.check === 'TLS_CERTIFICATE' && data.evidence?.hostname && data.evidence.port) {
     return match(
       'TLS_CERTIFICATE_REGRESSION',
-      `${data.evidence.hostname}:${data.evidence.port}`.toLowerCase()
+      `${data.evidence.hostname}:${data.evidence.port}`.toLowerCase(),
+      true
     );
   }
   if (data?.check === 'REDIRECT_TOPOLOGY') {
