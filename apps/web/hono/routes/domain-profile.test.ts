@@ -480,4 +480,46 @@ describe('domainProfileRoutes', () => {
       ]),
     });
   });
+
+  it('does not treat future-dated HTTP evidence as current', async () => {
+    const { app, probes, baselines } = createApp();
+    probes.push({
+      id: 'probe-future',
+      snapshotId: 'snapshot-1',
+      probeType: 'http',
+      status: 'success',
+      hostname: 'www.example.com',
+      port: 443,
+      success: true,
+      errorMessage: null,
+      probedAt: new Date(Date.now() + 120_000),
+      responseTimeMs: 12,
+      probeData: {
+        check: 'REDIRECT_TOPOLOGY',
+        status: 'OBSERVED',
+        evidence: {
+          kind: 'HTTP_REDIRECT',
+          startUrl: 'https://www.example.com/',
+          hops: [],
+          finalUrl: 'https://example.com/',
+          truncated: false,
+        },
+      },
+    });
+    baselines.push({
+      id: 'baseline-redirect',
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+      discriminator: 'https://www.example.com/',
+      maxEvidenceAgeSeconds: 60,
+      supersededAt: null,
+    });
+    const response = await app.request('/example.com/evidence');
+    await expect(response.json()).resolves.toMatchObject({
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ id: 'probe-future', freshness: 'STALE' }),
+      ]),
+    });
+  });
 });

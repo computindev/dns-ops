@@ -59,41 +59,49 @@ const indexabilityBaseline = {
   },
 };
 
+const redirectHops = (startUrl: string, finalUrl: string, probedAt = now) => [
+  {
+    url: startUrl,
+    status: 301,
+    location: finalUrl,
+    resolvedAddresses: ['1.1.1.1'],
+    observedAt: probedAt.toISOString(),
+  },
+  {
+    url: finalUrl,
+    status: 200,
+    resolvedAddresses: ['1.1.1.1'],
+    observedAt: probedAt.toISOString(),
+  },
+];
+
 const redirectProbe = (
   probedAt = now,
   overrides: Record<string, unknown> = {},
   dataOverrides: Record<string, unknown> = {}
-) => ({
-  success: true,
-  probedAt,
-  probeData: {
-    check: 'REDIRECT_TOPOLOGY' as const,
-    status: 'OBSERVED' as const,
-    evidence: {
-      kind: 'HTTP_REDIRECT' as const,
-      startUrl: 'https://www.example.com/',
-      hops: [
-        {
-          url: 'https://www.example.com/',
-          status: 301,
-          location: 'https://example.com/',
-          resolvedAddresses: ['1.1.1.1'],
-          observedAt: probedAt.toISOString(),
-        },
-        {
-          url: 'https://example.com/',
-          status: 200,
-          resolvedAddresses: ['1.1.1.1'],
-          observedAt: probedAt.toISOString(),
-        },
-      ],
-      finalUrl: 'https://example.com/',
-      truncated: false,
-      ...overrides,
+) => {
+  const startUrl =
+    typeof overrides.startUrl === 'string' ? overrides.startUrl : 'https://www.example.com/';
+  const finalUrl =
+    typeof overrides.finalUrl === 'string' ? overrides.finalUrl : 'https://example.com/';
+  return {
+    success: true,
+    probedAt,
+    probeData: {
+      check: 'REDIRECT_TOPOLOGY' as const,
+      status: 'OBSERVED' as const,
+      evidence: {
+        kind: 'HTTP_REDIRECT' as const,
+        startUrl,
+        hops: redirectHops(startUrl, finalUrl, probedAt),
+        finalUrl,
+        truncated: false,
+        ...overrides,
+      },
+      ...dataOverrides,
     },
-    ...dataOverrides,
-  },
-});
+  };
+};
 
 const indexabilityProbe = (
   probedAt = now,
@@ -482,5 +490,111 @@ describe('evaluateOperationalConditions', () => {
     });
     expect(result.observations).toEqual([]);
     expect(result.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
+  });
+
+  it('compares long expected redirect finals without the 64-character discriminator limit', () => {
+    const longFinal = `https://example.com/${'path'.repeat(20)}`;
+    expect(longFinal.length).toBeGreaterThan(64);
+    const baseline = {
+      ...redirectBaseline,
+      policy: {
+        kind: 'REDIRECT_TOPOLOGY' as const,
+        startUrl: 'https://www.example.com/',
+        expectedFinalUrl: longFinal,
+      },
+    };
+    const healthy = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [baseline],
+      probes: [redirectProbe(now, { finalUrl: longFinal })],
+      findings: [],
+      now,
+    });
+    const faulty = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [baseline],
+      probes: [redirectProbe(now, { finalUrl: `${longFinal}-other` })],
+      findings: [],
+      now,
+    });
+    expect(healthy.evaluatedConditionKeys).toMatchObject([{ outcome: 'HEALTHY' }]);
+    expect(healthy.observations).toEqual([]);
+    expect(faulty.evaluatedConditionKeys).toMatchObject([{ outcome: 'FAULTY' }]);
+    expect(faulty.observations).toHaveLength(1);
+  });
+
+  it('treats malformed hops and incoherent source/final linkage as inconclusive', () => {
+    const badHopShape = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [redirectProbe(now, { hops: [{ url: 'https://www.example.com/' }] })],
+      findings: [],
+      now,
+    });
+    const unlinkedFinal = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: redirectHops('https://www.example.com/', 'https://example.com/'),
+          finalUrl: 'https://phishing.example.net/',
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    const unlinkedStart = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [
+        redirectProbe(now, {
+          hops: redirectHops('https://cdn.example.com/', 'https://example.com/'),
+        }),
+      ],
+      findings: [],
+      now,
+    });
+    expect(badHopShape.observations).toEqual([]);
+    expect(badHopShape.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(unlinkedFinal.observations).toEqual([]);
+    expect(unlinkedFinal.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+    expect(unlinkedStart.observations).toEqual([]);
+    expect(unlinkedStart.evaluatedConditionKeys).toMatchObject([{ outcome: 'MALFORMED' }]);
+  });
+
+  it('rejects future-dated HTTP evidence instead of treating it as current', () => {
+    const future = new Date(now.getTime() + 60_000);
+    const redirect = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [redirectBaseline],
+      probes: [redirectProbe(future)],
+      findings: [],
+      now,
+    });
+    const indexability = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [indexabilityBaseline],
+      probes: [indexabilityProbe(future, { xRobotsTags: ['noindex'] })],
+      findings: [],
+      now,
+    });
+    expect(redirect.observations).toEqual([]);
+    expect(redirect.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
+    expect(indexability.observations).toEqual([]);
+    expect(indexability.evaluatedConditionKeys).toMatchObject([{ outcome: 'UNKNOWN' }]);
   });
 });

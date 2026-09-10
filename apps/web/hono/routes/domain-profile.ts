@@ -52,12 +52,13 @@ function gatedEvidenceFreshness(
     check?: string;
     evidence?: { hostname?: string; port?: number; startUrl?: string; requestedUrl?: string };
   } | null;
-  const match = (kind: string, discriminator: string | null) => {
+  const match = (kind: string, discriminator: string | null, rejectFuture = false) => {
     if (!discriminator) return 'NOT_BASELINE_GATED' as const;
     const baseline = baselines.find(
       (candidate) => candidate.kind === kind && candidate.discriminator === discriminator
     );
     if (!baseline) return 'MISSING_BASELINE' as const;
+    if (rejectFuture && ageMs < 0) return 'STALE' as const;
     return ageMs > baseline.maxEvidenceAgeSeconds * 1000
       ? ('STALE' as const)
       : ('CURRENT' as const);
@@ -69,12 +70,13 @@ function gatedEvidenceFreshness(
     );
   }
   if (data?.check === 'REDIRECT_TOPOLOGY') {
-    return match('REDIRECT_TOPOLOGY_REGRESSION', httpDiscriminator(data.evidence?.startUrl));
+    return match('REDIRECT_TOPOLOGY_REGRESSION', httpDiscriminator(data.evidence?.startUrl), true);
   }
   if (data?.check === 'HOMEPAGE_INDEXABILITY') {
     return match(
       'HOMEPAGE_INDEXABILITY_REGRESSION',
-      httpDiscriminator(data.evidence?.requestedUrl)
+      httpDiscriminator(data.evidence?.requestedUrl),
+      true
     );
   }
   return 'NOT_BASELINE_GATED';

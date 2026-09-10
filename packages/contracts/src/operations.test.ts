@@ -96,6 +96,22 @@ describe('parseSupportedOperationalBaseline', () => {
     });
   });
 
+  it('accepts redirect expected finals longer than the discriminator bound', () => {
+    const expectedFinalUrl = `https://example.com/${'path'.repeat(20)}`;
+    expect(expectedFinalUrl.length).toBeGreaterThan(64);
+    expect(
+      parseSupportedOperationalBaseline({
+        signalKind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://www.example.com/',
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://www.example.com/',
+          expectedFinalUrl,
+        },
+      }).policy
+    ).toMatchObject({ kind: 'REDIRECT_TOPOLOGY', expectedFinalUrl });
+  });
+
   it('rejects inferred, mismatched, or unsupported policy shapes', () => {
     expect(() =>
       parseSupportedOperationalBaseline({

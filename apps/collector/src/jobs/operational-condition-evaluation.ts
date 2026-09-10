@@ -3,6 +3,7 @@ import {
   type InternalSignalKind,
   internalConditionKey,
   normalizeOperationalDiscriminator,
+  normalizeOperationalHttpUrl,
   type OperationalConditionBaselinePolicy,
   operationalHttpDiscriminator,
   type RedirectTopologyBaselinePolicy,
@@ -154,6 +155,35 @@ function isFresh(
   return now.getTime() - probe.probedAt.getTime() <= baseline.maxEvidenceAgeSeconds * 1000;
 }
 
+function canonicalHttpUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    return normalizeOperationalHttpUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseRedirectHop(value: unknown): { url: string; status: number } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const hop = value as Record<string, unknown>;
+  const url = canonicalHttpUrl(hop.url);
+  if (
+    !url ||
+    !Number.isInteger(hop.status) ||
+    (hop.status as number) < 100 ||
+    (hop.status as number) > 599 ||
+    typeof hop.observedAt !== 'string' ||
+    Number.isNaN(Date.parse(hop.observedAt)) ||
+    !Array.isArray(hop.resolvedAddresses) ||
+    !hop.resolvedAddresses.every((address) => typeof address === 'string') ||
+    (hop.location !== undefined && typeof hop.location !== 'string')
+  ) {
+    return null;
+  }
+  return { url, status: hop.status as number };
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
@@ -191,15 +221,16 @@ function parseRedirectEvidence(
     return { status: 'MALFORMED' };
   }
   if (evidence.truncated || evidence.hops.length === 0) return { status: 'TRUNCATED' };
-  try {
-    return {
-      status: 'conclusive',
-      startUrl: operationalHttpDiscriminator(evidence.startUrl),
-      finalUrl: operationalHttpDiscriminator(evidence.finalUrl),
-    };
-  } catch {
+  const startUrl = canonicalHttpUrl(evidence.startUrl);
+  const finalUrl = canonicalHttpUrl(evidence.finalUrl);
+  const hops = evidence.hops.map(parseRedirectHop);
+  if (!startUrl || !finalUrl || hops.some((hop) => !hop)) return { status: 'MALFORMED' };
+  const first = hops[0];
+  const last = hops[hops.length - 1];
+  if (!first || !last || first.url !== startUrl || last.url !== finalUrl) {
     return { status: 'MALFORMED' };
   }
+  return { status: 'conclusive', startUrl, finalUrl };
 }
 
 function parseIndexabilityEvidence(
@@ -413,6 +444,10 @@ function evaluateRedirect(
     recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
     return;
   }
+  if (probe.probedAt.getTime() > input.now.getTime()) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+    return;
+  }
   if (!isFresh(probe, baseline, input.now)) {
     recordInconclusive(result, input, baseline.kind, discriminator, 'STALE');
     return;
@@ -422,10 +457,8 @@ function evaluateRedirect(
     recordInconclusive(result, input, baseline.kind, discriminator, parsed.status);
     return;
   }
-  let expectedFinalUrl: string;
-  try {
-    expectedFinalUrl = operationalHttpDiscriminator(policy.expectedFinalUrl);
-  } catch {
+  const expectedFinalUrl = canonicalHttpUrl(policy.expectedFinalUrl);
+  if (!expectedFinalUrl) {
     recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
     return;
   }
@@ -480,6 +513,10 @@ function evaluateIndexability(
     (evidence) => (evidence as { requestedUrl?: unknown } | undefined)?.requestedUrl
   );
   if (!probe) {
+    recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+    return;
+  }
+  if (probe.probedAt.getTime() > input.now.getTime()) {
     recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
     return;
   }
