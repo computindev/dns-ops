@@ -358,6 +358,7 @@ export async function sendAlertNotification(
     severity: string;
     domain: string;
     tenantId: string;
+    claimToken?: string;
   },
   db: Env['Variables']['db'],
   baseUrl?: string
@@ -388,25 +389,57 @@ export async function sendAlertNotification(
     });
   }
 
-  // Update alert status on successful delivery
   if (result.success && db) {
     try {
       const { AlertRepository } = await import('@dns-ops/db');
       const alertRepo = new AlertRepository(db);
-      await alertRepo.updateStatus(alertId, alertData.tenantId, 'sent');
+      const updated = alertData.claimToken
+        ? await alertRepo.completeNotificationClaim(
+            alertId,
+            alertData.tenantId,
+            alertData.claimToken
+          )
+        : await alertRepo.updateStatus(alertId, alertData.tenantId, 'sent');
+      if (updated) {
+        return {
+          success: true,
+          webhookHost: result.resolvedHostname,
+          statusUpdated: true,
+        };
+      }
+      const current = await alertRepo.findById(alertId, alertData.tenantId);
+      if (current && current.status !== 'pending') {
+        return {
+          success: true,
+          webhookHost: result.resolvedHostname,
+          statusUpdated: true,
+        };
+      }
       return {
         success: true,
         webhookHost: result.resolvedHostname,
-        statusUpdated: true,
+        statusUpdated: false,
       };
     } catch (error) {
-      // Status update failure should not fail the webhook notification
       notificationLogger.error('Failed to update alert status to sent', {
         alertId,
         error: error instanceof Error ? error.message : String(error),
       });
+      try {
+        const { AlertRepository } = await import('@dns-ops/db');
+        const current = await new AlertRepository(db).findById(alertId, alertData.tenantId);
+        if (current && current.status !== 'pending') {
+          return {
+            success: true,
+            webhookHost: result.resolvedHostname,
+            statusUpdated: true,
+          };
+        }
+      } catch {
+        /* fall through to persistence failure */
+      }
       return {
-        success: true, // Webhook succeeded, status update failed
+        success: true,
         webhookHost: result.resolvedHostname,
         statusUpdated: false,
       };

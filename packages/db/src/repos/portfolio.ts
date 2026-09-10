@@ -5,6 +5,7 @@
  * and template overrides.
  */
 
+import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import {
@@ -455,7 +456,8 @@ export class AlertRepository {
     tenantId: string,
     leaseUntil: Date,
     now = new Date()
-  ): Promise<Alert | undefined> {
+  ): Promise<{ alert: Alert; token: string } | undefined> {
+    const token = randomUUID();
     const claimable = or(
       isNull(alerts.notificationClaimedUntil),
       lt(alerts.notificationClaimedUntil, now)
@@ -468,17 +470,54 @@ export class AlertRepository {
       claimable
     );
     if (!predicate) throw new Error('Expected notification claim predicate');
-    return this.db.updateOne(alerts, { notificationClaimedUntil: leaseUntil }, predicate);
+    const alert = await this.db.updateOne(
+      alerts,
+      { notificationClaimedUntil: leaseUntil, notificationClaimToken: token },
+      predicate
+    );
+    return alert ? { alert, token } : undefined;
   }
 
-  async releaseNotificationClaim(id: string, tenantId: string): Promise<Alert | undefined> {
+  async releaseNotificationClaim(
+    id: string,
+    tenantId: string,
+    token: string
+  ): Promise<Alert | undefined> {
     const predicate = and(
       eq(alerts.id, id),
       eq(alerts.tenantId, tenantId),
-      eq(alerts.status, 'pending')
+      eq(alerts.status, 'pending'),
+      eq(alerts.notificationClaimToken, token)
     );
     if (!predicate) throw new Error('Expected notification release predicate');
-    return this.db.updateOne(alerts, { notificationClaimedUntil: null }, predicate);
+    return this.db.updateOne(
+      alerts,
+      { notificationClaimedUntil: null, notificationClaimToken: null },
+      predicate
+    );
+  }
+
+  async completeNotificationClaim(
+    id: string,
+    tenantId: string,
+    token: string
+  ): Promise<Alert | undefined> {
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending'),
+      eq(alerts.notificationClaimToken, token)
+    );
+    if (!predicate) throw new Error('Expected notification completion predicate');
+    return this.db.updateOne(
+      alerts,
+      {
+        status: 'sent',
+        notificationClaimedUntil: null,
+        notificationClaimToken: null,
+      },
+      predicate
+    );
   }
 
   async updateStatus(
@@ -514,7 +553,9 @@ export class AlertRepository {
       }
     }
 
-    return this.db.updateOne(alerts, update, eq(alerts.id, id));
+    const predicate = and(eq(alerts.id, id), eq(alerts.tenantId, tenantId));
+    if (!predicate) throw new Error('Expected alert status predicate');
+    return this.db.updateOne(alerts, update, predicate);
   }
 
   async acknowledge(

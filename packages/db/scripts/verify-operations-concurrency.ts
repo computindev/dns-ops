@@ -162,7 +162,8 @@ async function main(): Promise<void> {
     const claims = await Promise.all([
       first.query(
         `UPDATE alerts
-         SET notification_claimed_until = now() + interval '30 seconds'
+         SET notification_claimed_until = now() + interval '30 seconds',
+             notification_claim_token = gen_random_uuid()
          WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
            AND (notification_claimed_until IS NULL OR notification_claimed_until < now())
          RETURNING id`,
@@ -170,7 +171,8 @@ async function main(): Promise<void> {
       ),
       second.query(
         `UPDATE alerts
-         SET notification_claimed_until = now() + interval '30 seconds'
+         SET notification_claimed_until = now() + interval '30 seconds',
+             notification_claim_token = gen_random_uuid()
          WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
            AND (notification_claimed_until IS NULL OR notification_claimed_until < now())
          RETURNING id`,

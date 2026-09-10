@@ -110,8 +110,14 @@ function needsCanonicalDelivery(outcome: CanonicalConditionOutcome): boolean {
 type CanonicalAlertSender = (
   alertId: string,
   webhookUrl: string,
-  alert: CanonicalConditionOutcome['alert']
+  alert: CanonicalConditionOutcome['alert'],
+  claimToken?: string
 ) => Promise<{ success: boolean; error?: string; statusUpdated?: boolean } | undefined>;
+
+export type CanonicalNotificationClaim =
+  | { status: 'claimed'; token: string }
+  | { status: 'leased' }
+  | { status: 'complete' };
 
 const NOTIFICATION_LEASE_MS = 30_000;
 
@@ -120,18 +126,28 @@ async function deliverCanonicalAlert(
   input: { tenantId: string; webhookUrl?: string },
   dependencies: {
     send: CanonicalAlertSender;
-    claimPendingNotification?: (alertId: string, tenantId: string) => Promise<boolean>;
-    releaseNotificationClaim?: (alertId: string, tenantId: string) => Promise<void>;
+    claimPendingNotification?: (
+      alertId: string,
+      tenantId: string
+    ) => Promise<CanonicalNotificationClaim>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string, token: string) => Promise<void>;
   }
 ) {
   if (!input.webhookUrl || !needsCanonicalDelivery(outcome)) return;
+  let token: string | undefined;
   if (dependencies.claimPendingNotification) {
-    const claimed = await dependencies.claimPendingNotification(outcome.alert.id, input.tenantId);
-    if (!claimed) return;
+    const claim = await dependencies.claimPendingNotification(outcome.alert.id, input.tenantId);
+    if (claim.status === 'complete') return;
+    if (claim.status === 'leased') {
+      throw new Error('Canonical alert delivery claim is active');
+    }
+    token = claim.token;
   }
   let posted = false;
   try {
-    const result = await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
+    const result = token
+      ? await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert, token)
+      : await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
     posted = result?.success === true;
     if (result?.statusUpdated === false) {
       throw new Error(result.error || 'Alert sent status was not persisted');
@@ -140,8 +156,8 @@ async function deliverCanonicalAlert(
       throw new Error(result?.error || 'Canonical alert delivery failed');
     }
   } catch (error) {
-    if (!posted) {
-      await dependencies.releaseNotificationClaim?.(outcome.alert.id, input.tenantId);
+    if (!posted && token) {
+      await dependencies.releaseNotificationClaim?.(outcome.alert.id, input.tenantId, token);
     }
     throw error;
   }
@@ -196,16 +212,24 @@ export async function finalizePersistedCanonicalConditions(
           tenantId,
           new Date(Date.now() + NOTIFICATION_LEASE_MS)
         );
-        return Boolean(claimed);
+        if (claimed) return { status: 'claimed' as const, token: claimed.token };
+        const current = await alerts.findById(alertId, tenantId);
+        if (!current || current.status !== 'pending') return { status: 'complete' as const };
+        return { status: 'leased' as const };
       },
-      releaseNotificationClaim: async (alertId, tenantId) => {
-        await alerts.releaseNotificationClaim(alertId, tenantId);
+      releaseNotificationClaim: async (alertId, tenantId, token) => {
+        await alerts.releaseNotificationClaim(alertId, tenantId, token);
       },
-      send: (alertId, webhookUrl, alert) =>
+      send: (alertId, webhookUrl, alert, claimToken) =>
         sendAlertNotification(
           alertId,
           webhookUrl,
-          { ...alert, domain: input.domainName, tenantId: input.tenantId },
+          {
+            ...alert,
+            domain: input.domainName,
+            tenantId: input.tenantId,
+            claimToken,
+          },
           db,
           process.env.WEB_APP_URL
         ),
@@ -231,8 +255,11 @@ export async function finalizeCanonicalConditions(
     observer: CanonicalConditionObserver;
     resolver?: CanonicalConditionResolver;
     send: CanonicalAlertSender;
-    claimPendingNotification?: (alertId: string, tenantId: string) => Promise<boolean>;
-    releaseNotificationClaim?: (alertId: string, tenantId: string) => Promise<void>;
+    claimPendingNotification?: (
+      alertId: string,
+      tenantId: string
+    ) => Promise<CanonicalNotificationClaim>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string, token: string) => Promise<void>;
   }
 ) {
   const evaluation = evaluateOperationalConditions(input);

@@ -314,9 +314,9 @@ describe('finalizeCanonicalConditions', () => {
     };
     let claimed = false;
     const claimPendingNotification = vi.fn(async () => {
-      if (claimed) return false;
+      if (claimed) return { status: 'leased' as const };
       claimed = true;
-      return true;
+      return { status: 'claimed' as const, token: 'token-1' };
     });
     const send = vi.fn().mockResolvedValue({ success: true, statusUpdated: true });
     const observer = {
@@ -326,15 +326,22 @@ describe('finalizeCanonicalConditions', () => {
         alert: pendingAlert,
       }),
     };
-    await Promise.all([
+    const results = await Promise.allSettled([
       finalizeCanonicalConditions(input(), { observer, send, claimPendingNotification }),
       finalizeCanonicalConditions(input(), { observer, send, claimPendingNotification }),
     ]);
     expect(claimPendingNotification).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'alert-1',
+      'https://hooks.example.test/alerts',
+      pendingAlert,
+      'token-1'
+    );
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
   });
 
-  it('releases the claim after a failed send and keeps it after status persistence failure', async () => {
+  it('throws on an active lease retry and skips delivery once the alert is complete', async () => {
     const pendingAlert = {
       id: 'alert-1',
       title: 'Mail DNS configuration regression',
@@ -342,7 +349,42 @@ describe('finalizeCanonicalConditions', () => {
       severity: 'high' as const,
       status: 'pending' as const,
     };
-    const claimPendingNotification = vi.fn().mockResolvedValue(true);
+    const observer = {
+      observe: vi.fn().mockResolvedValue({
+        created: { alert: false },
+        reopened: { alert: false },
+        alert: pendingAlert,
+      }),
+    };
+    const send = vi.fn().mockResolvedValue({ success: true, statusUpdated: true });
+    await expect(
+      finalizeCanonicalConditions(input(), {
+        observer,
+        send,
+        claimPendingNotification: vi.fn().mockResolvedValue({ status: 'leased' }),
+      })
+    ).rejects.toThrow('Canonical alert delivery claim is active');
+    expect(send).not.toHaveBeenCalled();
+
+    await finalizeCanonicalConditions(input(), {
+      observer,
+      send,
+      claimPendingNotification: vi.fn().mockResolvedValue({ status: 'complete' }),
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('releases the owning claim after a failed send and keeps it after status persistence failure', async () => {
+    const pendingAlert = {
+      id: 'alert-1',
+      title: 'Mail DNS configuration regression',
+      description: 'x',
+      severity: 'high' as const,
+      status: 'pending' as const,
+    };
+    const claimPendingNotification = vi
+      .fn()
+      .mockResolvedValue({ status: 'claimed', token: 'token-1' });
     const releaseNotificationClaim = vi.fn();
     const observer = {
       observe: vi.fn().mockResolvedValue({
@@ -359,7 +401,7 @@ describe('finalizeCanonicalConditions', () => {
         releaseNotificationClaim,
       })
     ).rejects.toThrow('webhook 500');
-    expect(releaseNotificationClaim).toHaveBeenCalledWith('alert-1', 'tenant-1');
+    expect(releaseNotificationClaim).toHaveBeenCalledWith('alert-1', 'tenant-1', 'token-1');
 
     releaseNotificationClaim.mockClear();
     await expect(
