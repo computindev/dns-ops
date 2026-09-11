@@ -350,12 +350,17 @@ export class MonitoredDomainRepository {
     return this.db.updateOne(monitoredDomains, { ...data, updatedAt: new Date() }, predicate);
   }
 
-  async updateLastCheck(id: string, tenantId?: string): Promise<void> {
-    const predicate = tenantId
-      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
-      : eq(monitoredDomains.id, id);
-    if (!predicate) return;
-    await this.db.updateOne(monitoredDomains, { lastCheckAt: new Date() }, predicate);
+  async updateLastCheck(id: string, tenantId: string): Promise<boolean> {
+    const owned = and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId));
+    if (!owned) return false;
+    const predicate = and(owned, eq(monitoredDomains.isActive, true));
+    if (!predicate) return false;
+    const updated = await this.db.updateOne(
+      monitoredDomains,
+      { lastCheckAt: new Date() },
+      predicate
+    );
+    return Boolean(updated);
   }
 
   async delete(id: string, tenantId?: string): Promise<void> {

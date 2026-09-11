@@ -184,7 +184,15 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         continue;
       }
 
-      await monitoredRepo.updateLastCheck(monitored.id, monitored.tenantId);
+      const stamped = await monitoredRepo.updateLastCheck(monitored.id, monitored.tenantId);
+      if (!stamped) {
+        results.push({
+          domainId: monitored.domainId,
+          checked: false,
+          error: 'monitor inactive',
+        });
+        continue;
+      }
       results.push({ domainId: monitored.domainId, checked: true });
     }
 

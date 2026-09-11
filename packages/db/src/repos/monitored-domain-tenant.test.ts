@@ -88,7 +88,13 @@ describe('MonitoredDomainRepository tenant predicates', () => {
     });
     const updateOne = vi.fn(async (_table: unknown, _values: unknown, condition: unknown) => {
       const params = conditionValues(condition);
-      return rows.find((row) => params.includes(row.id) && params.includes(row.tenantId));
+      return rows.find(
+        (row) =>
+          params.includes(row.id) &&
+          params.includes(row.tenantId) &&
+          params.includes(true) &&
+          row.isActive
+      );
     });
     const db = { selectWhere, updateOne } as unknown as IDatabaseAdapter;
     const repo = new MonitoredDomainRepository(db);
@@ -100,14 +106,27 @@ describe('MonitoredDomainRepository tenant predicates', () => {
       expect.arrayContaining(['daily', true, 'tenant-a'])
     );
 
-    await repo.updateLastCheck('mon-a', 'tenant-a');
+    await expect(repo.updateLastCheck('mon-a', 'tenant-a')).resolves.toBe(true);
     expect(conditionValues(updateOne.mock.calls[0]?.[2])).toEqual(
-      expect.arrayContaining(['mon-a', 'tenant-a'])
+      expect.arrayContaining(['mon-a', 'tenant-a', true])
     );
-    await repo.updateLastCheck('mon-b', 'tenant-a');
-    expect(updateOne.mock.calls[1]?.[2]).toBeDefined();
+    await expect(repo.updateLastCheck('mon-b', 'tenant-a')).resolves.toBe(false);
     expect(conditionValues(updateOne.mock.calls[1]?.[2])).toEqual(
-      expect.arrayContaining(['mon-b', 'tenant-a'])
+      expect.arrayContaining(['mon-b', 'tenant-a', true])
+    );
+  });
+
+  it('refuses updateLastCheck when the monitor is inactive', async () => {
+    const updateOne = vi.fn(async (_table: unknown, _values: unknown, condition: unknown) => {
+      const params = conditionValues(condition);
+      if (!params.includes(true)) return undefined;
+      return undefined;
+    });
+    const db = { updateOne } as unknown as IDatabaseAdapter;
+    const repo = new MonitoredDomainRepository(db);
+    await expect(repo.updateLastCheck('mon-inactive', 'tenant-a')).resolves.toBe(false);
+    expect(conditionValues(updateOne.mock.calls[0]?.[2])).toEqual(
+      expect.arrayContaining(['mon-inactive', 'tenant-a', true])
     );
   });
 });

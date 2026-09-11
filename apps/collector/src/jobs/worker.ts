@@ -14,6 +14,7 @@ import {
   DomainRepository,
   FindingRepository,
   FleetReportRepository,
+  type IDatabaseAdapter,
   MonitoredDomainRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
@@ -66,6 +67,25 @@ function validateMonitoringRefreshJobData(data: MonitoringRefreshJobData): void 
   if (!data.monitoredDomainId || !data.domainId || !isValidDomain(data.domainName)) {
     validationError('monitoring refresh job data is invalid');
   }
+}
+
+async function stampActiveMonitorLastCheck(
+  db: IDatabaseAdapter,
+  monitoredDomainId: string,
+  tenantId: string,
+  domainId: string
+): Promise<boolean> {
+  const monitoredRepo = new MonitoredDomainRepository(db);
+  const monitored = await monitoredRepo.findById(monitoredDomainId, tenantId);
+  if (
+    !monitored ||
+    !monitored.isActive ||
+    monitored.tenantId !== tenantId ||
+    monitored.domainId !== domainId
+  ) {
+    return false;
+  }
+  return monitoredRepo.updateLastCheck(monitoredDomainId, tenantId);
 }
 
 function validateFleetReportJobData(data: FleetReportJobData): void {
@@ -246,7 +266,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
         throw new Error('Canonical finalization failed');
       }
       if (evidenceDomain) {
-        await new MonitoredDomainRepository(db).updateLastCheck(monitoredDomainId, tenantId);
+        await stampActiveMonitorLastCheck(db, monitoredDomainId, tenantId, evidenceDomain.id);
       }
     }
 
@@ -503,7 +523,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
       });
       throw finalizationError;
     }
-    await monitoredRepo.updateLastCheck(monitoredDomainId, tenantId);
+    await stampActiveMonitorLastCheck(db, monitoredDomainId, tenantId, domain.id);
 
     await job.updateProgress(100);
 
