@@ -104,12 +104,22 @@ describe('generateAlertsFromFindings', () => {
       return '';
     };
 
-    const getConditionParam = (condition: unknown): unknown => {
-      const sql = condition as {
-        queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+    const getConditionParams = (condition: unknown): unknown[] => {
+      const values: unknown[] = [];
+      const walk = (node: unknown) => {
+        if (!node || typeof node !== 'object') return;
+        const candidate = node as {
+          constructor?: { name?: string };
+          value?: unknown;
+          queryChunks?: unknown[];
+        };
+        if (candidate.constructor?.name === 'Param') values.push(candidate.value);
+        for (const chunk of candidate.queryChunks ?? []) walk(chunk);
       };
-      return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+      walk(condition);
+      return values;
     };
+    const getConditionParam = (condition: unknown): unknown => getConditionParams(condition)[0];
 
     let alertIdCounter = 0;
 
@@ -131,10 +141,11 @@ describe('generateAlertsFromFindings', () => {
       selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
         const tableName = getTableName(table);
         const param = getConditionParam(condition);
+        const params = getConditionParams(condition);
 
         if (tableName === 'monitored_domains') {
-          return data.monitoredDomains.filter(
-            (m) => m.domainId === param || m.tenantId === param || m.id === param
+          return data.monitoredDomains.filter((m) =>
+            params.some((value) => m.domainId === value || m.tenantId === value || m.id === value)
           );
         }
         if (tableName === 'findings') {
@@ -218,6 +229,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
       mockData.findings.push(createMockFinding({ type: 'unclassified.condition' }));
 
@@ -233,6 +245,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
       mockData.findings.push(createMockFinding({ type: 'mail.no-spf-record' }));
 
@@ -248,6 +261,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
       mockData.findings.push(createMockFinding({ type: 'mail.no-dmarc-record' }));
 
@@ -263,6 +277,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
 
       mockData.findings.push(
@@ -293,6 +308,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
 
       // No findings in mockData
@@ -309,6 +325,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 
@@ -370,6 +387,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 
@@ -406,6 +424,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 
@@ -445,6 +464,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 
@@ -482,12 +502,58 @@ describe('generateAlertsFromFindings', () => {
     });
   });
 
+  describe('monitor epoch fencing', () => {
+    it('skips inactive monitors and stale queued ids', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+        isActive: false,
+      });
+      mockData.findings.push(createMockFinding({ severity: 'high' }));
+
+      const inactive = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID);
+      expect(inactive).toEqual([]);
+
+      mockData.monitoredDomains[0] = {
+        id: 'monitor-recreated',
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+        isActive: true,
+      };
+      const stale = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID, {
+        monitoredDomainId: MONITORED_DOMAIN_ID,
+      });
+      expect(stale).toEqual([]);
+      expect(mockData.alerts).toEqual([]);
+    });
+
+    it('uses the exact queued monitor id when active', async () => {
+      const { generateAlertsFromFindings } = await import('./alert-from-findings.js');
+      mockData.monitoredDomains.push({
+        id: MONITORED_DOMAIN_ID,
+        domainId: DOMAIN_ID,
+        tenantId: TENANT_ID,
+        isActive: true,
+      });
+      mockData.findings.push(createMockFinding({ severity: 'high' }));
+
+      const results = await generateAlertsFromFindings(mockDb, SNAPSHOT_ID, TENANT_ID, DOMAIN_ID, {
+        monitoredDomainId: MONITORED_DOMAIN_ID,
+      });
+      expect(results).toHaveLength(1);
+      expect(mockData.alerts[0]?.monitoredDomainId).toBe(MONITORED_DOMAIN_ID);
+    });
+  });
+
   describe('Error handling', () => {
     beforeEach(() => {
       mockData.monitoredDomains.push({
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 
@@ -552,6 +618,7 @@ describe('generateAlertsFromFindings', () => {
         id: MONITORED_DOMAIN_ID,
         domainId: DOMAIN_ID,
         tenantId: TENANT_ID,
+        isActive: true,
       });
     });
 

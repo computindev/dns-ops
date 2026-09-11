@@ -865,4 +865,60 @@ describe('Webhook Notification Integration', () => {
       expect(webhookUrl).not.toBe(hostname); // Confirm we should extract hostname only
     });
   });
+
+  describe('collector epoch fencing', () => {
+    it('includes monitoredDomainId on the collector request', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response(JSON.stringify({ resultState: 'complete' }), { status: 201 })
+        );
+      const db = createMockDb({
+        monitoredDomains: [createMockMonitoredDomain({ lastAlertAt: null })],
+        domains: [{ id: 'dom-1', name: 'example.com', tenantId: NORMALIZED_TENANT_ID }],
+        alerts: [],
+      });
+      (db as { selectWhere: unknown }).selectWhere = async () => [
+        createMockMonitoredDomain({ lastAlertAt: null }),
+      ];
+      (db as { selectOne: unknown }).selectOne = async () => ({
+        id: 'dom-1',
+        name: 'example.com',
+        tenantId: NORMALIZED_TENANT_ID,
+      });
+      (db as { updateOne: unknown }).updateOne = vi.fn().mockResolvedValue({
+        id: 'mon-1',
+        isActive: true,
+      });
+
+      const app = new Hono<Env>();
+      app.use('*', async (c, next) => {
+        c.set('db', db as Env['Variables']['db']);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+
+      try {
+        const res = await app.request('/api/monitoring/check', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Secret': 'test-internal-secret',
+            'X-Tenant-Id': 'test-tenant',
+            'X-Actor-Id': 'test-actor',
+          },
+          body: JSON.stringify({ schedule: 'daily' }),
+        });
+        expect(res.status).toBe(200);
+        expect(fetchSpy).toHaveBeenCalled();
+        const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as {
+          monitoredDomainId?: string;
+        };
+        expect(body.monitoredDomainId).toBe('mon-1');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
 });

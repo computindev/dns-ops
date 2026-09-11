@@ -118,6 +118,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         body: JSON.stringify({
           domain: domain.name,
           triggeredBy: 'monitoring-scheduler',
+          monitoredDomainId: monitored.id,
         }),
       });
 

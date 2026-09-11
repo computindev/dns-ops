@@ -215,12 +215,12 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     method: 'GET',
     policy: 'auth-read',
   },
-  // Findings evaluation trigger (requires auth)
+  // Findings evaluation trigger (write: tenant-owned snapshot re-publish)
   {
     path: '/api/snapshot/:snapshotId/evaluate',
     method: 'POST',
-    policy: 'auth-read',
-    notes: 'Uses requireAuth, creates findings in DB',
+    policy: 'auth-write',
+    notes: 'Uses requireWritePermission and tenant-scoped snapshot ownership',
   },
   // Findings backfill (admin-like but uses requireAuth)
   {

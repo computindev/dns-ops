@@ -32,7 +32,10 @@ import {
 import { getJobMetrics } from '../middleware/job-metrics.js';
 import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import { generateAndSendFindingAlerts } from './alert-from-findings.js';
-import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
+import {
+  acceptQueuedMonitor,
+  finalizePersistedCanonicalConditions,
+} from './operational-condition-finalizer.js';
 import {
   type CollectDomainJobData,
   type FleetReportJobData,
@@ -272,32 +275,39 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
     }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook
-    // Alerts only apply to monitored domains — the function handles the lookup
+    // Alerts only apply to the exact queued monitor epoch when one is present.
     try {
       const domainRecord = await new DomainRepository(db).findByNameForTenant(domain, tenantId);
       if (domainRecord) {
-        // Look up monitored domain to get configured webhook URL
-        const monitored = await new MonitoredDomainRepository(db).findByDomainId(
-          domainRecord.id,
-          tenantId
-        );
-        const webhookUrl = monitored?.alertChannels?.webhook;
-
-        const { alerts, webhookSent } = await generateAndSendFindingAlerts(
-          db,
-          result.snapshotId,
-          tenantId,
-          domainRecord.id,
-          domain,
-          webhookUrl
-        );
-        if (alerts.length > 0) {
-          logger.info('Generated alerts from findings', {
-            snapshotId: result.snapshotId,
-            alertCount: alerts.length,
-            webhookSent,
+        const monitoredRepo = new MonitoredDomainRepository(db);
+        const monitored = monitoredDomainId
+          ? await monitoredRepo.findById(monitoredDomainId, tenantId)
+          : await monitoredRepo.findByDomainId(domainRecord.id, tenantId);
+        if (
+          acceptQueuedMonitor(monitored, {
+            tenantId,
+            domainId: domainRecord.id,
+            monitoredDomainId,
+          })
+        ) {
+          const webhookUrl = monitored?.alertChannels?.webhook;
+          const { alerts, webhookSent } = await generateAndSendFindingAlerts(
+            db,
+            result.snapshotId,
+            tenantId,
+            domainRecord.id,
             domain,
-          });
+            webhookUrl,
+            monitoredDomainId
+          );
+          if (alerts.length > 0) {
+            logger.info('Generated alerts from findings', {
+              snapshotId: result.snapshotId,
+              alertCount: alerts.length,
+              webhookSent,
+              domain,
+            });
+          }
         }
       }
     } catch (alertError) {

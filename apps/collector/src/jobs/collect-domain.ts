@@ -39,7 +39,7 @@ import {
   type CollectDomainResponse,
   validateCollectDomainRequest,
 } from '@dns-ops/contracts';
-import { DomainRepository, SnapshotRepository } from '@dns-ops/db';
+import { DomainRepository, MonitoredDomainRepository, SnapshotRepository } from '@dns-ops/db';
 import { isValidDomain, normalizeDomain } from '@dns-ops/parsing';
 import { Hono } from 'hono';
 import { DNSCollector } from '../dns/collector.js';
@@ -141,6 +141,16 @@ collectDomainRoutes.post('/domain', async (c) => {
     // First, find the domain by name to get the domain ID
     const domainRepo = new DomainRepository(db);
     const domain = await domainRepo.findByNameForTenant(normalizedDomain, tenantId);
+    const monitoredDomainId = req.monitoredDomainId;
+    if (monitoredDomainId && domain) {
+      const monitored = await new MonitoredDomainRepository(db).findById(
+        monitoredDomainId,
+        tenantId
+      );
+      if (monitored && (monitored.domainId !== domain.id || monitored.tenantId !== tenantId)) {
+        return c.json({ error: 'Monitored domain not found' }, 404);
+      }
+    }
 
     if (domain) {
       // Domain exists, check for recent snapshots using the domain ID (UUID)
@@ -152,6 +162,7 @@ collectDomainRoutes.post('/domain', async (c) => {
           tenantId,
           domainId: domain.id,
           domainName: domain.normalizedName,
+          monitoredDomainId,
         });
         logger.info('Collection skipped - recent snapshot exists', {
           domain: normalizedDomain,
@@ -197,6 +208,7 @@ collectDomainRoutes.post('/domain', async (c) => {
         tenantId,
         domainId: collectedDomain.id,
         domainName: collectedDomain.normalizedName,
+        monitoredDomainId,
       });
     }
 

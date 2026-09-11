@@ -231,8 +231,8 @@ describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {
     const coverageOrder = snapshotRepo.updateEvaluationCoverage.mock.invocationCallOrder[0];
     const persistOrder = findingRepo.createMany.mock.invocationCallOrder[0];
     const rulesetOrder = snapshotRepo.updateRulesetVersion.mock.invocationCallOrder[0];
-    expect(persistOrder).toBeLessThan(coverageOrder ?? Number.POSITIVE_INFINITY);
-    expect(coverageOrder).toBeLessThan(rulesetOrder ?? Number.POSITIVE_INFINITY);
+    expect(persistOrder).toBeLessThan(rulesetOrder ?? Number.POSITIVE_INFINITY);
+    expect(rulesetOrder).toBeLessThan(coverageOrder ?? Number.POSITIVE_INFINITY);
   });
 
   it('FIX-01: persists partial evaluation coverage when a rule is UNKNOWN', async () => {
@@ -353,5 +353,52 @@ describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {
     ]);
 
     await expect(collector.collect()).rejects.toThrow('coverage persist failed');
+  });
+
+  it('does not advertise COMPLETE when finding persistence fails', async () => {
+    const { FindingRepository, SnapshotRepository } = await import('@dns-ops/db');
+    vi.mocked(FindingRepository).mockImplementationOnce(function () {
+      this.createMany = vi.fn().mockRejectedValue(new Error('findings persist failed'));
+    } as never);
+    const collector = new DNSCollector(baseConfig, mockDb);
+    vi.spyOn(
+      collector as unknown as { discoverAuthoritativeServers: () => Promise<string[]> },
+      'discoverAuthoritativeServers'
+    ).mockResolvedValue([]);
+    vi.spyOn(
+      collector as unknown as {
+        collectFromVantage: (
+          queries: unknown[],
+          vantage: { type: string; identifier: string }
+        ) => Promise<unknown[]>;
+      },
+      'collectFromVantage'
+    ).mockResolvedValue([
+      {
+        query: { name: 'example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        answers: [{ name: 'example.com', type: 'A', ttl: 300, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 50,
+        responseCode: 0,
+      },
+    ]);
+
+    await expect(collector.collect()).rejects.toThrow('findings persist failed');
+
+    const snapshotRepo = vi.mocked(SnapshotRepository).mock.instances.at(-1) as {
+      updateEvaluationCoverage: ReturnType<typeof vi.fn>;
+      updateRulesetVersion: ReturnType<typeof vi.fn>;
+    };
+    expect(snapshotRepo.updateEvaluationCoverage).toHaveBeenCalledWith(
+      'snapshot-1',
+      expect.objectContaining({ state: 'PARTIAL' })
+    );
+    const completeCall = snapshotRepo.updateEvaluationCoverage.mock.calls.find(
+      (call) => (call[1] as { state?: string }).state === 'COMPLETE'
+    );
+    expect(completeCall).toBeUndefined();
   });
 });

@@ -25,6 +25,7 @@ interface MockState {
   rulesetVersions: Array<Record<string, unknown>>;
   mailEvidence: Array<Record<string, unknown>>;
   dkimSelectors: Array<Record<string, unknown>>;
+  failInsertMany?: boolean;
 }
 
 function getTableName(table: unknown): string {
@@ -126,6 +127,7 @@ function createMockDb(state: MockState): IDatabaseAdapter {
       return { id: `new-${Date.now()}`, ...values };
     }),
     insertMany: vi.fn(async (table: unknown, rows: Array<Record<string, unknown>>) => {
+      if (state.failInsertMany) throw new Error('persist failed');
       const tableName = getTableName(table);
       return rows.map((values, i) => {
         const row = {
@@ -158,10 +160,26 @@ function createMockDb(state: MockState): IDatabaseAdapter {
           state.findings[index] = { ...state.findings[index], ...values };
           return state.findings[index];
         }
+        if (tableName === 'snapshots') {
+          const index = state.snapshots.findIndex((row) => row.id === param);
+          if (index === -1) return undefined;
+          state.snapshots[index] = { ...state.snapshots[index], ...values };
+          return state.snapshots[index];
+        }
         return undefined;
       }
     ),
-    delete: vi.fn(),
+    delete: vi.fn(async (table: unknown, condition: unknown) => {
+      const tableName = getTableName(table);
+      const param = getConditionParam(condition);
+      if (tableName === 'findings') {
+        const remaining = state.findings.filter((row) => row.id !== param);
+        const removed = state.findings.length - remaining.length;
+        state.findings = remaining;
+        return removed;
+      }
+      return 0;
+    }),
     deleteOne: vi.fn(),
     transaction: vi.fn(async (callback: (db: IDatabaseAdapter) => Promise<unknown>) =>
       callback(createMockDb(state))
@@ -364,10 +382,8 @@ describe('findingsRoutes runtime', () => {
   describe('POST /snapshot/:snapshotId/evaluate', () => {
     it('persists ruleset version createdBy from auth context, not X-Actor-Id header', async () => {
       const state = makeState();
-      const app = createApp(state, true); // Auth context sets actorId = 'actor-1'
-      const fetchSpy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValue(new Response(JSON.stringify({ persisted: true }), { status: 200 }));
+      const app = createApp(state, true);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
       try {
         const response = await app.request('/api/snapshot/snap-1/evaluate', {
@@ -376,11 +392,81 @@ describe('findingsRoutes runtime', () => {
         });
 
         expect(response.status).toBe(200);
+        expect(fetchSpy).not.toHaveBeenCalled();
         expect(state.rulesetVersions).toHaveLength(1);
         expect(state.rulesetVersions[0].createdBy).toBe('actor-1');
       } finally {
         fetchSpy.mockRestore();
       }
+    });
+
+    it('returns 404 and does not delete findings for another tenant', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+        findings: [
+          {
+            id: 'finding-keep',
+            snapshotId: 'snap-1',
+            rulesetVersionId: 'rv-1',
+            type: 'dns.authoritative-failure',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/evaluate', { method: 'POST' });
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ error: 'Snapshot not found' });
+      expect(state.findings).toHaveLength(1);
+      expect(state.findings[0]?.id).toBe('finding-keep');
+    });
+
+    it('does not advertise COMPLETE when replacement persist fails', async () => {
+      const state = makeState({
+        failInsertMany: true,
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: 'rv-1',
+            metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+          },
+        ],
+        rulesetVersions: [
+          {
+            id: 'rv-1',
+            version: '1.2.0',
+            name: 'DNS and Mail Rules',
+            active: true,
+            createdAt: new Date(),
+          },
+        ],
+        findings: [
+          {
+            id: 'finding-old',
+            snapshotId: 'snap-1',
+            rulesetVersionId: 'rv-1',
+            type: 'dns.authoritative-failure',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/snapshot/snap-1/evaluate', { method: 'POST' });
+
+      expect(response.status).toBe(500);
+      const coverage = (state.snapshots[0]?.metadata as { evaluation?: { state?: string } })
+        ?.evaluation;
+      expect(coverage?.state).toBe('PARTIAL');
+      expect(state.snapshots[0]?.rulesetVersionId).toBeNull();
     });
   });
 

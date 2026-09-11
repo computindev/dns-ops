@@ -132,6 +132,40 @@ export class SnapshotRepository {
     return this.db.updateOne(snapshots, { rulesetVersionId }, eq(snapshots.id, id));
   }
 
+  async unpublishEvaluation(id: string): Promise<Snapshot | undefined> {
+    const existing = await this.findById(id);
+    if (!existing) return undefined;
+    return this.db.updateOne(
+      snapshots,
+      {
+        rulesetVersionId: null,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          evaluation: {
+            state: 'PARTIAL',
+            errors: [
+              {
+                code: 'RULE_EXECUTION_FAILED',
+                ruleId: 'ruleset',
+                message: 'Replacement findings are not yet published',
+                status: 'UNKNOWN',
+                unknown: {
+                  reason: 'CHECK_EVALUATION_FAILED',
+                  explanation:
+                    'A findings refresh has not finished publishing replacement results.',
+                  action: 'RUN_FRESH_SCAN',
+                  actionLabel: 'Run a fresh scan',
+                  blocking: true,
+                },
+              },
+            ],
+          },
+        },
+      },
+      eq(snapshots.id, id)
+    );
+  }
+
   /**
    * Persist whether every enabled rule completed. Evaluation failures degrade a
    * complete snapshot to partial so downstream API, UI, and MCP consumers cannot

@@ -83,4 +83,26 @@ describe('SnapshotRepository evaluation coverage', () => {
 
     expect(updated?.resultState).toBe('failed');
   });
+
+  it('unpublishes coverage without changing collection resultState', async () => {
+    const existing = snapshot({
+      rulesetVersionId: 'ruleset-1',
+      metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+    });
+    const updateOne = vi.fn().mockImplementation(async (_table, values) => ({
+      ...existing,
+      ...values,
+    }));
+    const db = {
+      selectOne: vi.fn().mockResolvedValue(existing),
+      updateOne,
+    } as unknown as IDatabaseAdapter;
+    const repo = new SnapshotRepository(db);
+
+    const updated = await repo.unpublishEvaluation(existing.id);
+
+    expect(updated?.resultState).toBe('complete');
+    expect(updated?.rulesetVersionId).toBeNull();
+    expect(updated?.metadata?.evaluation?.state).toBe('PARTIAL');
+  });
 });

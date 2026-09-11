@@ -774,13 +774,13 @@ export class DNSCollector {
       const { findings, suggestions, errors, complete } = engine.evaluate(context);
 
       if (findings.length === 0) {
+        if (complete) {
+          await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+        }
         await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
           state: complete ? 'COMPLETE' : 'PARTIAL',
           errors,
         });
-        if (complete) {
-          await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
-        }
         return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: errors.length };
       }
 
@@ -837,13 +837,13 @@ export class DNSCollector {
         await this.suggestionRepo.createMany(suggestionsToInsert);
       }
 
+      if (complete) {
+        await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+      }
       await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
         state: complete ? 'COMPLETE' : 'PARTIAL',
         errors,
       });
-      if (complete) {
-        await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
-      }
 
       return {
         findingsCount: persistedFindings.length,
