@@ -42,6 +42,9 @@ export interface CollectDomainRequest {
 
   /** Selectors from managed zone config */
   managedDkimSelectors?: string[];
+
+  /** Exact monitored-domain epoch to fence canonical finalization */
+  monitoredDomainId?: string;
 }
 
 /**
@@ -350,7 +353,11 @@ export interface ApiErrorResponse {
 export function validateCollectDomainRequest(req: unknown): req is CollectDomainRequest {
   if (!req || typeof req !== 'object') return false;
   const r = req as Record<string, unknown>;
-  return typeof r.domain === 'string' && r.domain.length > 0;
+  if (typeof r.domain !== 'string' || r.domain.length === 0) return false;
+  if (r.monitoredDomainId !== undefined) {
+    if (typeof r.monitoredDomainId !== 'string' || r.monitoredDomainId.length === 0) return false;
+  }
+  return true;
 }
 
 /**

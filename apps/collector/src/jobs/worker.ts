@@ -14,6 +14,7 @@ import {
   DomainRepository,
   FindingRepository,
   FleetReportRepository,
+  type IDatabaseAdapter,
   MonitoredDomainRepository,
   SnapshotRepository,
 } from '@dns-ops/db';
@@ -31,7 +32,10 @@ import {
 import { getJobMetrics } from '../middleware/job-metrics.js';
 import { collectAndPersistDomainEvidence } from '../probes/domain-evidence.js';
 import { generateAndSendFindingAlerts } from './alert-from-findings.js';
-import { finalizePersistedCanonicalConditions } from './operational-condition-finalizer.js';
+import {
+  acceptQueuedMonitor,
+  finalizePersistedCanonicalConditions,
+} from './operational-condition-finalizer.js';
 import {
   type CollectDomainJobData,
   type FleetReportJobData,
@@ -66,6 +70,25 @@ function validateMonitoringRefreshJobData(data: MonitoringRefreshJobData): void 
   if (!data.monitoredDomainId || !data.domainId || !isValidDomain(data.domainName)) {
     validationError('monitoring refresh job data is invalid');
   }
+}
+
+async function stampActiveMonitorLastCheck(
+  db: IDatabaseAdapter,
+  monitoredDomainId: string,
+  tenantId: string,
+  domainId: string
+): Promise<boolean> {
+  const monitoredRepo = new MonitoredDomainRepository(db);
+  const monitored = await monitoredRepo.findById(monitoredDomainId, tenantId);
+  if (
+    !monitored ||
+    !monitored.isActive ||
+    monitored.tenantId !== tenantId ||
+    monitored.domainId !== domainId
+  ) {
+    return false;
+  }
+  return monitoredRepo.updateLastCheck(monitoredDomainId, tenantId);
 }
 
 function validateFleetReportJobData(data: FleetReportJobData): void {
@@ -171,8 +194,15 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
   snapshotId?: string;
   error?: string;
 }> {
-  const { tenantId, domain, zoneManagement, triggeredBy, includeMailRecords, dkimSelectors } =
-    job.data;
+  const {
+    tenantId,
+    domain,
+    zoneManagement,
+    triggeredBy,
+    includeMailRecords,
+    dkimSelectors,
+    monitoredDomainId,
+  } = job.data;
   const startTime = Date.now();
 
   trackJobStart({
@@ -216,6 +246,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
       }
     }
 
+    let finalizationFailed = false;
     if (evidenceDomain) {
       try {
         await finalizePersistedCanonicalConditions(db, {
@@ -223,45 +254,60 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
           tenantId,
           domainId: evidenceDomain.id,
           domainName: evidenceDomain.normalizedName,
+          monitoredDomainId,
         });
       } catch (finalizationError) {
-        logger.warn('Canonical condition finalization failed (non-fatal)', {
-          snapshotId: result.snapshotId,
-          error:
-            finalizationError instanceof Error
-              ? finalizationError.message
-              : String(finalizationError),
-        });
+        finalizationFailed = true;
+        throw finalizationError;
+      }
+    }
+
+    if (monitoredDomainId) {
+      if (result.resultState !== 'complete') {
+        throw new Error(`Collection resultState is ${result.resultState}, not complete`);
+      }
+      if (finalizationFailed) {
+        throw new Error('Canonical finalization failed');
+      }
+      if (evidenceDomain) {
+        await stampActiveMonitorLastCheck(db, monitoredDomainId, tenantId, evidenceDomain.id);
       }
     }
 
     // JOB-002: Generate alerts from high-severity findings and deliver via webhook
-    // Alerts only apply to monitored domains — the function handles the lookup
+    // Alerts only apply to the exact queued monitor epoch when one is present.
     try {
       const domainRecord = await new DomainRepository(db).findByNameForTenant(domain, tenantId);
       if (domainRecord) {
-        // Look up monitored domain to get configured webhook URL
-        const monitored = await new MonitoredDomainRepository(db).findByDomainId(
-          domainRecord.id,
-          tenantId
-        );
-        const webhookUrl = monitored?.alertChannels?.webhook;
-
-        const { alerts, webhookSent } = await generateAndSendFindingAlerts(
-          db,
-          result.snapshotId,
-          tenantId,
-          domainRecord.id,
-          domain,
-          webhookUrl
-        );
-        if (alerts.length > 0) {
-          logger.info('Generated alerts from findings', {
-            snapshotId: result.snapshotId,
-            alertCount: alerts.length,
-            webhookSent,
+        const monitoredRepo = new MonitoredDomainRepository(db);
+        const monitored = monitoredDomainId
+          ? await monitoredRepo.findById(monitoredDomainId, tenantId)
+          : await monitoredRepo.findByDomainId(domainRecord.id, tenantId);
+        if (
+          acceptQueuedMonitor(monitored, {
+            tenantId,
+            domainId: domainRecord.id,
+            monitoredDomainId,
+          })
+        ) {
+          const webhookUrl = monitored?.alertChannels?.webhook;
+          const { alerts, webhookSent } = await generateAndSendFindingAlerts(
+            db,
+            result.snapshotId,
+            tenantId,
+            domainRecord.id,
             domain,
-          });
+            webhookUrl,
+            monitoredDomainId
+          );
+          if (alerts.length > 0) {
+            logger.info('Generated alerts from findings', {
+              snapshotId: result.snapshotId,
+              alertCount: alerts.length,
+              webhookSent,
+              domain,
+            });
+          }
         }
       }
     } catch (alertError) {
@@ -355,8 +401,8 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
         // Look up domain details
         const domain = await domainRepo.findById(monitored.domainId);
-        if (!domain) {
-          logger.warn('Domain not found for monitored domain', {
+        if (!domain || domain.tenantId !== monitored.tenantId) {
+          logger.warn('Skipping monitored domain with missing or mismatched tenant ownership', {
             monitoredDomainId: monitored.id,
             domainId: monitored.domainId,
           });
@@ -372,6 +418,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
             zoneManagement: domain.zoneManagement || 'unknown',
             triggeredBy: `monitoring:${schedule}`,
             includeMailRecords: true,
+            monitoredDomainId: monitored.id,
           },
           {
             jobId: `monitoring-${monitored.id}-${Date.now()}`,
@@ -446,6 +493,16 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
 
     const collector = new DNSCollector(config, db);
     const result = await collector.collect();
+    const monitoredRepo = new MonitoredDomainRepository(db);
+    const monitored = await monitoredRepo.findById(monitoredDomainId, tenantId);
+    if (!monitored || monitored.domainId !== domain.id || monitored.tenantId !== tenantId) {
+      throw new UnrecoverableError(
+        `Monitored domain ${monitoredDomainId} is outside the monitoring tenant`
+      );
+    }
+    if (result.resultState !== 'complete') {
+      throw new Error(`Collection resultState is ${result.resultState}, not complete`);
+    }
 
     try {
       await collectAndPersistDomainEvidence(db, {
@@ -466,6 +523,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
         tenantId,
         domainId: domain.id,
         domainName: domain.normalizedName,
+        monitoredDomainId,
       });
     } catch (finalizationError) {
       logger.error('Canonical condition finalization failed; monitoring refresh will retry', {
@@ -477,6 +535,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
       });
       throw finalizationError;
     }
+    await stampActiveMonitorLastCheck(db, monitoredDomainId, tenantId, domain.id);
 
     await job.updateProgress(100);
 

@@ -26,6 +26,7 @@ export type CollectDomainJobData = {
   triggeredBy: string;
   includeMailRecords?: boolean;
   dkimSelectors?: string[];
+  monitoredDomainId?: string;
 };
 
 export type MonitoringRefreshJobData = {

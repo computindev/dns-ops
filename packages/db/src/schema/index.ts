@@ -755,6 +755,11 @@ export const monitoredDomains = pgTable(
     tenantIdx: index('monitored_domain_tenant_idx').on(table.tenantId),
     activeIdx: index('monitored_domain_active_idx').on(table.isActive),
     scheduleIdx: index('monitored_domain_schedule_idx').on(table.schedule),
+    domainTenantFk: foreignKey({
+      columns: [table.domainId, table.tenantId],
+      foreignColumns: [domains.id, domains.tenantId],
+      name: 'monitored_domain_domain_tenant_fk',
+    }).onDelete('cascade'),
   })
 );
 
@@ -794,7 +799,7 @@ export const operationalConditionBaselines = pgTable(
     tenantId: uuid('tenant_id').notNull(),
     domainId: uuid('domain_id').notNull(),
     kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
-    discriminator: varchar('discriminator', { length: 64 }).notNull(),
+    discriminator: varchar('discriminator', { length: 512 }).notNull(),
     sourceSnapshotId: uuid('source_snapshot_id')
       .notNull()
       .references(() => snapshots.id),
@@ -864,7 +869,7 @@ export const internalSignals = pgTable(
       .notNull()
       .references(() => domains.id, { onDelete: 'cascade' }),
     kind: internalSignalKindEnum('kind').notNull().$type<InternalSignalKind>(),
-    conditionKey: varchar('condition_key', { length: 500 }).notNull(),
+    conditionKey: varchar('condition_key', { length: 1024 }).notNull(),
     status: internalSignalStatusEnum('status').notNull().default('ACTIVE'),
     firstSeenSnapshotId: uuid('first_seen_snapshot_id').references(() => snapshots.id),
     lastSeenSnapshotId: uuid('last_seen_snapshot_id').references(() => snapshots.id),
@@ -983,9 +988,12 @@ export const alerts = pgTable(
 
     // Status
     status: alertStatusEnum('status').notNull().default('pending'),
+    /** Exclusive webhook delivery lease; expired or null means the alert may be claimed. */
+    notificationClaimedUntil: timestamp('notification_claimed_until', { withTimezone: true }),
+    notificationClaimToken: varchar('notification_claim_token', { length: 64 }),
 
     // Deduplication
-    dedupKey: varchar('dedup_key', { length: 200 }), // For grouping similar alerts
+    dedupKey: varchar('dedup_key', { length: 1024 }), // tenant:domain:kind:discriminator
 
     // Acknowledgment
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
@@ -1004,6 +1012,10 @@ export const alerts = pgTable(
     monitoredIdx: index('alert_monitored_idx').on(table.monitoredDomainId),
     statusIdx: index('alert_status_idx').on(table.status),
     tenantIdx: index('alert_tenant_idx').on(table.tenantId),
+    notificationClaimIdx: index('alert_notification_claim_idx').on(
+      table.status,
+      table.notificationClaimedUntil
+    ),
     dedupIdx: index('alert_dedup_idx').on(table.dedupKey),
     signalUnique: uniqueIndex('alert_signal_unique').on(table.signalId),
     createdIdx: index('alert_created_idx').on(table.createdAt),

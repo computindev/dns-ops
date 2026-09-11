@@ -212,7 +212,8 @@ export class SnapshotRepositoryResults {
    */
   async findNeedingBackfillResult(
     targetRulesetVersionId: string,
-    options?: {
+    options: {
+      tenantId: string;
       domainId?: string;
       limit?: number;
       completedOnly?: boolean;

@@ -53,8 +53,12 @@ beforeEach(() => {
     ]),
   };
   vi.clearAllMocks();
-  // Default: fetch succeeds (so /check doesn't try to create alerts)
-  mockFetch.mockResolvedValue({ ok: true, status: 200 });
+  // Default: complete collection so /check may stamp lastCheckAt
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 201,
+    json: async () => ({ success: true, resultState: 'complete' }),
+  });
 });
 
 afterEach(() => {
@@ -121,10 +125,48 @@ function createMockDb(
       return Promise.resolve([]);
     },
 
-    selectWhere: (table: unknown, _condition: unknown) => {
+    selectWhere: (table: unknown, condition: unknown) => {
       const name = getTableName(table);
+      const params: unknown[] = [];
+      const walk = (node: unknown) => {
+        if (node == null) return;
+        if (typeof node === 'string' || typeof node === 'boolean' || typeof node === 'number') {
+          params.push(node);
+          return;
+        }
+        if (typeof node !== 'object') return;
+        const candidate = node as { value?: unknown; queryChunks?: unknown[] };
+        if (
+          candidate.value !== undefined &&
+          (typeof candidate.value === 'string' ||
+            typeof candidate.value === 'boolean' ||
+            typeof candidate.value === 'number')
+        ) {
+          params.push(candidate.value);
+        }
+        if (Array.isArray(candidate.value)) candidate.value.forEach(walk);
+        for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+      };
+      walk(condition);
       if (tableMatches(name)) {
-        if (name.includes('monitored')) return Promise.resolve(monitoredDomains);
+        if (name.includes('monitored')) {
+          return Promise.resolve(
+            monitoredDomains.filter((row) => {
+              const extras = params.filter(
+                (value) =>
+                  value !== row.domainId &&
+                  value !== row.id &&
+                  value !== row.schedule &&
+                  value !== true &&
+                  value !== false
+              );
+              if (extras.length > 0 && !extras.includes(row.tenantId)) return false;
+              if (params.includes(row.domainId) || params.includes(row.id)) return true;
+              if (params.includes(row.schedule)) return !params.includes(true) || row.isActive;
+              return extras.includes(row.tenantId) || extras.length === 0;
+            })
+          );
+        }
         if (name.includes('alert')) return Promise.resolve(alerts);
         if (name.includes('domain')) return Promise.resolve(domains);
       }
@@ -578,7 +620,11 @@ describe('Monitoring Routes Tenant Isolation', () => {
       app.route('/api/monitoring', monitoringRoutes);
 
       // Suppress webhook calls for this test
-      global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, resultState: 'complete' }),
+      });
 
       const res = await app.request('/api/monitoring/check', {
         method: 'POST',
@@ -606,6 +652,142 @@ describe('Monitoring Routes Tenant Isolation', () => {
           }),
         })
       );
+    });
+
+    it('POST /check does not stamp lastCheckAt for 201 partial collection', async () => {
+      const app = new Hono<Env>();
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      (db as { updateOne: typeof updateOne }).updateOne = updateOne;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, resultState: 'partial' }),
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'collection partial',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+    });
+
+    it('POST /check creates a failure alert without stamping lastCheckAt on non-OK collect', async () => {
+      const app = new Hono<Env>();
+      const inserted: unknown[] = [];
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      const insert = vi.fn(async (_table: unknown, values: unknown) => {
+        inserted.push(values);
+        return { id: 'alert-fail', ...(values as object) };
+      });
+      (db as { updateOne: typeof updateOne; insert: typeof insert }).updateOne = updateOne;
+      (db as { insert: typeof insert }).insert = insert;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => 'resolver timeout',
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'collection failed (500)',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(inserted).toEqual([
+        expect.objectContaining({
+          title: 'Collection Failed',
+          tenantId: NORMALIZED_TENANT_ID,
+        }),
+      ]);
+    });
+
+    it('POST /check does not alert or stamp on recent_collection_exists 429', async () => {
+      const app = new Hono<Env>();
+      const inserted: unknown[] = [];
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      const insert = vi.fn(async (_table: unknown, values: unknown) => {
+        inserted.push(values);
+        return { id: 'alert-fail', ...(values as object) };
+      });
+      (db as { updateOne: typeof updateOne; insert: typeof insert }).updateOne = updateOne;
+      (db as { insert: typeof insert }).insert = insert;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: async () => JSON.stringify({ reason: 'recent_collection_exists' }),
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'recent_collection_exists',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
     });
 
     it('DELETE /domains/:id/monitor should reject deletion of other tenant domain', async () => {
@@ -937,7 +1119,13 @@ describe('Monitoring Routes Response Contracts', () => {
     const existingDomain = makeMonitoredDomain({ domainId: 'existing-dom' });
 
     app.use('*', async (c, next) => {
-      c.set('db', createMockDb({ monitoredDomains: [existingDomain] }));
+      c.set(
+        'db',
+        createMockDb({
+          domains: [makeDomain({ id: 'existing-dom' })],
+          monitoredDomains: [existingDomain],
+        })
+      );
       c.set('tenantId', NORMALIZED_TENANT_ID);
       c.set('actorId', ACTOR_ID);
       await next();
@@ -959,7 +1147,13 @@ describe('Monitoring Routes Response Contracts', () => {
     const app = new Hono<Env>();
 
     app.use('*', async (c, next) => {
-      c.set('db', createMockDb({ monitoredDomains: [] }));
+      c.set(
+        'db',
+        createMockDb({
+          domains: [makeDomain({ id: 'new-dom' })],
+          monitoredDomains: [],
+        })
+      );
       c.set('tenantId', NORMALIZED_TENANT_ID);
       c.set('actorId', ACTOR_ID);
       await next();

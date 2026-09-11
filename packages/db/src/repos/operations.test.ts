@@ -176,7 +176,12 @@ describe('OperationalConditionService', () => {
       disposition: 'Investigating with owner',
       actorId: 'operator-1',
     });
-    expect(updated).toMatchObject({ disposition: 'Investigating with owner', version: 2 });
+    expect(updated).toMatchObject({
+      disposition: 'Investigating with owner',
+      version: 2,
+      status: 'ACKNOWLEDGED',
+      acknowledgedBy: 'operator-1',
+    });
     await expect(
       service.setCaseDisposition({
         tenantId: 'tenant-1',
@@ -187,25 +192,95 @@ describe('OperationalConditionService', () => {
       })
     ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
     expect(rows.internal_case_events).toHaveLength(2);
+    expect(rows.internal_case_events[1]).toMatchObject({
+      fromStatus: 'OPEN',
+      toStatus: 'ACKNOWLEDGED',
+      actorId: 'operator-1',
+      disposition: 'Investigating with owner',
+    });
     expect(rows.audit_events).toMatchObject([
       { action: 'mcp_case_disposition_set', actorId: 'operator-1', tenantId: 'tenant-1' },
     ]);
+  });
+
+  it('does not duplicate OPEN to ACKNOWLEDGED on repeated disposition', async () => {
+    const { db, rows } = createDb();
+    const service = new OperationalConditionService(db);
+    const first = await service.observe(observation);
+    const acknowledged = await service.setCaseDisposition({
+      tenantId: 'tenant-1',
+      caseId: first.case.id,
+      expectedVersion: first.case.version,
+      disposition: 'Investigating with owner',
+      actorId: 'operator-1',
+    });
+    if (!acknowledged) throw new Error('Expected first disposition');
+    const repeated = await service.setCaseDisposition({
+      tenantId: 'tenant-1',
+      caseId: first.case.id,
+      expectedVersion: acknowledged.version,
+      disposition: 'Owner confirmed next scan',
+      actorId: 'operator-1',
+    });
+    expect(repeated).toMatchObject({
+      disposition: 'Owner confirmed next scan',
+      status: 'ACKNOWLEDGED',
+      version: 3,
+      acknowledgedBy: 'operator-1',
+    });
+    expect(
+      rows.internal_case_events.filter(
+        (event) => event.fromStatus === 'OPEN' && event.toStatus === 'ACKNOWLEDGED'
+      )
+    ).toHaveLength(1);
+    expect(rows.internal_case_events).toHaveLength(3);
+    expect(rows.audit_events).toHaveLength(2);
   });
 
   it('resolves from fresh evidence and reopens the same operational objects', async () => {
     const { db, rows } = createDb();
     const service = new OperationalConditionService(db);
     const first = await service.observe(observation);
+    rows.alerts[0] = {
+      ...rows.alerts[0],
+      notificationClaimToken: 'old-token',
+      notificationClaimedUntil: new Date('2026-07-28T12:00:30.000Z'),
+    };
 
     const resolved = await service.resolveCase(
       first.case.id,
       'tenant-1',
       'snapshot-2',
-      [],
+      {
+        activeConditionKeys: [],
+        evaluatedConditionKeys: [{ conditionKey: first.signal.conditionKey, outcome: 'HEALTHY' }],
+      },
       'Fresh scan cleared condition'
     );
     expect(resolved?.status).toBe('RESOLVED');
     if (!resolved) throw new Error('Expected case resolution fixture');
+    expect(rows.internal_signals[0]).toMatchObject({ status: 'RESOLVED' });
+    expect(rows.alerts[0]).toMatchObject({
+      status: 'resolved',
+      notificationClaimToken: null,
+      notificationClaimedUntil: null,
+    });
+    expect(rows.internal_case_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toStatus: 'RESOLVED',
+          verificationSnapshotId: 'snapshot-2',
+        }),
+      ])
+    );
+    expect(rows.audit_events).toMatchObject([
+      {
+        action: 'alert_resolved',
+        entityType: 'alert',
+        tenantId: 'tenant-1',
+        actorId: 'system',
+      },
+    ]);
     // Model a newer scan captured before the resolution transaction committed.
     resolved.updatedAt = new Date('2100-01-01T00:00:00Z');
 
@@ -213,8 +288,17 @@ describe('OperationalConditionService', () => {
       'newer than its resolution lifecycle'
     );
 
+    rows.alerts[0] = {
+      ...rows.alerts[0],
+      notificationClaimToken: 'old-token',
+      notificationClaimedUntil: new Date('2026-07-28T12:00:30.000Z'),
+    };
     const reopened = await service.observe({ ...observation, snapshotId: 'snapshot-3' });
     expect(reopened.reopened).toEqual({ signal: true, case: true, alert: true });
+    expect(reopened.alert).toMatchObject({
+      notificationClaimToken: null,
+      notificationClaimedUntil: null,
+    });
     expect(reopened.signal.id).toBe(first.signal.id);
     expect(reopened.case.id).toBe(first.case.id);
     expect(reopened.alert.id).toBe(first.alert.id);
@@ -236,14 +320,41 @@ describe('OperationalConditionService', () => {
     const service = new OperationalConditionService(db);
     const first = await service.observe(observation);
 
-    await expect(service.resolveCase(first.case.id, 'tenant-1', 'snapshot-1', [])).rejects.toThrow(
-      'Fresh complete evidence'
-    );
+    const healthy = {
+      activeConditionKeys: [] as string[],
+      evaluatedConditionKeys: [{ conditionKey: first.signal.conditionKey, outcome: 'HEALTHY' }],
+    };
     await expect(
-      service.resolveCase(first.case.id, 'other-tenant', 'snapshot-2', [])
+      service.resolveCase(first.case.id, 'tenant-1', 'snapshot-1', healthy)
+    ).rejects.toThrow('Fresh complete evidence');
+    await expect(
+      service.resolveCase(first.case.id, 'other-tenant', 'snapshot-2', healthy)
     ).resolves.toBeNull();
     await expect(
-      service.resolveCase(first.case.id, 'tenant-1', 'snapshot-2', [first.signal.conditionKey])
+      service.resolveCase(first.case.id, 'tenant-1', 'snapshot-2', {
+        activeConditionKeys: [first.signal.conditionKey],
+        evaluatedConditionKeys: [{ conditionKey: first.signal.conditionKey, outcome: 'FAULTY' }],
+      })
     ).rejects.toThrow('still reproduces');
+  });
+
+  it('refuses unknown, stale, malformed, and missing evaluated evidence', async () => {
+    const { db } = createDb();
+    const service = new OperationalConditionService(db);
+    const first = await service.observe(observation);
+    for (const evaluatedConditionKeys of [
+      [],
+      [{ conditionKey: first.signal.conditionKey, outcome: 'UNKNOWN' }],
+      [{ conditionKey: first.signal.conditionKey, outcome: 'STALE' }],
+      [{ conditionKey: first.signal.conditionKey, outcome: 'MALFORMED' }],
+      [{ conditionKey: first.signal.conditionKey, outcome: 'TRUNCATED' }],
+    ]) {
+      await expect(
+        service.resolveCase(first.case.id, 'tenant-1', 'snapshot-2', {
+          activeConditionKeys: [],
+          evaluatedConditionKeys,
+        })
+      ).rejects.toThrow('Unknown or setup-only evidence');
+    }
   });
 });

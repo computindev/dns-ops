@@ -83,4 +83,57 @@ describe('SnapshotRepository evaluation coverage', () => {
 
     expect(updated?.resultState).toBe('failed');
   });
+
+  it('unpublishes coverage without changing collection resultState', async () => {
+    const existing = snapshot({
+      rulesetVersionId: 'ruleset-1',
+      metadata: { evaluation: { state: 'COMPLETE', errors: [] } },
+    });
+    const updateOne = vi.fn().mockImplementation(async (_table, values) => ({
+      ...existing,
+      ...values,
+    }));
+    const db = {
+      selectOne: vi.fn().mockResolvedValue(existing),
+      updateOne,
+    } as unknown as IDatabaseAdapter;
+    const repo = new SnapshotRepository(db);
+
+    const updated = await repo.unpublishEvaluation(existing.id);
+
+    expect(updated?.resultState).toBe('complete');
+    expect(updated?.rulesetVersionId).toBeNull();
+    expect(updated?.metadata?.evaluation?.state).toBe('PARTIAL');
+  });
+
+  it('does not unpublish a snapshot outside the owned domain', async () => {
+    const existing = snapshot({ domainId: 'domain-1', rulesetVersionId: 'ruleset-1' });
+    const updateOne = vi.fn();
+    const db = {
+      selectOne: vi.fn().mockResolvedValue(existing),
+      updateOne,
+    } as unknown as IDatabaseAdapter;
+    const repo = new SnapshotRepository(db);
+
+    const updated = await repo.unpublishEvaluation(existing.id, { domainId: 'domain-other' });
+
+    expect(updated).toBeUndefined();
+    expect(updateOne).not.toHaveBeenCalled();
+  });
+
+  it('counts and lists only tenant-owned snapshots for backfill', async () => {
+    const own = snapshot({ id: 'snap-own', domainId: 'domain-1' });
+    const foreign = snapshot({ id: 'snap-other', domainId: 'domain-other' });
+    const db = {
+      selectWhere: vi.fn().mockResolvedValue([{ id: 'domain-1', tenantId: 'tenant-1' }]),
+      select: vi.fn().mockResolvedValue([own, foreign]),
+    } as unknown as IDatabaseAdapter;
+    const repo = new SnapshotRepository(db);
+
+    const listed = await repo.findNeedingBackfill('ruleset-new', { tenantId: 'tenant-1' });
+    const counted = await repo.countNeedingBackfill('ruleset-new', { tenantId: 'tenant-1' });
+
+    expect(listed.map((row) => row.id)).toEqual(['snap-own']);
+    expect(counted).toEqual({ total: 1, needsBackfill: 1 });
+  });
 });

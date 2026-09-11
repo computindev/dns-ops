@@ -18,8 +18,27 @@ const monitoringLogger = createLogger({
   minLevel: 'info',
 });
 
-// Alert type for type annotations
 type Alert = Awaited<ReturnType<AlertRepository['findPending']>>[number];
+
+function toPublicAlert(alert: Alert) {
+  return {
+    id: alert.id,
+    monitoredDomainId: alert.monitoredDomainId,
+    title: alert.title,
+    description: alert.description,
+    severity: alert.severity,
+    triggeredByFindingId: alert.triggeredByFindingId,
+    signalId: alert.signalId ?? null,
+    status: alert.status,
+    dedupKey: alert.dedupKey,
+    acknowledgedAt: alert.acknowledgedAt,
+    acknowledgedBy: alert.acknowledgedBy,
+    resolvedAt: alert.resolvedAt,
+    resolutionNote: alert.resolutionNote,
+    tenantId: alert.tenantId,
+    createdAt: alert.createdAt,
+  };
+}
 
 export const monitoringRoutes = new Hono<Env>();
 monitoringRoutes.use('*', requestBodyLimitMiddleware());
@@ -44,7 +63,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
 
     // Get domains scheduled for this check, scoped to this tenant
     const monitoredDomains = await monitoredRepo.findActiveBySchedule(schedule, tenantId);
-    const results = [];
+    const results: Array<{ domainId: string; checked: boolean; error?: string }> = [];
 
     for (const monitored of monitoredDomains) {
       // Check if within suppression window
@@ -72,13 +91,10 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
 
       // Look up domain name
       const domain = await domainRepo.findById(monitored.domainId);
-      if (!domain) {
-        monitoringLogger.error(`Domain not found for monitored domain: ${monitored.domainId}`);
-        continue;
-      }
-
-      if (!monitored.tenantId || domain.tenantId !== monitored.tenantId) {
-        monitoringLogger.error(`Monitored domain tenant ownership mismatch: ${monitored.id}`);
+      if (!domain || domain.tenantId !== monitored.tenantId) {
+        monitoringLogger.error(
+          `Skipping monitored domain with missing or mismatched tenant ownership: ${monitored.id}`
+        );
         continue;
       }
       const internalSecret = process.env.INTERNAL_SECRET;
@@ -102,10 +118,35 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         body: JSON.stringify({
           domain: domain.name,
           triggeredBy: 'monitoring-scheduler',
+          monitoredDomainId: monitored.id,
         }),
       });
 
-      if (!response.ok) {
+      let resultState: string | undefined;
+      if (response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          resultState?: unknown;
+        } | null;
+        resultState =
+          payload && typeof payload.resultState === 'string' ? payload.resultState : undefined;
+      } else {
+        const failureBody = await response.text();
+        let dedupReason: string | undefined;
+        try {
+          const parsed = JSON.parse(failureBody) as { reason?: unknown };
+          if (typeof parsed.reason === 'string') dedupReason = parsed.reason;
+        } catch {
+          dedupReason = undefined;
+        }
+        if (response.status === 429 && dedupReason === 'recent_collection_exists') {
+          results.push({
+            domainId: monitored.domainId,
+            checked: false,
+            error: 'recent_collection_exists',
+          });
+          continue;
+        }
+
         if (!monitored.tenantId) {
           monitoringLogger.error(`Monitored domain missing tenant ownership: ${monitored.id}`);
           continue; // Skip domain without tenant - cannot create alerts without tenant ownership
@@ -115,7 +156,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         const alert = await alertRepo.create({
           monitoredDomainId: monitored.id,
           title: 'Collection Failed',
-          description: `Failed to collect DNS data: ${await response.text()}`,
+          description: `Failed to collect DNS data: ${failureBody}`,
           severity: 'high',
           status: 'pending',
           dedupKey: `collection-fail-${monitored.domainId}`,
@@ -150,13 +191,32 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         }
       }
 
-      await monitoredRepo.updateLastCheck(monitored.id);
+      if (resultState !== 'complete') {
+        results.push({
+          domainId: monitored.domainId,
+          checked: false,
+          error: resultState
+            ? `collection ${resultState}`
+            : `collection failed (${response.status})`,
+        });
+        continue;
+      }
+
+      const stamped = await monitoredRepo.updateLastCheck(monitored.id, monitored.tenantId);
+      if (!stamped) {
+        results.push({
+          domainId: monitored.domainId,
+          checked: false,
+          error: 'monitor inactive',
+        });
+        continue;
+      }
       results.push({ domainId: monitored.domainId, checked: true });
     }
 
     return c.json({
       schedule,
-      domainsChecked: results.length,
+      domainsChecked: results.filter((result) => result.checked).length,
       results,
     });
   } catch (error) {
@@ -183,7 +243,7 @@ monitoringRoutes.get('/alerts/pending', internalOnlyMiddleware, async (c) => {
   try {
     const alertRepo = new AlertRepository(db);
     const alerts = await alertRepo.findPending(tenantId);
-    return c.json({ alerts, count: alerts.length });
+    return c.json({ alerts: alerts.map(toPublicAlert), count: alerts.length });
   } catch (_error) {
     return c.json({ error: 'Failed to fetch alerts' }, 500);
   }
@@ -210,7 +270,10 @@ monitoringRoutes.post('/alerts/:alertId/acknowledge', internalOnlyMiddleware, as
   try {
     const alertRepo = new AlertRepository(db);
     const alert = await alertRepo.acknowledge(alertId, tenantId, actorId);
-    return c.json({ alert });
+    if (!alert) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (_error) {
     return c.json({ error: 'Failed to acknowledge alert' }, 500);
   }
@@ -238,8 +301,14 @@ monitoringRoutes.post('/alerts/:alertId/resolve', internalOnlyMiddleware, async 
   try {
     const alertRepo = new AlertRepository(db);
     const alert = await alertRepo.resolve(alertId, tenantId, resolutionNote);
-    return c.json({ alert });
-  } catch (_error) {
+    if (!alert) {
+      return c.json({ error: 'Alert not found' }, 404);
+    }
+    return c.json({ alert: toPublicAlert(alert) });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('fresh conclusive evidence')) {
+      return c.json({ error: error.message }, 409);
+    }
     return c.json({ error: 'Failed to resolve alert' }, 500);
   }
 });
@@ -318,10 +387,13 @@ monitoringRoutes.post('/domains/:domainId/monitor', internalOnlyMiddleware, asyn
   }
 
   try {
-    const monitoredRepo = new MonitoredDomainRepository(db);
+    const domain = await new DomainRepository(db).findById(domainId);
+    if (!domain || domain.tenantId !== tenantId) {
+      return c.json({ error: 'Domain not found' }, 404);
+    }
 
-    // Check if already monitored
-    const existing = await monitoredRepo.findByDomainId(domainId);
+    const monitoredRepo = new MonitoredDomainRepository(db);
+    const existing = await monitoredRepo.findByDomainId(domainId, tenantId);
     if (existing) {
       return c.json({ error: 'Domain is already monitored', monitored: existing }, 409);
     }
@@ -366,18 +438,13 @@ monitoringRoutes.delete('/domains/:domainId/monitor', internalOnlyMiddleware, as
 
   try {
     const monitoredRepo = new MonitoredDomainRepository(db);
-    const existing = await monitoredRepo.findByDomainId(domainId);
+    const existing = await monitoredRepo.findByDomainId(domainId, tenantId);
 
     if (!existing) {
       return c.json({ error: 'Domain is not monitored' }, 404);
     }
 
-    // Tenant isolation: only the owning tenant can delete their monitored domain
-    if (existing.tenantId !== tenantId) {
-      return c.json({ error: 'Domain is not monitored' }, 404);
-    }
-
-    await monitoredRepo.delete(existing.id);
+    await monitoredRepo.delete(existing.id, tenantId);
     return c.json({ success: true });
   } catch (_error) {
     return c.json({ error: 'Failed to stop monitoring' }, 500);

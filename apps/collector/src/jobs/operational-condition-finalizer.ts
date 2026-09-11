@@ -1,5 +1,6 @@
-import type { InternalSignalKind } from '@dns-ops/contracts';
+import type { EvaluationCoverage, InternalSignalKind } from '@dns-ops/contracts';
 import {
+  AlertRepository,
   FindingRepository,
   type IDatabaseAdapter,
   MonitoredDomainRepository,
@@ -24,6 +25,7 @@ export interface CanonicalConditionOutcome {
     title: string;
     description: string;
     severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+    status?: 'pending' | 'sent' | 'suppressed' | 'acknowledged' | 'resolved';
   };
 }
 
@@ -42,6 +44,22 @@ export interface CanonicalConditionObserver {
   }): Promise<CanonicalConditionOutcome>;
 }
 
+export interface CanonicalConditionResolver {
+  listCases(
+    tenantId: string,
+    domainId?: string
+  ): Promise<Array<{ case: { id: string; status: string }; signal: { conditionKey: string } }>>;
+  resolveCase(
+    caseId: string,
+    tenantId: string,
+    verificationSnapshotId: string,
+    evidence: {
+      activeConditionKeys: string[];
+      evaluatedConditionKeys: Array<{ conditionKey: string; outcome: string }>;
+    }
+  ): Promise<unknown>;
+}
+
 function presentation(
   kind: InternalSignalKind
 ): Pick<CanonicalConditionOutcome['alert'], 'title' | 'description' | 'severity'> {
@@ -58,28 +76,138 @@ function presentation(
         description: 'A baseline-required SPF record is missing from the completed scan.',
         severity: 'high',
       };
+    case 'REDIRECT_TOPOLOGY_REGRESSION':
+      return {
+        title: 'Redirect topology regression',
+        description: 'Fresh HTTP redirect evidence violates the accepted operational baseline.',
+        severity: 'high',
+      };
+    case 'HOMEPAGE_INDEXABILITY_REGRESSION':
+      return {
+        title: 'Homepage indexability regression',
+        description:
+          'Fresh homepage indexability evidence violates the accepted operational baseline.',
+        severity: 'high',
+      };
     default:
       throw new Error(`Unsupported canonical finalizer signal: ${kind}`);
   }
 }
 
+function needsCanonicalDelivery(outcome: CanonicalConditionOutcome): boolean {
+  const status = outcome.alert.status;
+  if (
+    status === 'sent' ||
+    status === 'suppressed' ||
+    status === 'acknowledged' ||
+    status === 'resolved'
+  ) {
+    return false;
+  }
+  return outcome.created.alert || outcome.reopened.alert || status === 'pending';
+}
+
+type CanonicalAlertSender = (
+  alertId: string,
+  webhookUrl: string,
+  alert: CanonicalConditionOutcome['alert'],
+  claimToken?: string
+) => Promise<{ success: boolean; error?: string; statusUpdated?: boolean } | undefined>;
+
+export type CanonicalNotificationClaim =
+  | { status: 'claimed'; token: string }
+  | { status: 'leased' }
+  | { status: 'complete' };
+
+const NOTIFICATION_LEASE_MS = 30_000;
+
+export function acceptQueuedMonitor(
+  monitored: { id: string; tenantId: string; domainId: string; isActive: boolean } | undefined,
+  queued: { tenantId: string; domainId: string; monitoredDomainId?: string }
+): boolean {
+  if (!monitored || !monitored.isActive) return false;
+  if (monitored.tenantId !== queued.tenantId || monitored.domainId !== queued.domainId) {
+    return false;
+  }
+  if (queued.monitoredDomainId && monitored.id !== queued.monitoredDomainId) return false;
+  return true;
+}
+
+async function deliverCanonicalAlert(
+  outcome: CanonicalConditionOutcome,
+  input: { tenantId: string; webhookUrl?: string },
+  dependencies: {
+    send: CanonicalAlertSender;
+    claimPendingNotification?: (
+      alertId: string,
+      tenantId: string
+    ) => Promise<CanonicalNotificationClaim>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string, token: string) => Promise<void>;
+  }
+) {
+  if (!input.webhookUrl || !needsCanonicalDelivery(outcome)) return;
+  let token: string | undefined;
+  if (dependencies.claimPendingNotification) {
+    const claim = await dependencies.claimPendingNotification(outcome.alert.id, input.tenantId);
+    if (claim.status === 'complete') return;
+    if (claim.status === 'leased') {
+      throw new Error('Canonical alert delivery claim is active');
+    }
+    token = claim.token;
+  }
+  let posted = false;
+  try {
+    const result = token
+      ? await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert, token)
+      : await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
+    posted = result?.success === true;
+    if (result?.statusUpdated === false) {
+      throw new Error(result.error || 'Alert sent status was not persisted');
+    }
+    if (!posted) {
+      throw new Error(result?.error || 'Canonical alert delivery failed');
+    }
+  } catch (error) {
+    if (!posted && token) {
+      await dependencies.releaseNotificationClaim?.(outcome.alert.id, input.tenantId, token);
+    }
+    throw error;
+  }
+}
+
 /**
  * The sole canonical notification boundary. Evaluator output never sends directly;
- * only a newly-created or reopened canonical alert is delivered.
+ * created, reopened, or still-pending canonical alerts are delivered.
  */
 export async function finalizePersistedCanonicalConditions(
   db: IDatabaseAdapter,
-  input: { tenantId: string; domainId: string; domainName: string; snapshotId: string; now?: Date }
+  input: {
+    tenantId: string;
+    domainId: string;
+    domainName: string;
+    snapshotId: string;
+    now?: Date;
+    monitoredDomainId?: string;
+  }
 ) {
   const snapshot = await new SnapshotRepository(db).findById(input.snapshotId);
   if (!snapshot || snapshot.domainId !== input.domainId) {
     throw new Error('Canonical finalization snapshot is outside the domain');
   }
-  const monitored = await new MonitoredDomainRepository(db).findByDomainId(
-    input.domainId,
-    input.tenantId
-  );
-  if (!monitored || !monitored.isActive) {
+  const monitoredRepo = new MonitoredDomainRepository(db);
+  const monitored = input.monitoredDomainId
+    ? await monitoredRepo.findById(input.monitoredDomainId, input.tenantId)
+    : await monitoredRepo.findByDomainId(input.domainId, input.tenantId);
+  if (
+    !acceptQueuedMonitor(monitored, {
+      tenantId: input.tenantId,
+      domainId: input.domainId,
+      monitoredDomainId: input.monitoredDomainId,
+    })
+  ) {
+    return { evaluation: { observations: [], setupEvidence: [] }, outcomes: [] };
+  }
+  if (!monitored) {
     return { evaluation: { observations: [], setupEvidence: [] }, outcomes: [] };
   }
   const [baselines, probes, snapshotFindings] = await Promise.all([
@@ -88,6 +216,7 @@ export async function finalizePersistedCanonicalConditions(
     new FindingRepository(db).findBySnapshotId(input.snapshotId),
   ]);
   const observer = new OperationalConditionService(db);
+  const alerts = new AlertRepository(db);
   return finalizeCanonicalConditions(
     {
       tenantId: input.tenantId,
@@ -95,20 +224,48 @@ export async function finalizePersistedCanonicalConditions(
       domainName: input.domainName,
       snapshotId: input.snapshotId,
       snapshotComplete: snapshot.resultState === 'complete',
+      evaluationCoverage: snapshot.metadata?.evaluation,
+      rulesetVersionId: snapshot.rulesetVersionId,
       monitoredDomainId: monitored.id,
       webhookUrl: monitored.alertChannels.webhook,
       baselines,
       probes,
-      findings: snapshotFindings,
+      findings: snapshotFindings.map((finding) => ({
+        id: finding.id,
+        type: finding.type,
+        reviewOnly: finding.reviewOnly,
+        snapshotId: finding.snapshotId,
+        rulesetVersionId: finding.rulesetVersionId,
+      })),
       now: input.now ?? new Date(),
     },
     {
       observer,
-      send: (alertId, webhookUrl, alert) =>
+      resolver: observer,
+      claimPendingNotification: async (alertId, tenantId) => {
+        const claimed = await alerts.claimPendingNotification(
+          alertId,
+          tenantId,
+          new Date(Date.now() + NOTIFICATION_LEASE_MS)
+        );
+        if (claimed) return { status: 'claimed' as const, token: claimed.token };
+        const current = await alerts.findById(alertId, tenantId);
+        if (!current || current.status !== 'pending') return { status: 'complete' as const };
+        return { status: 'leased' as const };
+      },
+      releaseNotificationClaim: async (alertId, tenantId, token) => {
+        await alerts.releaseNotificationClaim(alertId, tenantId, token);
+      },
+      send: (alertId, webhookUrl, alert, claimToken) =>
         sendAlertNotification(
           alertId,
           webhookUrl,
-          { ...alert, domain: input.domainName, tenantId: input.tenantId },
+          {
+            ...alert,
+            domain: input.domainName,
+            tenantId: input.tenantId,
+            claimToken,
+          },
           db,
           process.env.WEB_APP_URL
         ),
@@ -123,6 +280,8 @@ export async function finalizeCanonicalConditions(
     domainName: string;
     snapshotId: string;
     snapshotComplete: boolean;
+    evaluationCoverage?: EvaluationCoverage | null;
+    rulesetVersionId?: string | null;
     monitoredDomainId: string;
     webhookUrl?: string;
     baselines: PersistedConditionBaseline[];
@@ -132,11 +291,13 @@ export async function finalizeCanonicalConditions(
   },
   dependencies: {
     observer: CanonicalConditionObserver;
-    send: (
+    resolver?: CanonicalConditionResolver;
+    send: CanonicalAlertSender;
+    claimPendingNotification?: (
       alertId: string,
-      webhookUrl: string,
-      alert: CanonicalConditionOutcome['alert']
-    ) => Promise<unknown>;
+      tenantId: string
+    ) => Promise<CanonicalNotificationClaim>;
+    releaseNotificationClaim?: (alertId: string, tenantId: string, token: string) => Promise<void>;
   }
 ) {
   const evaluation = evaluateOperationalConditions(input);
@@ -157,8 +318,24 @@ export async function finalizeCanonicalConditions(
           : undefined,
     });
     outcomes.push(outcome);
-    if (input.webhookUrl && (outcome.created.alert || outcome.reopened.alert)) {
-      await dependencies.send(outcome.alert.id, input.webhookUrl, outcome.alert);
+    await deliverCanonicalAlert(outcome, input, dependencies);
+  }
+  if (dependencies.resolver) {
+    const activeConditionKeys = evaluation.observations.map(
+      (observation) => observation.conditionKey
+    );
+    const openCases = await dependencies.resolver.listCases(input.tenantId, input.domainId);
+    for (const item of openCases) {
+      if (item.case.status === 'RESOLVED' || item.case.status === 'DISMISSED') continue;
+      const evaluated = evaluation.evaluatedConditionKeys.find(
+        (entry) => entry.conditionKey === item.signal.conditionKey
+      );
+      if (evaluated?.outcome !== 'HEALTHY') continue;
+      if (activeConditionKeys.includes(item.signal.conditionKey)) continue;
+      await dependencies.resolver.resolveCase(item.case.id, input.tenantId, input.snapshotId, {
+        activeConditionKeys,
+        evaluatedConditionKeys: evaluation.evaluatedConditionKeys,
+      });
     }
   }
   return { evaluation, outcomes };

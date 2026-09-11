@@ -31,6 +31,14 @@ async function findTenantMonitoredDomain(
   );
 }
 
+function ownedDomainName(
+  domain: { name: string; tenantId: string | null } | undefined,
+  tenantId: string
+): string {
+  if (!domain || domain.tenantId !== tenantId) return 'Unknown';
+  return domain.name;
+}
+
 function isUniqueConstraintError(error: unknown, constraintName: string): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -61,7 +69,7 @@ monitoringRoutes.get('/domains', async (c) => {
       const domain = await domainRepo.findById(md.domainId);
       return {
         ...md,
-        domainName: domain?.name || 'Unknown',
+        domainName: ownedDomainName(domain, tenantId),
       };
     })
   );
@@ -90,7 +98,7 @@ monitoringRoutes.get('/domains/:id', async (c) => {
   return c.json({
     monitoredDomain: {
       ...monitoredDomain,
-      domainName: domain?.name || 'Unknown',
+      domainName: ownedDomainName(domain, tenantId),
     },
   });
 });
@@ -234,15 +242,19 @@ monitoringRoutes.put('/domains/:id', requireWritePermission, async (c) => {
     return c.json({ error: 'Monitored domain not found' }, 404);
   }
 
-  const updated = await repo.update(monitoredDomain.id, {
-    ...(body.schedule && { schedule: body.schedule }),
-    ...(body.alertChannels && { alertChannels: body.alertChannels }),
-    ...(body.maxAlertsPerDay !== undefined && { maxAlertsPerDay: body.maxAlertsPerDay }),
-    ...(body.suppressionWindowMinutes !== undefined && {
-      suppressionWindowMinutes: body.suppressionWindowMinutes,
-    }),
-    ...(body.isActive !== undefined && { isActive: body.isActive }),
-  });
+  const updated = await repo.update(
+    monitoredDomain.id,
+    {
+      ...(body.schedule && { schedule: body.schedule }),
+      ...(body.alertChannels && { alertChannels: body.alertChannels }),
+      ...(body.maxAlertsPerDay !== undefined && { maxAlertsPerDay: body.maxAlertsPerDay }),
+      ...(body.suppressionWindowMinutes !== undefined && {
+        suppressionWindowMinutes: body.suppressionWindowMinutes,
+      }),
+      ...(body.isActive !== undefined && { isActive: body.isActive }),
+    },
+    tenantId
+  );
 
   if (updated) {
     const auditRepo = new AuditEventRepository(db);
@@ -293,7 +305,7 @@ monitoringRoutes.delete('/domains/:id', requireWritePermission, async (c) => {
   }
 
   const domain = await domainRepo.findById(monitoredDomain.domainId);
-  await repo.delete(monitoredDomain.id);
+  await repo.delete(monitoredDomain.id, tenantId);
 
   const auditRepo = new AuditEventRepository(db);
   await auditRepo.create({
@@ -332,9 +344,13 @@ monitoringRoutes.post('/domains/:id/toggle', requireWritePermission, async (c) =
     return c.json({ error: 'Monitored domain not found' }, 404);
   }
 
-  const updated = await repo.update(monitoredDomain.id, {
-    isActive: !monitoredDomain.isActive,
-  });
+  const updated = await repo.update(
+    monitoredDomain.id,
+    {
+      isActive: !monitoredDomain.isActive,
+    },
+    tenantId
+  );
 
   if (updated) {
     const auditRepo = new AuditEventRepository(db);

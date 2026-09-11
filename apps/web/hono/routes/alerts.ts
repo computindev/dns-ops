@@ -33,6 +33,26 @@ const VALID_STATUSES: Alert['status'][] = [
 const VALID_SEVERITIES: Alert['severity'][] = ['critical', 'high', 'medium', 'low', 'info'];
 const REPORT_VISIBILITIES = ['private', 'tenant', 'shared'] as const;
 
+function toPublicAlert(alert: Alert) {
+  return {
+    id: alert.id,
+    monitoredDomainId: alert.monitoredDomainId,
+    title: alert.title,
+    description: alert.description,
+    severity: alert.severity,
+    triggeredByFindingId: alert.triggeredByFindingId,
+    signalId: alert.signalId,
+    status: alert.status,
+    dedupKey: alert.dedupKey,
+    acknowledgedAt: alert.acknowledgedAt,
+    acknowledgedBy: alert.acknowledgedBy,
+    resolvedAt: alert.resolvedAt,
+    resolutionNote: alert.resolutionNote,
+    tenantId: alert.tenantId,
+    createdAt: alert.createdAt,
+  };
+}
+
 export const alertRoutes = new Hono<Env>();
 
 function requiresAuth(path: string): boolean {
@@ -287,7 +307,7 @@ alertRoutes.get('/', async (c) => {
   });
 
   return c.json({
-    alerts,
+    alerts: alerts.map(toPublicAlert),
     pagination: {
       total,
       limit,
@@ -313,7 +333,7 @@ alertRoutes.get('/:id', async (c) => {
     return c.json({ error: 'Alert not found' }, 404);
   }
 
-  return c.json({ alert });
+  return c.json({ alert: toPublicAlert(alert) });
 });
 
 alertRoutes.post('/:id/acknowledge', requireWritePermission, async (c) => {
@@ -361,7 +381,7 @@ alertRoutes.post('/:id/acknowledge', requireWritePermission, async (c) => {
       : 0;
     getFeedbackMetrics().alerts.acknowledged({ tenantId, alertId, timeToAckMs });
 
-    return c.json({ alert });
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Invalid alert transition')) {
       return c.json({ error: error.message }, 409);
@@ -425,9 +445,13 @@ alertRoutes.post('/:id/resolve', requireWritePermission, async (c) => {
       resolution: 'manual',
     });
 
-    return c.json({ alert });
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Invalid alert transition')) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('Invalid alert transition') ||
+        error.message.includes('fresh conclusive evidence'))
+    ) {
       return c.json({ error: error.message }, 409);
     }
     throw error;
@@ -476,7 +500,7 @@ alertRoutes.post('/:id/suppress', requireWritePermission, async (c) => {
 
     getFeedbackMetrics().alerts.suppressed({ tenantId, alertId });
 
-    return c.json({ alert });
+    return c.json({ alert: toPublicAlert(alert) });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Invalid alert transition')) {
       return c.json({ error: error.message }, 409);

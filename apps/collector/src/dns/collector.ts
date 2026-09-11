@@ -758,9 +758,6 @@ export class DNSCollector {
         rulesetVersionId = newVersion.id;
       }
 
-      // Update snapshot with ruleset version to indicate findings were evaluated
-      await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
-
       // Create rule context
       const context: RuleContext = {
         snapshotId,
@@ -773,14 +770,17 @@ export class DNSCollector {
       };
 
       // Evaluate rules. Per-rule failures are explicit UNKNOWN coverage, not
-      // absence of findings. Persist coverage before any early return.
+      // absence of findings. Do not publish COMPLETE/ruleset until writes succeed.
       const { findings, suggestions, errors, complete } = engine.evaluate(context);
-      await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
-        state: complete ? 'COMPLETE' : 'PARTIAL',
-        errors,
-      });
 
       if (findings.length === 0) {
+        if (complete) {
+          await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+        }
+        await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
+          state: complete ? 'COMPLETE' : 'PARTIAL',
+          errors,
+        });
         return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: errors.length };
       }
 
@@ -837,6 +837,14 @@ export class DNSCollector {
         await this.suggestionRepo.createMany(suggestionsToInsert);
       }
 
+      if (complete) {
+        await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+      }
+      await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
+        state: complete ? 'COMPLETE' : 'PARTIAL',
+        errors,
+      });
+
       return {
         findingsCount: persistedFindings.length,
         suggestionsCount: suggestionsToInsert.length,
@@ -845,13 +853,12 @@ export class DNSCollector {
     } catch (error) {
       // Preserve a typed, sanitized UNKNOWN even when evaluation infrastructure
       // fails outside an individual rule. The detailed exception stays in logs.
-      logger.error(
-        'Error evaluating and persisting findings',
-        error instanceof Error ? error : new Error(String(error)),
-        { domain: this.config.domain }
-      );
-      await this.snapshotRepo
-        .updateEvaluationCoverage(snapshotId, {
+      const evaluationError = error instanceof Error ? error : new Error(String(error));
+      logger.error('Error evaluating and persisting findings', evaluationError, {
+        domain: this.config.domain,
+      });
+      try {
+        await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
           state: 'PARTIAL',
           errors: [
             {
@@ -868,9 +875,16 @@ export class DNSCollector {
               },
             },
           ],
-        })
-        .catch(() => undefined);
-      return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: 1 };
+        });
+      } catch (coverageError) {
+        logger.error(
+          'Failed to persist evaluation coverage',
+          coverageError instanceof Error ? coverageError : new Error(String(coverageError)),
+          { domain: this.config.domain, snapshotId }
+        );
+        throw coverageError;
+      }
+      throw evaluationError;
     }
   }
 }

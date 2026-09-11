@@ -111,7 +111,7 @@ Local / disposable DB:
 cd packages/db
 bun run build
 bun run generate
-bun run check-drift
+bun run check-drift   # SQL inventory only; does not certify catalog parity
 DATABASE_URL=postgres://... bun run verify-migrations
 
 # Apply forward migrations to a local or disposable database (same runner as deploy):

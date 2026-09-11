@@ -47,7 +47,11 @@ const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   process.env = { ...ORIGINAL_ENV, INTERNAL_SECRET: 'test-secret' };
   vi.clearAllMocks();
-  mockFetch.mockResolvedValue({ ok: true, status: 200 });
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 201,
+    json: async () => ({ success: true, resultState: 'complete' }),
+  });
 });
 afterEach(() => {
   process.env = ORIGINAL_ENV;
@@ -118,15 +122,25 @@ class InMemoryMockDb implements IDatabaseAdapter {
       return Promise.resolve(this.whereData.templateOverrides || []);
     if (tableName === 'domain_tags') return Promise.resolve(this.whereData.domainTags || []);
     if (tableName === 'monitored_domains') {
-      // Extract domainId from eq() condition for findByDomainId
-      const domainId = this._extractId(_condition);
-      if (domainId) {
-        const filtered = (this.whereData.monitoredDomains || []).filter(
-          (m) => m.domainId === domainId
-        );
-        return Promise.resolve(filtered);
-      }
-      return Promise.resolve(this.whereData.monitoredDomains || []);
+      const rows = this.whereData.monitoredDomains || [];
+      const values = this._extractValues(_condition);
+      const domainIds = values.filter((value) => rows.some((row) => row.domainId === value));
+      const ids = values.filter((value) => rows.some((row) => row.id === value));
+      const tenants = values.filter((value) => rows.some((row) => row.tenantId === value));
+      const unknownKeys = values.filter(
+        (value) =>
+          typeof value === 'string' &&
+          !rows.some((row) => row.domainId === value || row.id === value || row.tenantId === value)
+      );
+      if (unknownKeys.length > 0) return Promise.resolve([]);
+      return Promise.resolve(
+        rows.filter((row) => {
+          if (domainIds.length > 0 && !domainIds.includes(row.domainId)) return false;
+          if (ids.length > 0 && !ids.includes(row.id)) return false;
+          if (tenants.length > 0 && !tenants.includes(row.tenantId)) return false;
+          return true;
+        })
+      );
     }
     return Promise.resolve([]);
   }
@@ -165,6 +179,24 @@ class InMemoryMockDb implements IDatabaseAdapter {
       return Promise.resolve(item || null);
     }
     return Promise.resolve(null);
+  }
+
+  private _extractValues(condition: unknown): unknown[] {
+    const values: unknown[] = [];
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== 'object') return;
+      const candidate = node as {
+        constructor?: { name?: string };
+        value?: unknown;
+        queryChunks?: unknown[];
+      };
+      if (candidate.constructor?.name === 'Param' && candidate.value !== undefined) {
+        values.push(candidate.value);
+      }
+      for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+    };
+    walk(condition);
+    return values;
   }
 
   private _extractId(condition: unknown): string | null {
@@ -795,8 +827,45 @@ describe('Monitoring Routes: Null TenantId Handling', () => {
         if (name === 'alerts') return Promise.resolve([...alerts, ...createdAlerts]);
         return Promise.resolve([]);
       },
-      selectWhere: (_table: unknown, _condition: unknown) => {
-        if (monitoredDomains.length > 0) return Promise.resolve(monitoredDomains);
+      selectWhere: (_table: unknown, condition: unknown) => {
+        const params: unknown[] = [];
+        const walk = (node: unknown) => {
+          if (node == null) return;
+          if (typeof node === 'string' || typeof node === 'boolean' || typeof node === 'number') {
+            params.push(node);
+            return;
+          }
+          if (typeof node !== 'object') return;
+          const candidate = node as { value?: unknown; queryChunks?: unknown[] };
+          if (
+            candidate.value !== undefined &&
+            (typeof candidate.value === 'string' ||
+              typeof candidate.value === 'boolean' ||
+              typeof candidate.value === 'number')
+          ) {
+            params.push(candidate.value);
+          }
+          if (Array.isArray(candidate.value)) candidate.value.forEach(walk);
+          for (const chunk of candidate.queryChunks ?? []) walk(chunk);
+        };
+        walk(condition);
+        if (monitoredDomains.length > 0) {
+          return Promise.resolve(
+            monitoredDomains.filter((row) => {
+              const extras = params.filter(
+                (value) =>
+                  value !== row.domainId &&
+                  value !== row.id &&
+                  value !== row.schedule &&
+                  value !== true &&
+                  value !== false
+              );
+              if (extras.length > 0 && !extras.includes(row.tenantId)) return false;
+              if (params.includes(row.schedule)) return !params.includes(true) || row.isActive;
+              return extras.includes(row.tenantId) || extras.length === 0;
+            })
+          );
+        }
         if (alerts.length > 0) return Promise.resolve(alerts);
         return Promise.resolve([]);
       },
@@ -943,7 +1012,11 @@ describe('Monitoring Routes: Null TenantId Handling', () => {
     });
     app.route('/api/monitoring', monitoringRoutes);
 
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ success: true, resultState: 'complete' }),
+    });
 
     const res = await app.request('/api/monitoring/check', {
       method: 'POST',

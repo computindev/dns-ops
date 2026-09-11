@@ -439,6 +439,48 @@ describe('monitoringRoutes runtime', () => {
     expect(state.monitoredDomains[0]?.id).toBe('mon-2');
   });
 
+  it('does not return a foreign domain name for a tenant-scoped monitored row', async () => {
+    const state: MockState = {
+      domains: [
+        {
+          id: 'domain-foreign',
+          name: 'secret.example',
+          normalizedName: 'secret.example',
+          tenantId: 'tenant-2',
+          zoneManagement: 'managed',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      monitoredDomains: [
+        {
+          id: 'mon-1',
+          domainId: 'domain-foreign',
+          tenantId: 'tenant-1',
+          schedule: 'daily',
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      auditEvents: [],
+    };
+    const app = createApp(state);
+    const list = await app.request('/api/monitoring/domains');
+    expect(list.status).toBe(200);
+    const listJson = (await list.json()) as {
+      monitoredDomains: Array<{ domainName?: string }>;
+    };
+    expect(listJson.monitoredDomains[0]?.domainName).toBe('Unknown');
+    expect(JSON.stringify(listJson)).not.toContain('secret.example');
+
+    const get = await app.request('/api/monitoring/domains/mon-1');
+    expect(get.status).toBe(200);
+    const getJson = (await get.json()) as { monitoredDomain: { domainName?: string } };
+    expect(getJson.monitoredDomain.domainName).toBe('Unknown');
+    expect(JSON.stringify(getJson)).not.toContain('secret.example');
+  });
+
   it('returns 409 when monitoring insert hits unique domain constraint', async () => {
     const state: MockState = {
       domains: [

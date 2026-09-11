@@ -110,11 +110,24 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
-  const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+function getConditionParams(condition: unknown): unknown[] {
+  const values: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const candidate = node as {
+      constructor?: { name?: string };
+      value?: unknown;
+      queryChunks?: unknown[];
+    };
+    if (candidate.constructor?.name === 'Param') values.push(candidate.value);
+    for (const chunk of candidate.queryChunks ?? []) walk(chunk);
   };
-  return sql.queryChunks?.find((c) => c?.constructor?.name === 'Param')?.value;
+  walk(condition);
+  return values;
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(data: MockData): Env['Variables']['db'] {
@@ -136,9 +149,10 @@ function createMockDb(data: MockData): Env['Variables']['db'] {
     selectWhere: vi.fn(async (table: unknown, condition: unknown) => {
       const name = getTableName(table);
       const param = getConditionParam(condition);
+      const params = getConditionParams(condition);
       if (name === 'monitored_domains') {
-        return data.monitoredDomains.filter(
-          (m) => m.domainId === param || m.tenantId === param || m.id === param
+        return data.monitoredDomains.filter((m) =>
+          params.some((value) => m.domainId === value || m.tenantId === value || m.id === value)
         );
       }
       if (name === 'findings') {

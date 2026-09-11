@@ -5,7 +5,8 @@
  * and template overrides.
  */
 
-import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import {
   type Alert,
@@ -304,21 +305,33 @@ export class MonitoredDomainRepository {
     schedule: 'hourly' | 'daily' | 'weekly',
     tenantId?: string
   ): Promise<MonitoredDomain[]> {
-    const results = await this.db.select(monitoredDomains);
-    return results.filter((r) => {
-      if (r.schedule !== schedule || !r.isActive) return false;
-      if (tenantId && r.tenantId !== tenantId) return false;
-      return true;
-    });
+    const active = and(
+      eq(monitoredDomains.schedule, schedule),
+      eq(monitoredDomains.isActive, true)
+    );
+    if (!active) return [];
+    const predicate = tenantId ? and(active, eq(monitoredDomains.tenantId, tenantId)) : active;
+    if (!predicate) return [];
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+
+  async findById(id: string, tenantId: string): Promise<MonitoredDomain | undefined> {
+    const predicate = and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId));
+    if (!predicate) return undefined;
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results[0];
   }
 
   async findByDomainId(domainId: string, tenantId?: string): Promise<MonitoredDomain | undefined> {
-    const results = await this.db.selectWhere(
-      monitoredDomains,
-      eq(monitoredDomains.domainId, domainId)
-    );
-    const filtered = tenantId ? results.filter((r) => r.tenantId === tenantId) : results;
-    return filtered[0];
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.domainId, domainId), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.domainId, domainId);
+    if (!predicate) return undefined;
+    const results = await this.db.selectWhere(monitoredDomains, predicate);
+    return results[0];
   }
 
   async create(data: NewMonitoredDomain): Promise<MonitoredDomain> {
@@ -327,25 +340,35 @@ export class MonitoredDomainRepository {
 
   async update(
     id: string,
-    data: Partial<NewMonitoredDomain>
+    data: Partial<NewMonitoredDomain>,
+    tenantId?: string
   ): Promise<MonitoredDomain | undefined> {
-    return this.db.updateOne(
-      monitoredDomains,
-      { ...data, updatedAt: new Date() },
-      eq(monitoredDomains.id, id)
-    );
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.id, id);
+    if (!predicate) return undefined;
+    return this.db.updateOne(monitoredDomains, { ...data, updatedAt: new Date() }, predicate);
   }
 
-  async updateLastCheck(id: string): Promise<void> {
-    await this.db.updateOne(
+  async updateLastCheck(id: string, tenantId: string): Promise<boolean> {
+    const owned = and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId));
+    if (!owned) return false;
+    const predicate = and(owned, eq(monitoredDomains.isActive, true));
+    if (!predicate) return false;
+    const updated = await this.db.updateOne(
       monitoredDomains,
       { lastCheckAt: new Date() },
-      eq(monitoredDomains.id, id)
+      predicate
     );
+    return Boolean(updated);
   }
 
-  async delete(id: string): Promise<void> {
-    await this.db.deleteOne(monitoredDomains, eq(monitoredDomains.id, id));
+  async delete(id: string, tenantId?: string): Promise<void> {
+    const predicate = tenantId
+      ? and(eq(monitoredDomains.id, id), eq(monitoredDomains.tenantId, tenantId))
+      : eq(monitoredDomains.id, id);
+    if (!predicate) return;
+    await this.db.deleteOne(monitoredDomains, predicate);
   }
 }
 
@@ -368,7 +391,7 @@ function canTransitionAlert(currentStatus: AlertStatus, nextStatus: AlertStatus)
     case 'suppressed':
       return ['pending', 'sent', 'acknowledged'].includes(currentStatus);
     case 'sent':
-      return currentStatus === 'pending'; // webhook delivery marks pending → sent
+      return false;
     case 'pending':
       return false;
     default:
@@ -450,6 +473,75 @@ export class AlertRepository {
     return this.db.insert(alerts, data);
   }
 
+  async claimPendingNotification(
+    id: string,
+    tenantId: string,
+    leaseUntil: Date,
+    now = new Date()
+  ): Promise<{ alert: Alert; token: string } | undefined> {
+    const token = randomUUID();
+    const claimable = or(
+      isNull(alerts.notificationClaimedUntil),
+      lt(alerts.notificationClaimedUntil, now)
+    );
+    if (!claimable) throw new Error('Expected notification claim predicate');
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending'),
+      claimable
+    );
+    if (!predicate) throw new Error('Expected notification claim predicate');
+    const alert = await this.db.updateOne(
+      alerts,
+      { notificationClaimedUntil: leaseUntil, notificationClaimToken: token },
+      predicate
+    );
+    return alert ? { alert, token } : undefined;
+  }
+
+  async releaseNotificationClaim(
+    id: string,
+    tenantId: string,
+    token: string
+  ): Promise<Alert | undefined> {
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending'),
+      eq(alerts.notificationClaimToken, token)
+    );
+    if (!predicate) throw new Error('Expected notification release predicate');
+    return this.db.updateOne(
+      alerts,
+      { notificationClaimedUntil: null, notificationClaimToken: null },
+      predicate
+    );
+  }
+
+  async completeNotificationClaim(
+    id: string,
+    tenantId: string,
+    token: string
+  ): Promise<Alert | undefined> {
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, 'pending'),
+      eq(alerts.notificationClaimToken, token)
+    );
+    if (!predicate) throw new Error('Expected notification completion predicate');
+    return this.db.updateOne(
+      alerts,
+      {
+        status: 'sent',
+        notificationClaimedUntil: null,
+        notificationClaimToken: null,
+      },
+      predicate
+    );
+  }
+
   async updateStatus(
     id: string,
     tenantId: string,
@@ -469,7 +561,18 @@ export class AlertRepository {
       return existing;
     }
 
-    const update: Partial<NewAlert> = { status };
+    if (status === 'sent') {
+      throw new Error('Use completeNotificationClaim for pending to sent');
+    }
+    if (status === 'resolved' && existing.signalId) {
+      throw new Error('Canonical alert cannot be resolved without fresh conclusive evidence');
+    }
+
+    const update: Partial<NewAlert> = {
+      status,
+      notificationClaimedUntil: null,
+      notificationClaimToken: null,
+    };
 
     if (status === 'acknowledged' && metadata?.acknowledgedBy) {
       update.acknowledgedAt = new Date();
@@ -483,7 +586,13 @@ export class AlertRepository {
       }
     }
 
-    return this.db.updateOne(alerts, update, eq(alerts.id, id));
+    const predicate = and(
+      eq(alerts.id, id),
+      eq(alerts.tenantId, tenantId),
+      eq(alerts.status, existing.status)
+    );
+    if (!predicate) throw new Error('Expected alert status predicate');
+    return this.db.updateOne(alerts, update, predicate);
   }
 
   async acknowledge(

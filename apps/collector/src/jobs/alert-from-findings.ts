@@ -27,6 +27,8 @@ export interface AlertFromFindingsConfig {
   maxAlertsPerSnapshot?: number;
   /** Skip findings marked as reviewOnly */
   skipReviewOnly?: boolean;
+  /** Exact monitored-domain epoch; never re-resolve by domain when set */
+  monitoredDomainId?: string;
 }
 
 /**
@@ -53,19 +55,29 @@ export async function generateAlertsFromFindings(
   domainId: string,
   config: AlertFromFindingsConfig = {}
 ): Promise<Array<{ alertId: string; findingId: string }>> {
-  const { minSeverity = 'high', maxAlertsPerSnapshot = 5, skipReviewOnly = true } = config;
+  const {
+    minSeverity = 'high',
+    maxAlertsPerSnapshot = 5,
+    skipReviewOnly = true,
+    monitoredDomainId,
+  } = config;
 
   if (!db) {
     logger.warn('Database not available, skipping alert generation');
     return [];
   }
 
-  // Look up monitored domain — alerts only apply to monitored domains
   const monitoredRepo = new MonitoredDomainRepository(db);
-  const monitored = await monitoredRepo.findByDomainId(domainId, tenantId);
-
-  if (!monitored) {
-    // Domain is not monitored — skip alert generation (not an error)
+  const monitored = monitoredDomainId
+    ? await monitoredRepo.findById(monitoredDomainId, tenantId)
+    : await monitoredRepo.findByDomainId(domainId, tenantId);
+  if (!monitored || monitored.isActive === false) {
+    return [];
+  }
+  if (monitored.tenantId !== tenantId || monitored.domainId !== domainId) {
+    return [];
+  }
+  if (monitoredDomainId && monitored.id !== monitoredDomainId) {
     return [];
   }
 
@@ -152,11 +164,13 @@ export async function generateAndSendFindingAlerts(
   tenantId: string,
   domainId: string,
   domainName: string,
-  webhookUrl?: string
+  webhookUrl?: string,
+  monitoredDomainId?: string
 ): Promise<{ alerts: Array<{ alertId: string; findingId: string }>; webhookSent: boolean }> {
   const alerts = await generateAlertsFromFindings(db, snapshotId, tenantId, domainId, {
     minSeverity: 'high',
     maxAlertsPerSnapshot: 3,
+    monitoredDomainId,
   });
 
   let webhookSent = false;

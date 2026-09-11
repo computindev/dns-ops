@@ -124,7 +124,71 @@ async function main(): Promise<void> {
       throw new Error(`Case version CAS admitted ${updateCount} concurrent updates instead of one`);
     }
 
-    console.log('✅ Isolated canonical-signal uniqueness and case-version CAS verification passed');
+    const dispositions = await Promise.all([
+      first.query(
+        `UPDATE internal_cases
+         SET disposition = 'ack-first', status = 'ACKNOWLEDGED', version = version + 1, updated_at = now()
+         WHERE id = $1 AND tenant_id = $2 AND status = 'OPEN' AND version = 2
+         RETURNING id`,
+        [caseId, TENANT_ID]
+      ),
+      second.query(
+        `UPDATE internal_cases
+         SET disposition = 'ack-second', status = 'ACKNOWLEDGED', version = version + 1, updated_at = now()
+         WHERE id = $1 AND tenant_id = $2 AND status = 'OPEN' AND version = 2
+         RETURNING id`,
+        [caseId, TENANT_ID]
+      ),
+    ]);
+    const dispositionCount = dispositions.reduce((total, result) => total + result.rowCount, 0);
+    if (dispositionCount !== 1) {
+      throw new Error(
+        `setCaseDisposition CAS admitted ${dispositionCount} concurrent OPEN to ACKNOWLEDGED updates`
+      );
+    }
+
+    const monitoredId = '33333333-3333-4333-8333-333333333333';
+    const alertId = '44444444-4444-4444-8444-444444444444';
+    await setup.query(
+      `INSERT INTO monitored_domains (id, domain_id, alert_channels, created_by, tenant_id)
+       VALUES ($1, $2, '{}'::jsonb, 'system', $3)`,
+      [monitoredId, DOMAIN_ID, TENANT_ID]
+    );
+    await setup.query(
+      `INSERT INTO alerts (id, monitored_domain_id, title, description, severity, status, tenant_id)
+       VALUES ($1, $2, 'Canonical alert', 'Seeded concurrent claim', 'high', 'pending', $3)`,
+      [alertId, monitoredId, TENANT_ID]
+    );
+    const claims = await Promise.all([
+      first.query(
+        `UPDATE alerts
+         SET notification_claimed_until = now() + interval '30 seconds',
+             notification_claim_token = gen_random_uuid()
+         WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+           AND (notification_claimed_until IS NULL OR notification_claimed_until < now())
+         RETURNING id`,
+        [alertId, TENANT_ID]
+      ),
+      second.query(
+        `UPDATE alerts
+         SET notification_claimed_until = now() + interval '30 seconds',
+             notification_claim_token = gen_random_uuid()
+         WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+           AND (notification_claimed_until IS NULL OR notification_claimed_until < now())
+         RETURNING id`,
+        [alertId, TENANT_ID]
+      ),
+    ]);
+    const claimCount = claims.reduce((total, result) => total + result.rowCount, 0);
+    if (claimCount !== 1) {
+      throw new Error(
+        `Notification claim CAS admitted ${claimCount} concurrent claims instead of one`
+      );
+    }
+
+    console.log(
+      '✅ Isolated canonical-signal uniqueness, case-version CAS, disposition CAS, and notification claim verification passed'
+    );
   } finally {
     await Promise.allSettled([first.end(), second.end()]);
     try {

@@ -358,6 +358,7 @@ export async function sendAlertNotification(
     severity: string;
     domain: string;
     tenantId: string;
+    claimToken?: string;
   },
   db: Env['Variables']['db'],
   baseUrl?: string
@@ -367,13 +368,36 @@ export async function sendAlertNotification(
   webhookHost?: string;
   statusUpdated?: boolean;
 }> {
-  // Build the payload
   const payload = buildWebhookPayload(alertData, baseUrl);
+  const ownedClaim = !alertData.claimToken;
+  let claimToken = alertData.claimToken;
 
-  // Send the webhook
+  if (db) {
+    const { AlertRepository } = await import('@dns-ops/db');
+    const alertRepo = new AlertRepository(db);
+    if (!claimToken) {
+      const claimed = await alertRepo.claimPendingNotification(
+        alertId,
+        alertData.tenantId,
+        new Date(Date.now() + 30_000)
+      );
+      if (claimed) {
+        claimToken = claimed.token;
+      } else {
+        const current = await alertRepo.findById(alertId, alertData.tenantId);
+        if (!current || current.status !== 'pending') {
+          return { success: true, statusUpdated: true };
+        }
+        return { success: false, error: 'Canonical alert delivery claim is active' };
+      }
+    }
+    if (!claimToken) {
+      return { success: false, error: 'Notification claim token required' };
+    }
+  }
+
   const result = await sendAlertWebhook(webhookUrl, payload);
 
-  // Log the attempt (without full URL)
   if (result.success) {
     notificationLogger.info('Alert webhook delivered', {
       alertId,
@@ -386,27 +410,70 @@ export async function sendAlertNotification(
       webhookHost: result.resolvedHostname,
       error: result.error,
     });
+    if (db && ownedClaim && claimToken) {
+      const { AlertRepository } = await import('@dns-ops/db');
+      await new AlertRepository(db).releaseNotificationClaim(
+        alertId,
+        alertData.tenantId,
+        claimToken
+      );
+    }
+    return {
+      success: false,
+      error: result.error,
+      webhookHost: result.resolvedHostname,
+    };
   }
 
-  // Update alert status on successful delivery
-  if (result.success && db) {
+  if (db && claimToken) {
     try {
       const { AlertRepository } = await import('@dns-ops/db');
       const alertRepo = new AlertRepository(db);
-      await alertRepo.updateStatus(alertId, alertData.tenantId, 'sent');
+      const updated = await alertRepo.completeNotificationClaim(
+        alertId,
+        alertData.tenantId,
+        claimToken
+      );
+      if (updated) {
+        return {
+          success: true,
+          webhookHost: result.resolvedHostname,
+          statusUpdated: true,
+        };
+      }
+      const current = await alertRepo.findById(alertId, alertData.tenantId);
+      if (current && current.status !== 'pending') {
+        return {
+          success: true,
+          webhookHost: result.resolvedHostname,
+          statusUpdated: true,
+        };
+      }
       return {
         success: true,
         webhookHost: result.resolvedHostname,
-        statusUpdated: true,
+        statusUpdated: false,
       };
     } catch (error) {
-      // Status update failure should not fail the webhook notification
       notificationLogger.error('Failed to update alert status to sent', {
         alertId,
         error: error instanceof Error ? error.message : String(error),
       });
+      try {
+        const { AlertRepository } = await import('@dns-ops/db');
+        const current = await new AlertRepository(db).findById(alertId, alertData.tenantId);
+        if (current && current.status !== 'pending') {
+          return {
+            success: true,
+            webhookHost: result.resolvedHostname,
+            statusUpdated: true,
+          };
+        }
+      } catch {
+        /* fall through to persistence failure */
+      }
       return {
-        success: true, // Webhook succeeded, status update failed
+        success: true,
         webhookHost: result.resolvedHostname,
         statusUpdated: false,
       };
@@ -414,8 +481,7 @@ export async function sendAlertNotification(
   }
 
   return {
-    success: result.success,
-    error: result.error,
+    success: true,
     webhookHost: result.resolvedHostname,
   };
 }

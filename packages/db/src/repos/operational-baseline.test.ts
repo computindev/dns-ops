@@ -21,7 +21,14 @@ function createDb(failAuditAt?: number, snapshotState: 'complete' | 'partial' = 
     async selectOne(table: unknown, condition: unknown) {
       const values = params(condition);
       if (table === domains)
-        return values.includes('domain-1') ? { id: 'domain-1', tenantId: 'tenant-1' } : undefined;
+        return values.includes('domain-1')
+          ? {
+              id: 'domain-1',
+              tenantId: 'tenant-1',
+              normalizedName: 'example.com',
+              name: 'example.com',
+            }
+          : undefined;
       if (table === snapshots)
         return values.includes('snapshot-1')
           ? { id: 'snapshot-1', domainId: 'domain-1', resultState: snapshotState }
@@ -148,6 +155,104 @@ describe('OperationalBaselineRepository', () => {
         ...input,
         kind: 'HTTP_ENDPOINT_UNAVAILABLE',
       } as never)
-    ).rejects.toThrow('Invalid SPF baseline policy');
+    ).rejects.toThrow('Unsupported baseline policy');
+  });
+
+  it('accepts explicit redirect and indexability policies and writes audit events', async () => {
+    const { db, baselines, audits } = createDb();
+    const repository = new OperationalBaselineRepository(db);
+    const redirect = await repository.accept({
+      ...input,
+      kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+      discriminator: 'HTTPS://WWW.Example.COM/',
+      policy: {
+        kind: 'REDIRECT_TOPOLOGY',
+        startUrl: 'HTTPS://WWW.Example.COM',
+        expectedFinalUrl: 'https://example.com/',
+      },
+    });
+    const indexability = await repository.accept({
+      ...input,
+      kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+      discriminator: 'https://example.com/',
+      policy: {
+        kind: 'HOMEPAGE_INDEXABILITY',
+        requestedUrl: 'https://example.com/',
+        requireIndexable: true,
+      },
+    });
+    expect(redirect).toMatchObject({
+      kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+      discriminator: 'https://www.example.com/',
+      policy: {
+        kind: 'REDIRECT_TOPOLOGY',
+        startUrl: 'https://www.example.com/',
+        expectedFinalUrl: 'https://example.com/',
+      },
+    });
+    expect(indexability).toMatchObject({
+      kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+      discriminator: 'https://example.com/',
+      policy: { requireIndexable: true },
+    });
+    expect(baselines).toHaveLength(2);
+    expect(audits).toHaveLength(2);
+  });
+
+  it('rejects mismatched HTTP discriminators and inferred policy kinds before persistence', async () => {
+    const { db, baselines, audits } = createDb();
+    const repository = new OperationalBaselineRepository(db);
+    await expect(
+      repository.accept({
+        ...input,
+        kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://apex.example.com/',
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://www.example.com/',
+          expectedFinalUrl: 'https://example.com/',
+        },
+      })
+    ).rejects.toThrow('discriminator must match the declared URL');
+    await expect(
+      repository.accept({
+        ...input,
+        kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        discriminator: 'https://example.com/',
+        policy: { kind: 'SPF_PRESENT' } as never,
+      })
+    ).rejects.toThrow('Invalid homepage indexability baseline policy');
+    expect(baselines).toEqual([]);
+    expect(audits).toEqual([]);
+  });
+
+  it('rejects redirect and indexability targets the collector does not evaluate', async () => {
+    const { db, baselines } = createDb();
+    const repository = new OperationalBaselineRepository(db);
+    await expect(
+      repository.accept({
+        ...input,
+        kind: 'REDIRECT_TOPOLOGY_REGRESSION',
+        discriminator: 'https://other.example.net/',
+        policy: {
+          kind: 'REDIRECT_TOPOLOGY',
+          startUrl: 'https://other.example.net/',
+          expectedFinalUrl: 'https://example.com/',
+        },
+      })
+    ).rejects.toThrow('collected http(s) origin root');
+    await expect(
+      repository.accept({
+        ...input,
+        kind: 'HOMEPAGE_INDEXABILITY_REGRESSION',
+        discriminator: 'https://www.example.com/',
+        policy: {
+          kind: 'HOMEPAGE_INDEXABILITY',
+          requestedUrl: 'https://www.example.com/',
+          requireIndexable: true,
+        },
+      })
+    ).rejects.toThrow('HTTPS apex root');
+    expect(baselines).toEqual([]);
   });
 });
