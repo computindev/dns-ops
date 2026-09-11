@@ -744,6 +744,52 @@ describe('Monitoring Routes Tenant Isolation', () => {
       ]);
     });
 
+    it('POST /check does not alert or stamp on recent_collection_exists 429', async () => {
+      const app = new Hono<Env>();
+      const inserted: unknown[] = [];
+      const db = createMockDb({
+        monitoredDomains: [makeMonitoredDomain()],
+        domains: [makeDomain()],
+        alerts: [],
+      });
+      const updateOne = vi.fn(async () => 1);
+      const insert = vi.fn(async (_table: unknown, values: unknown) => {
+        inserted.push(values);
+        return { id: 'alert-fail', ...(values as object) };
+      });
+      (db as { updateOne: typeof updateOne; insert: typeof insert }).updateOne = updateOne;
+      (db as { insert: typeof insert }).insert = insert;
+      app.use('*', async (c, next) => {
+        c.set('db', db);
+        c.set('tenantId', NORMALIZED_TENANT_ID);
+        await next();
+      });
+      app.route('/api/monitoring', monitoringRoutes);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: async () => JSON.stringify({ reason: 'recent_collection_exists' }),
+      });
+
+      const res = await app.request('/api/monitoring/check', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: 'daily' }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.domainsChecked).toBe(0);
+      expect(json.results).toEqual([
+        {
+          domainId: 'dom-1',
+          checked: false,
+          error: 'recent_collection_exists',
+        },
+      ]);
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
+    });
+
     it('DELETE /domains/:id/monitor should reject deletion of other tenant domain', async () => {
       const app = new Hono<Env>();
 

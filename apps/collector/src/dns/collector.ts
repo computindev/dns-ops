@@ -758,9 +758,6 @@ export class DNSCollector {
         rulesetVersionId = newVersion.id;
       }
 
-      // Update snapshot with ruleset version to indicate findings were evaluated
-      await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
-
       // Create rule context
       const context: RuleContext = {
         snapshotId,
@@ -773,14 +770,17 @@ export class DNSCollector {
       };
 
       // Evaluate rules. Per-rule failures are explicit UNKNOWN coverage, not
-      // absence of findings. Persist coverage before any early return.
+      // absence of findings. Do not publish COMPLETE/ruleset until writes succeed.
       const { findings, suggestions, errors, complete } = engine.evaluate(context);
-      await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
-        state: complete ? 'COMPLETE' : 'PARTIAL',
-        errors,
-      });
 
       if (findings.length === 0) {
+        await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
+          state: complete ? 'COMPLETE' : 'PARTIAL',
+          errors,
+        });
+        if (complete) {
+          await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+        }
         return { findingsCount: 0, suggestionsCount: 0, evaluationErrors: errors.length };
       }
 
@@ -835,6 +835,14 @@ export class DNSCollector {
 
       if (suggestionsToInsert.length > 0) {
         await this.suggestionRepo.createMany(suggestionsToInsert);
+      }
+
+      await this.snapshotRepo.updateEvaluationCoverage(snapshotId, {
+        state: complete ? 'COMPLETE' : 'PARTIAL',
+        errors,
+      });
+      if (complete) {
+        await this.snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
       }
 
       return {

@@ -1,4 +1,4 @@
-import type { InternalSignalKind } from '@dns-ops/contracts';
+import type { EvaluationCoverage, InternalSignalKind } from '@dns-ops/contracts';
 import {
   AlertRepository,
   FindingRepository,
@@ -121,6 +121,18 @@ export type CanonicalNotificationClaim =
 
 const NOTIFICATION_LEASE_MS = 30_000;
 
+export function acceptQueuedMonitor(
+  monitored: { id: string; tenantId: string; domainId: string; isActive: boolean } | undefined,
+  queued: { tenantId: string; domainId: string; monitoredDomainId?: string }
+): boolean {
+  if (!monitored || !monitored.isActive) return false;
+  if (monitored.tenantId !== queued.tenantId || monitored.domainId !== queued.domainId) {
+    return false;
+  }
+  if (queued.monitoredDomainId && monitored.id !== queued.monitoredDomainId) return false;
+  return true;
+}
+
 async function deliverCanonicalAlert(
   outcome: CanonicalConditionOutcome,
   input: { tenantId: string; webhookUrl?: string },
@@ -169,17 +181,33 @@ async function deliverCanonicalAlert(
  */
 export async function finalizePersistedCanonicalConditions(
   db: IDatabaseAdapter,
-  input: { tenantId: string; domainId: string; domainName: string; snapshotId: string; now?: Date }
+  input: {
+    tenantId: string;
+    domainId: string;
+    domainName: string;
+    snapshotId: string;
+    now?: Date;
+    monitoredDomainId?: string;
+  }
 ) {
   const snapshot = await new SnapshotRepository(db).findById(input.snapshotId);
   if (!snapshot || snapshot.domainId !== input.domainId) {
     throw new Error('Canonical finalization snapshot is outside the domain');
   }
-  const monitored = await new MonitoredDomainRepository(db).findByDomainId(
-    input.domainId,
-    input.tenantId
-  );
-  if (!monitored || !monitored.isActive) {
+  const monitoredRepo = new MonitoredDomainRepository(db);
+  const monitored = input.monitoredDomainId
+    ? await monitoredRepo.findById(input.monitoredDomainId, input.tenantId)
+    : await monitoredRepo.findByDomainId(input.domainId, input.tenantId);
+  if (
+    !acceptQueuedMonitor(monitored, {
+      tenantId: input.tenantId,
+      domainId: input.domainId,
+      monitoredDomainId: input.monitoredDomainId,
+    })
+  ) {
+    return { evaluation: { observations: [], setupEvidence: [] }, outcomes: [] };
+  }
+  if (!monitored) {
     return { evaluation: { observations: [], setupEvidence: [] }, outcomes: [] };
   }
   const [baselines, probes, snapshotFindings] = await Promise.all([
@@ -196,11 +224,19 @@ export async function finalizePersistedCanonicalConditions(
       domainName: input.domainName,
       snapshotId: input.snapshotId,
       snapshotComplete: snapshot.resultState === 'complete',
+      evaluationCoverage: snapshot.metadata?.evaluation,
+      rulesetVersionId: snapshot.rulesetVersionId,
       monitoredDomainId: monitored.id,
       webhookUrl: monitored.alertChannels.webhook,
       baselines,
       probes,
-      findings: snapshotFindings,
+      findings: snapshotFindings.map((finding) => ({
+        id: finding.id,
+        type: finding.type,
+        reviewOnly: finding.reviewOnly,
+        snapshotId: finding.snapshotId,
+        rulesetVersionId: finding.rulesetVersionId,
+      })),
       now: input.now ?? new Date(),
     },
     {
@@ -244,6 +280,8 @@ export async function finalizeCanonicalConditions(
     domainName: string;
     snapshotId: string;
     snapshotComplete: boolean;
+    evaluationCoverage?: EvaluationCoverage | null;
+    rulesetVersionId?: string | null;
     monitoredDomainId: string;
     webhookUrl?: string;
     baselines: PersistedConditionBaseline[];

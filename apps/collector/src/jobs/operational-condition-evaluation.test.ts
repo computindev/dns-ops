@@ -190,11 +190,26 @@ describe('evaluateOperationalConditions', () => {
       tenantId: 'tenant-1',
       domainId: 'domain-1',
       snapshotComplete: true,
+      evaluationCoverage: { state: 'COMPLETE', errors: [] },
+      snapshotId: 'snapshot-1',
+      rulesetVersionId: 'ruleset-1',
       baselines: [baseline],
       probes: [],
       findings: [
-        { id: 'finding-1', type: 'mail.no-spf-record', reviewOnly: false },
-        { id: 'finding-2', type: 'mail.no-spf-record', reviewOnly: true },
+        {
+          id: 'finding-1',
+          type: 'mail.no-spf-record',
+          reviewOnly: false,
+          snapshotId: 'snapshot-1',
+          rulesetVersionId: 'ruleset-1',
+        },
+        {
+          id: 'finding-2',
+          type: 'mail.no-spf-record',
+          reviewOnly: true,
+          snapshotId: 'snapshot-1',
+          rulesetVersionId: 'ruleset-1',
+        },
       ],
       now,
     });
@@ -206,6 +221,64 @@ describe('evaluateOperationalConditions', () => {
       },
     ]);
     expect(result.evaluatedConditionKeys[0]?.outcome).toBe('FAULTY');
+  });
+
+  it('treats missing or partial evaluation coverage as inconclusive SPF, never healthy', () => {
+    const baseline = {
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      kind: 'MAIL_DNS_CONFIGURATION_REGRESSION' as const,
+      discriminator: 'spf',
+      maxEvidenceAgeSeconds: 3600,
+      policy: { kind: 'SPF_PRESENT' as const },
+    };
+    const missing = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      baselines: [baseline],
+      probes: [],
+      findings: [],
+      now,
+    });
+    const partial = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      evaluationCoverage: { state: 'PARTIAL', errors: [] },
+      snapshotId: 'snapshot-1',
+      rulesetVersionId: 'ruleset-1',
+      baselines: [baseline],
+      probes: [],
+      findings: [],
+      now,
+    });
+    const otherRuleset = evaluateOperationalConditions({
+      tenantId: 'tenant-1',
+      domainId: 'domain-1',
+      snapshotComplete: true,
+      evaluationCoverage: { state: 'COMPLETE', errors: [] },
+      snapshotId: 'snapshot-1',
+      rulesetVersionId: 'ruleset-1',
+      baselines: [baseline],
+      probes: [],
+      findings: [
+        {
+          id: 'finding-old',
+          type: 'mail.no-spf-record',
+          reviewOnly: false,
+          snapshotId: 'snapshot-1',
+          rulesetVersionId: 'ruleset-old',
+        },
+      ],
+      now,
+    });
+    expect(missing.evaluatedConditionKeys[0]?.outcome).toBe('UNKNOWN');
+    expect(partial.evaluatedConditionKeys[0]?.outcome).toBe('UNKNOWN');
+    expect(missing.observations).toEqual([]);
+    expect(partial.observations).toEqual([]);
+    expect(otherRuleset.evaluatedConditionKeys[0]?.outcome).toBe('HEALTHY');
+    expect(otherRuleset.observations).toEqual([]);
   });
 
   it('does not infer baselines or make incomplete/unknown evidence operational', () => {

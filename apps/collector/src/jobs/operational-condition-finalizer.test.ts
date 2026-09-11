@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { finalizeCanonicalConditions } from './operational-condition-finalizer.js';
+import {
+  acceptQueuedMonitor,
+  finalizeCanonicalConditions,
+} from './operational-condition-finalizer.js';
 
 const now = new Date('2026-07-28T12:00:00.000Z');
 const baseline = {
@@ -18,14 +21,62 @@ function input() {
     domainName: 'example.com',
     snapshotId: 'snapshot-1',
     snapshotComplete: true,
+    evaluationCoverage: { state: 'COMPLETE' as const, errors: [] },
+    rulesetVersionId: 'ruleset-1',
     monitoredDomainId: 'monitor-1',
     webhookUrl: 'https://hooks.example.test/alerts',
     baselines: [baseline],
     probes: [],
-    findings: [{ id: 'finding-1', type: 'mail.no-spf-record', reviewOnly: false }],
+    findings: [
+      {
+        id: 'finding-1',
+        type: 'mail.no-spf-record',
+        reviewOnly: false,
+        snapshotId: 'snapshot-1',
+        rulesetVersionId: 'ruleset-1',
+      },
+    ],
     now,
   };
 }
+
+describe('acceptQueuedMonitor', () => {
+  const current = {
+    id: 'monitor-1',
+    tenantId: 'tenant-1',
+    domainId: 'domain-1',
+    isActive: true,
+  };
+
+  it('rejects inactive, mismatched, and stale queued monitor ids', () => {
+    expect(
+      acceptQueuedMonitor(current, {
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        monitoredDomainId: 'monitor-1',
+      })
+    ).toBe(true);
+    expect(
+      acceptQueuedMonitor(
+        { ...current, isActive: false },
+        { tenantId: 'tenant-1', domainId: 'domain-1', monitoredDomainId: 'monitor-1' }
+      )
+    ).toBe(false);
+    expect(
+      acceptQueuedMonitor(current, {
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+        monitoredDomainId: 'monitor-recreated',
+      })
+    ).toBe(false);
+    expect(
+      acceptQueuedMonitor(undefined, {
+        tenantId: 'tenant-1',
+        domainId: 'domain-1',
+      })
+    ).toBe(false);
+  });
+});
 
 describe('finalizeCanonicalConditions', () => {
   it('sends only newly-created or reopened canonical alerts', async () => {

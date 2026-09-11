@@ -236,7 +236,6 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
       state: complete ? ('COMPLETE' as const) : ('PARTIAL' as const),
       errors,
     };
-    await snapshotRepo.updateEvaluationCoverage(snapshotId, evaluationCoverage);
 
     // Delete existing findings for this ruleset version only (not other versions)
     // This preserves historical findings from previous ruleset versions
@@ -291,6 +290,11 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
     }
 
     const persistedSuggestions = await suggestionRepo.createMany(suggestionsToInsert);
+
+    await snapshotRepo.updateEvaluationCoverage(snapshotId, evaluationCoverage);
+    if (complete) {
+      await snapshotRepo.updateRulesetVersion(snapshotId, rulesetVersionId);
+    }
 
     // Categorize findings
     const dnsFindings = persistedFindings.filter((f) => f.type.startsWith('dns.'));
@@ -950,10 +954,6 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
         // Evaluate rules and preserve incomplete coverage during backfill.
         const engine = new RulesEngine(ruleset);
         const { findings, suggestions, errors, complete } = engine.evaluate(context);
-        await snapshotRepo.updateEvaluationCoverage(snapshot.id, {
-          state: complete ? 'COMPLETE' : 'PARTIAL',
-          errors,
-        });
 
         // Delete any existing findings for this ruleset version (idempotent)
         await findingRepo.deleteBySnapshotIdAndRulesetVersionId(snapshot.id, rulesetVersionId);
@@ -1006,8 +1006,13 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
 
         const persistedSuggestions = await suggestionRepo.createMany(suggestionsToInsert);
 
-        // Update snapshot's ruleset version
-        await snapshotRepo.updateRulesetVersion(snapshot.id, rulesetVersionId);
+        await snapshotRepo.updateEvaluationCoverage(snapshot.id, {
+          state: complete ? 'COMPLETE' : 'PARTIAL',
+          errors,
+        });
+        if (complete) {
+          await snapshotRepo.updateRulesetVersion(snapshot.id, rulesetVersionId);
+        }
 
         results.push({
           snapshotId: snapshot.id,

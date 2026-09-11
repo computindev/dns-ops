@@ -218,6 +218,21 @@ describe('TB-3 step 0: collector persists rulesetVersionId on findings', () => {
       expect(f.rulesetVersionId).toBe(RULESET_VERSION_ID);
       expect(f.rulesetVersionId).not.toBeNull();
     }
+
+    const { SnapshotRepository } = await import('@dns-ops/db');
+    const snapshotRepo = vi.mocked(SnapshotRepository).mock.instances.at(-1) as {
+      updateEvaluationCoverage: ReturnType<typeof vi.fn>;
+      updateRulesetVersion: ReturnType<typeof vi.fn>;
+    };
+    expect(snapshotRepo.updateEvaluationCoverage).toHaveBeenCalledWith(
+      'snapshot-1',
+      expect.objectContaining({ state: 'COMPLETE' })
+    );
+    const coverageOrder = snapshotRepo.updateEvaluationCoverage.mock.invocationCallOrder[0];
+    const persistOrder = findingRepo.createMany.mock.invocationCallOrder[0];
+    const rulesetOrder = snapshotRepo.updateRulesetVersion.mock.invocationCallOrder[0];
+    expect(persistOrder).toBeLessThan(coverageOrder ?? Number.POSITIVE_INFINITY);
+    expect(coverageOrder).toBeLessThan(rulesetOrder ?? Number.POSITIVE_INFINITY);
   });
 
   it('FIX-01: persists partial evaluation coverage when a rule is UNKNOWN', async () => {

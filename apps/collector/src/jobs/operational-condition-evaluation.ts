@@ -1,7 +1,9 @@
 import {
+  type EvaluationCoverage,
   type HomepageIndexabilityBaselinePolicy,
   type InternalSignalKind,
   internalConditionKey,
+  isEvaluationComplete,
   normalizeOperationalDiscriminator,
   normalizeOperationalHttpUrl,
   type OperationalConditionBaselinePolicy,
@@ -28,6 +30,8 @@ export interface PersistedConditionFinding {
   id: string;
   type: string;
   reviewOnly: boolean;
+  snapshotId?: string;
+  rulesetVersionId?: string | null;
 }
 
 export interface CanonicalConditionObservation {
@@ -410,6 +414,9 @@ export function evaluateOperationalConditions(input: {
   tenantId: string;
   domainId: string;
   snapshotComplete: boolean;
+  evaluationCoverage?: EvaluationCoverage | null;
+  snapshotId?: string;
+  rulesetVersionId?: string | null;
   baselines: PersistedConditionBaseline[];
   probes: PersistedConditionProbe[];
   findings: PersistedConditionFinding[];
@@ -488,8 +495,20 @@ export function evaluateOperationalConditions(input: {
         recordInconclusive(result, input, baseline.kind, discriminator, 'MALFORMED');
         continue;
       }
+      if (
+        !isEvaluationComplete(input.evaluationCoverage) ||
+        !input.snapshotId ||
+        !input.rulesetVersionId
+      ) {
+        recordInconclusive(result, input, baseline.kind, discriminator, 'UNKNOWN');
+        continue;
+      }
       const finding = input.findings.find(
-        (candidate) => candidate.type === 'mail.no-spf-record' && !candidate.reviewOnly
+        (candidate) =>
+          candidate.type === 'mail.no-spf-record' &&
+          !candidate.reviewOnly &&
+          candidate.snapshotId === input.snapshotId &&
+          candidate.rulesetVersionId === input.rulesetVersionId
       );
       result.evaluatedConditionKeys.push(
         evaluated(

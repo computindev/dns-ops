@@ -251,6 +251,7 @@ export async function processCollectDomain(job: Job<CollectDomainJobData>): Prom
           tenantId,
           domainId: evidenceDomain.id,
           domainName: evidenceDomain.normalizedName,
+          monitoredDomainId,
         });
       } catch (finalizationError) {
         finalizationFailed = true;
@@ -512,6 +513,7 @@ export async function processMonitoringRefresh(job: Job<MonitoringRefreshJobData
         tenantId,
         domainId: domain.id,
         domainName: domain.normalizedName,
+        monitoredDomainId,
       });
     } catch (finalizationError) {
       logger.error('Canonical condition finalization failed; monitoring refresh will retry', {

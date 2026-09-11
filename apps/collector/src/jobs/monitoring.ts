@@ -129,6 +129,23 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         resultState =
           payload && typeof payload.resultState === 'string' ? payload.resultState : undefined;
       } else {
+        const failureBody = await response.text();
+        let dedupReason: string | undefined;
+        try {
+          const parsed = JSON.parse(failureBody) as { reason?: unknown };
+          if (typeof parsed.reason === 'string') dedupReason = parsed.reason;
+        } catch {
+          dedupReason = undefined;
+        }
+        if (response.status === 429 && dedupReason === 'recent_collection_exists') {
+          results.push({
+            domainId: monitored.domainId,
+            checked: false,
+            error: 'recent_collection_exists',
+          });
+          continue;
+        }
+
         if (!monitored.tenantId) {
           monitoringLogger.error(`Monitored domain missing tenant ownership: ${monitored.id}`);
           continue; // Skip domain without tenant - cannot create alerts without tenant ownership
@@ -138,7 +155,7 @@ monitoringRoutes.post('/check', internalOnlyMiddleware, async (c) => {
         const alert = await alertRepo.create({
           monitoredDomainId: monitored.id,
           title: 'Collection Failed',
-          description: `Failed to collect DNS data: ${await response.text()}`,
+          description: `Failed to collect DNS data: ${failureBody}`,
           severity: 'high',
           status: 'pending',
           dedupKey: `collection-fail-${monitored.domainId}`,
