@@ -11,7 +11,14 @@ import {
   isEvaluationComplete,
   type Severity,
 } from '@dns-ops/contracts';
-import type { IDatabaseAdapter, NewFinding, NewSuggestion } from '@dns-ops/db';
+import type {
+  Domain,
+  Finding,
+  IDatabaseAdapter,
+  NewFinding,
+  NewSuggestion,
+  Snapshot,
+} from '@dns-ops/db';
 import {
   DkimSelectorRepository,
   DomainRepository,
@@ -113,10 +120,35 @@ async function ensureRulesetVersion(
   return newVersion.id;
 }
 
+function tenantOwnsDomain(
+  domain: { tenantId?: string | null },
+  tenantId: string | undefined
+): boolean {
+  if (domain.tenantId && domain.tenantId !== tenantId) return false;
+  if (!tenantId && domain.tenantId) return false;
+  return true;
+}
+
+async function loadOwnedFinding(
+  db: IDatabaseAdapter,
+  findingId: string,
+  tenantId: string | undefined
+): Promise<{ finding: Finding; snapshot: Snapshot; domain: Domain } | null> {
+  const finding = await new FindingRepository(db).findById(findingId);
+  if (!finding) return null;
+  const snapshot = await new SnapshotRepository(db).findById(finding.snapshotId);
+  if (!snapshot) return null;
+  const domain = await new DomainRepository(db).findById(snapshot.domainId);
+  if (!domain) return null;
+  if (!tenantOwnsDomain(domain, tenantId)) return null;
+  return { finding, snapshot, domain };
+}
+
 async function persistEvaluatedFindings(
   db: IDatabaseAdapter,
   input: {
     snapshotId: string;
+    domainId: string;
     replaceExisting: boolean;
     context: RuleContext;
     ruleset: Ruleset;
@@ -136,7 +168,7 @@ async function persistEvaluatedFindings(
     const snapshotRepo = new SnapshotRepository(adapter);
     let deletedCount = 0;
     if (input.replaceExisting) {
-      await snapshotRepo.unpublishEvaluation(input.snapshotId);
+      await snapshotRepo.unpublishEvaluation(input.snapshotId, { domainId: input.domainId });
       deletedCount = await findingRepo.deleteBySnapshotIdAndRulesetVersionId(
         input.snapshotId,
         input.rulesetVersionId
@@ -201,7 +233,9 @@ async function persistEvaluatedFindings(
   try {
     return await db.transaction((tx) => publish(tx));
   } catch (error) {
-    await new SnapshotRepository(db).unpublishEvaluation(input.snapshotId).catch(() => undefined);
+    await new SnapshotRepository(db)
+      .unpublishEvaluation(input.snapshotId, { domainId: input.domainId })
+      .catch(() => undefined);
     throw error;
   }
 }
@@ -324,6 +358,7 @@ findingsRoutes.get('/snapshot/:snapshotId/findings', requireAuth, async (c) => {
 
     const published = await persistEvaluatedFindings(db, {
       snapshotId,
+      domainId: domain.id,
       replaceExisting: forceRefresh,
       context,
       ruleset,
@@ -576,6 +611,7 @@ findingsRoutes.post(
       const recordSets = await recordSetRepo.findBySnapshotId(snapshotId);
       const published = await persistEvaluatedFindings(db, {
         snapshotId,
+        domainId: domain.id,
         replaceExisting: true,
         context: {
           snapshotId,
@@ -719,14 +755,22 @@ findingsRoutes.patch(
     const findingId = c.req.param('findingId');
     const db = c.get('db');
     const actorId = c.get('actorId');
+    const tenantId = c.get('tenantId');
 
     if (!actorId) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
     try {
-      const findingRepo = new FindingRepository(db);
-      const updated = await findingRepo.markAcknowledged(findingId, actorId);
+      const owned = await loadOwnedFinding(db, findingId, tenantId);
+      if (!owned) {
+        return c.json({ error: 'Finding not found' }, 404);
+      }
+      const updated = await new FindingRepository(db).markAcknowledged(
+        owned.finding.id,
+        owned.finding.snapshotId,
+        actorId
+      );
 
       if (!updated) {
         return c.json({ error: 'Finding not found' }, 404);
@@ -765,38 +809,12 @@ findingsRoutes.get('/findings/:findingId', requireAuth, async (c) => {
   const db = c.get('db');
 
   try {
-    const findingRepo = new FindingRepository(db);
-    const snapshotRepo = new SnapshotRepository(db);
-    const domainRepo = new DomainRepository(db);
-
-    // Fetch finding
-    const finding = await findingRepo.findById(findingId);
-    if (!finding) {
+    const owned = await loadOwnedFinding(db, findingId, c.get('tenantId'));
+    if (!owned) {
       return c.json({ error: 'Finding not found' }, 404);
     }
 
-    // Fetch snapshot for tenant isolation
-    const snapshot = await snapshotRepo.findById(finding.snapshotId);
-    if (!snapshot) {
-      return c.json({ error: 'Finding not found' }, 404);
-    }
-
-    // Fetch domain for tenant check
-    const domain = await domainRepo.findById(snapshot.domainId);
-    if (!domain) {
-      return c.json({ error: 'Finding not found' }, 404);
-    }
-
-    // Tenant isolation: reject if domain belongs to a different tenant
-    const tenantId = c.get('tenantId');
-    if (domain.tenantId && domain.tenantId !== tenantId) {
-      return c.json({ error: 'Finding not found' }, 404);
-    }
-    if (!tenantId && domain.tenantId) {
-      return c.json({ error: 'Finding not found' }, 404);
-    }
-
-    return c.json({ finding });
+    return c.json({ finding: owned.finding });
   } catch (error) {
     const logger = getWebLogger();
     logger.error(
@@ -831,14 +849,22 @@ findingsRoutes.patch(
     const findingId = c.req.param('findingId');
     const db = c.get('db');
     const actorId = c.get('actorId');
+    const tenantId = c.get('tenantId');
 
     if (!actorId) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
     try {
-      const findingRepo = new FindingRepository(db);
-      const updated = await findingRepo.markFalsePositive(findingId, actorId);
+      const owned = await loadOwnedFinding(db, findingId, tenantId);
+      if (!owned) {
+        return c.json({ error: 'Finding not found' }, 404);
+      }
+      const updated = await new FindingRepository(db).markFalsePositive(
+        owned.finding.id,
+        owned.finding.snapshotId,
+        actorId
+      );
 
       if (!updated) {
         return c.json({ error: 'Finding not found' }, 404);
@@ -883,11 +909,12 @@ findingsRoutes.patch(
  *   - limit?: number - Max snapshots to process (default: 50, max: 200)
  *   - dryRun?: boolean - If true, only return stats without processing
  */
-findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
+findingsRoutes.post('/findings/backfill', requireAuth, requireWritePermission, async (c) => {
   const db = c.get('db');
   const actorId = c.get('actorId');
+  const tenantId = c.get('tenantId');
 
-  if (!actorId) {
+  if (!actorId || !tenantId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
@@ -906,19 +933,22 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
 
   try {
     const snapshotRepo = new SnapshotRepository(db);
-    const findingRepo = new FindingRepository(db);
     const rulesetVersionRepo = new RulesetVersionRepository(db);
     const domainRepo = new DomainRepository(db);
     const observationRepo = new ObservationRepository(db);
     const recordSetRepo = new RecordSetRepository(db);
-    const suggestionRepo = new SuggestionRepository(db);
 
-    // Get current ruleset and ensure version exists
+    if (domainId) {
+      const domain = await domainRepo.findById(domainId);
+      if (!domain || !tenantOwnsDomain(domain, tenantId)) {
+        return c.json({ error: 'Domain not found' }, 404);
+      }
+    }
+
     const ruleset = createCombinedRuleset();
     const rulesetVersionId = await ensureRulesetVersion(rulesetVersionRepo, ruleset, actorId);
-
-    // Get backfill statistics
     const stats = await snapshotRepo.countNeedingBackfill(rulesetVersionId, {
+      tenantId,
       domainId,
       completedOnly: true,
     });
@@ -933,8 +963,8 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
       });
     }
 
-    // Find snapshots needing backfill
     const snapshotsToProcess = await snapshotRepo.findNeedingBackfill(rulesetVersionId, {
+      tenantId,
       domainId,
       limit: effectiveLimit,
       completedOnly: true,
@@ -947,10 +977,10 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
         rulesetVersionId,
         stats,
         message: 'No snapshots require backfill',
+        results: [],
       });
     }
 
-    // Process each snapshot
     const results: Array<{
       snapshotId: string;
       domainName: string;
@@ -962,129 +992,36 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
 
     for (const snapshot of snapshotsToProcess) {
       try {
-        // Fetch domain
         const domain = await domainRepo.findById(snapshot.domainId);
-        if (!domain) {
-          results.push({
-            snapshotId: snapshot.id,
-            domainName: snapshot.domainName,
-            findingsCount: 0,
-            suggestionsCount: 0,
-            status: 'error',
-            error: 'Domain not found',
-          });
+        if (!domain || !tenantOwnsDomain(domain, tenantId) || domain.id !== snapshot.domainId) {
           continue;
         }
 
-        // Tenant isolation: skip domains that don't belong to this tenant
-        const tenantId = c.get('tenantId');
-        if (domain.tenantId && domain.tenantId !== tenantId) {
-          results.push({
-            snapshotId: snapshot.id,
-            domainName: snapshot.domainName,
-            findingsCount: 0,
-            suggestionsCount: 0,
-            status: 'error',
-            error: 'Cross-tenant access denied',
-          });
-          continue;
-        }
-        if (!tenantId && domain.tenantId) {
-          results.push({
-            snapshotId: snapshot.id,
-            domainName: snapshot.domainName,
-            findingsCount: 0,
-            suggestionsCount: 0,
-            status: 'error',
-            error: 'Cross-tenant access denied',
-          });
-          continue;
-        }
-
-        // Fetch observations and record sets
         const observations = await observationRepo.findBySnapshotId(snapshot.id);
         const recordSets = await recordSetRepo.findBySnapshotId(snapshot.id);
-
-        // Create rule context
-        const context: RuleContext = {
+        const published = await persistEvaluatedFindings(db, {
           snapshotId: snapshot.id,
           domainId: domain.id,
-          domainName: domain.name,
-          zoneManagement: snapshot.zoneManagement,
-          observations,
-          recordSets,
-          rulesetVersion: ruleset.version,
-        };
-
-        // Evaluate rules and preserve incomplete coverage during backfill.
-        const engine = new RulesEngine(ruleset);
-        const { findings, suggestions, errors, complete } = engine.evaluate(context);
-
-        // Delete any existing findings for this ruleset version (idempotent)
-        await findingRepo.deleteBySnapshotIdAndRulesetVersionId(snapshot.id, rulesetVersionId);
-
-        // Persist findings
-        const findingsToInsert: NewFinding[] = findings.map((f) => ({
-          snapshotId: snapshot.id,
-          type: f.type,
-          title: f.title,
-          description: f.description,
-          severity: f.severity,
-          confidence: f.confidence,
-          riskPosture: f.riskPosture,
-          blastRadius: f.blastRadius,
-          reviewOnly: f.reviewOnly,
-          evidence: f.evidence,
-          ruleId: f.ruleId,
-          ruleVersion: f.ruleVersion,
+          replaceExisting: true,
+          context: {
+            snapshotId: snapshot.id,
+            domainId: domain.id,
+            domainName: domain.name,
+            zoneManagement: snapshot.zoneManagement,
+            observations,
+            recordSets,
+            rulesetVersion: ruleset.version,
+          },
+          ruleset,
           rulesetVersionId,
-        }));
-
-        const persistedFindings = await findingRepo.createMany(findingsToInsert);
-
-        // Build finding ID map for suggestion linking
-        const findingIdMap = new Map<string, string>();
-        for (let i = 0; i < findings.length; i++) {
-          const originalId = findings[i].id;
-          const persistedId = persistedFindings[i]?.id;
-          if (originalId && persistedId) {
-            findingIdMap.set(originalId, persistedId);
-          }
-        }
-
-        // Persist suggestions
-        const suggestionsToInsert: NewSuggestion[] = [];
-        for (const s of suggestions) {
-          const persistedFindingId = findingIdMap.get(s.findingId);
-          if (persistedFindingId) {
-            suggestionsToInsert.push({
-              findingId: persistedFindingId,
-              title: s.title,
-              description: s.description,
-              action: s.action,
-              riskPosture: s.riskPosture,
-              blastRadius: s.blastRadius,
-              reviewOnly: s.reviewOnly ?? false,
-            });
-          }
-        }
-
-        const persistedSuggestions = await suggestionRepo.createMany(suggestionsToInsert);
-
-        await snapshotRepo.updateEvaluationCoverage(snapshot.id, {
-          state: complete ? 'COMPLETE' : 'PARTIAL',
-          errors,
         });
-        if (complete) {
-          await snapshotRepo.updateRulesetVersion(snapshot.id, rulesetVersionId);
-        }
 
         results.push({
           snapshotId: snapshot.id,
-          domainName: snapshot.domainName,
-          findingsCount: persistedFindings.length,
-          suggestionsCount: persistedSuggestions.length,
-          status: complete ? 'success' : 'partial',
+          domainName: domain.name,
+          findingsCount: published.persistedFindings.length,
+          suggestionsCount: published.persistedSuggestions.length,
+          status: published.evaluationCoverage.state === 'COMPLETE' ? 'success' : 'partial',
         });
       } catch (error) {
         results.push({
@@ -1142,19 +1079,30 @@ findingsRoutes.post('/findings/backfill', requireAuth, async (c) => {
  */
 findingsRoutes.get('/findings/backfill/status', requireAuth, async (c) => {
   const db = c.get('db');
+  const tenantId = c.get('tenantId');
   const domainId = c.req.query('domainId');
+
+  if (!tenantId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
 
   try {
     const snapshotRepo = new SnapshotRepository(db);
     const rulesetVersionRepo = new RulesetVersionRepository(db);
+    const domainRepo = new DomainRepository(db);
 
-    // Get current ruleset and ensure version exists
+    if (domainId) {
+      const domain = await domainRepo.findById(domainId);
+      if (!domain || !tenantOwnsDomain(domain, tenantId)) {
+        return c.json({ error: 'Domain not found' }, 404);
+      }
+    }
+
     const ruleset = createCombinedRuleset();
     const actorId = c.get('actorId') || 'system';
     const rulesetVersionId = await ensureRulesetVersion(rulesetVersionRepo, ruleset, actorId);
-
-    // Get backfill statistics
     const stats = await snapshotRepo.countNeedingBackfill(rulesetVersionId, {
+      tenantId,
       domainId,
       completedOnly: true,
     });

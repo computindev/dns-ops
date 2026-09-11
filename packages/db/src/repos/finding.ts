@@ -6,7 +6,7 @@
  * and historical comparison.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
 import { type Finding, findings, type NewFinding } from '../schema/index.js';
 
@@ -74,40 +74,46 @@ export class FindingRepository {
   /**
    * Mark a finding as acknowledged
    */
-  async markAcknowledged(id: string, acknowledgedBy: string): Promise<Finding | null> {
-    const existing = await this.findById(id);
-    if (!existing) return null;
-
-    await this.db.update(
-      findings,
-      {
-        acknowledgedAt: new Date(),
-        acknowledgedBy,
-      },
-      eq(findings.id, id)
+  async markAcknowledged(
+    id: string,
+    snapshotId: string,
+    acknowledgedBy: string
+  ): Promise<Finding | null> {
+    const predicate = and(eq(findings.id, id), eq(findings.snapshotId, snapshotId));
+    if (!predicate) return null;
+    return (
+      (await this.db.updateOne(
+        findings,
+        {
+          acknowledgedAt: new Date(),
+          acknowledgedBy,
+        },
+        predicate
+      )) ?? null
     );
-
-    return this.findById(id);
   }
 
   /**
    * Mark a finding as a false positive
    */
-  async markFalsePositive(id: string, acknowledgedBy: string): Promise<Finding | null> {
-    const existing = await this.findById(id);
-    if (!existing) return null;
-
-    await this.db.update(
-      findings,
-      {
-        falsePositive: true,
-        acknowledgedAt: new Date(),
-        acknowledgedBy,
-      },
-      eq(findings.id, id)
+  async markFalsePositive(
+    id: string,
+    snapshotId: string,
+    acknowledgedBy: string
+  ): Promise<Finding | null> {
+    const predicate = and(eq(findings.id, id), eq(findings.snapshotId, snapshotId));
+    if (!predicate) return null;
+    return (
+      (await this.db.updateOne(
+        findings,
+        {
+          falsePositive: true,
+          acknowledgedAt: new Date(),
+          acknowledgedBy,
+        },
+        predicate
+      )) ?? null
     );
-
-    return this.findById(id);
   }
 
   /**

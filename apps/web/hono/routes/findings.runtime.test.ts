@@ -43,11 +43,24 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
-  const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+function getConditionParams(condition: unknown): unknown[] {
+  const values: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const candidate = node as {
+      constructor?: { name?: string };
+      value?: unknown;
+      queryChunks?: unknown[];
+    };
+    if (candidate.constructor?.name === 'Param') values.push(candidate.value);
+    for (const chunk of candidate.queryChunks ?? []) walk(chunk);
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  walk(condition);
+  return values;
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createMockDb(state: MockState): IDatabaseAdapter {
@@ -87,6 +100,8 @@ function createMockDb(state: MockState): IDatabaseAdapter {
         return state.snapshots.filter(
           (row) => row.domainId === param || row.rulesetVersionId === param
         );
+      if (tableName === 'domains')
+        return state.domains.filter((row) => row.tenantId === param || row.id === param);
       return [];
     }),
     selectOne: vi.fn(async (table: unknown, condition: unknown) => {
@@ -142,9 +157,9 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     }),
     update: vi.fn(async (table: unknown, values: Record<string, unknown>, condition: unknown) => {
       const tableName = getTableName(table);
-      const param = getConditionParam(condition);
+      const params = getConditionParams(condition);
       if (tableName === 'findings') {
-        const index = state.findings.findIndex((row) => row.id === param);
+        const index = state.findings.findIndex((row) => params.includes(row.id));
         if (index !== -1) {
           state.findings[index] = { ...state.findings[index], ...values };
         }
@@ -153,15 +168,15 @@ function createMockDb(state: MockState): IDatabaseAdapter {
     updateOne: vi.fn(
       async (table: unknown, values: Record<string, unknown>, condition: unknown) => {
         const tableName = getTableName(table);
-        const param = getConditionParam(condition);
+        const params = getConditionParams(condition);
         if (tableName === 'findings') {
-          const index = state.findings.findIndex((row) => row.id === param);
+          const index = state.findings.findIndex((row) => params.includes(row.id));
           if (index === -1) return undefined;
           state.findings[index] = { ...state.findings[index], ...values };
           return state.findings[index];
         }
         if (tableName === 'snapshots') {
-          const index = state.snapshots.findIndex((row) => row.id === param);
+          const index = state.snapshots.findIndex((row) => params.includes(row.id));
           if (index === -1) return undefined;
           state.snapshots[index] = { ...state.snapshots[index], ...values };
           return state.snapshots[index];
@@ -860,6 +875,41 @@ describe('findingsRoutes runtime', () => {
 
       expect(response.status).toBe(401);
     });
+
+    it('returns 404 and does not mutate a finding owned by another tenant', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+        findings: [
+          {
+            id: 'finding-1',
+            snapshotId: 'snap-1',
+            type: 'dns.authoritative-failure',
+            title: 'Auth failure',
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            falsePositive: false,
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/findings/finding-1/acknowledge', {
+        method: 'PATCH',
+      });
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ error: 'Finding not found' });
+      expect(state.findings[0]?.acknowledgedBy).toBeNull();
+      expect(state.findings[0]?.acknowledgedAt).toBeNull();
+    });
   });
 
   describe('PATCH /findings/:findingId/false-positive', () => {
@@ -973,6 +1023,41 @@ describe('findingsRoutes runtime', () => {
 
       expect(response.status).toBe(401);
     });
+
+    it('returns 404 and does not mutate a finding owned by another tenant', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+        findings: [
+          {
+            id: 'finding-1',
+            snapshotId: 'snap-1',
+            type: 'dns.authoritative-failure',
+            title: 'Auth failure',
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            falsePositive: false,
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/findings/finding-1/false-positive', {
+        method: 'PATCH',
+      });
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ error: 'Finding not found' });
+      expect(state.findings[0]?.falsePositive).toBe(false);
+      expect(state.findings[0]?.acknowledgedBy).toBeNull();
+    });
   });
 
   describe('POST /findings/backfill', () => {
@@ -1023,6 +1108,142 @@ describe('findingsRoutes runtime', () => {
       });
 
       expect(response.status).toBe(401);
+    });
+
+    it('does not return foreign snapshot ids or global stats', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-1',
+            zoneManagement: 'managed',
+          },
+          {
+            id: 'domain-other',
+            name: 'other.example',
+            normalizedName: 'other.example',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: null,
+          },
+          {
+            id: 'snap-other',
+            domainId: 'domain-other',
+            domainName: 'other.example',
+            resultState: 'complete',
+            rulesetVersionId: null,
+            zoneManagement: 'managed',
+            queriedNames: ['other.example'],
+            queriedTypes: ['A'],
+            vantages: ['google-dns'],
+            metadata: {},
+            createdAt: new Date(),
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/findings/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      });
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        dryRun: boolean;
+        stats: { total: number; needsBackfill: number };
+        results?: Array<{ snapshotId: string }>;
+      };
+      expect(json.dryRun).toBe(true);
+      expect(json.stats.total).toBe(1);
+      expect(json.stats.needsBackfill).toBe(1);
+      expect(json.results ?? []).toEqual([]);
+    });
+
+    it('writes only tenant-owned snapshots', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-1',
+            name: 'example.com',
+            normalizedName: 'example.com',
+            tenantId: 'tenant-1',
+            zoneManagement: 'managed',
+          },
+          {
+            id: 'domain-other',
+            name: 'other.example',
+            normalizedName: 'other.example',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+        snapshots: [
+          {
+            ...makeState().snapshots[0],
+            rulesetVersionId: null,
+          },
+          {
+            id: 'snap-other',
+            domainId: 'domain-other',
+            domainName: 'other.example',
+            resultState: 'complete',
+            rulesetVersionId: null,
+            zoneManagement: 'managed',
+            queriedNames: ['other.example'],
+            queriedTypes: ['A'],
+            vantages: ['google-dns'],
+            metadata: {},
+            createdAt: new Date(),
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/findings/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        results: Array<{ snapshotId: string; domainName: string }>;
+      };
+      expect(json.results.every((row) => row.snapshotId === 'snap-1')).toBe(true);
+      expect(json.results.some((row) => row.snapshotId === 'snap-other')).toBe(false);
+      expect(JSON.stringify(json)).not.toContain('other.example');
+    });
+
+    it('returns 404 for a domain owned by another tenant', async () => {
+      const state = makeState({
+        domains: [
+          {
+            id: 'domain-other',
+            name: 'other.example',
+            normalizedName: 'other.example',
+            tenantId: 'tenant-other',
+            zoneManagement: 'managed',
+          },
+        ],
+      });
+      const app = createApp(state);
+
+      const response = await app.request('/api/findings/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domainId: 'domain-other' }),
+      });
+
+      expect(response.status).toBe(404);
     });
   });
 

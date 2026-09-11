@@ -695,26 +695,48 @@ describe('Backfill cross-tenant isolation (loop bugfix)', () => {
       },
     ];
 
+    const tableNameOf = (table: unknown): string => {
+      try {
+        const symbols = Object.getOwnPropertySymbols(table as object);
+        const drizzleName = symbols.find((s) => String(s).includes('drizzle:Name'));
+        if (drizzleName) {
+          const val = (table as Record<symbol, unknown>)[drizzleName];
+          if (typeof val === 'string') return val;
+        }
+      } catch {
+        /* ignore */
+      }
+      return '';
+    };
     const backfillDb = {
       ...createMockDb(localDomains, localSnapshots, [], localRulesetVersions),
-      // Override select to return snapshots (needed by findNeedingBackfill)
       select: vi.fn().mockImplementation((table: unknown) => {
-        // Inline table name extraction (avoid closure issue with getTableName)
-        let tableName = '';
-        try {
-          const symbols = Object.getOwnPropertySymbols(table as object);
-          const drizzleName = symbols.find((s) => String(s).includes('drizzle:Name'));
-          if (drizzleName) {
-            const val = (table as Record<symbol, unknown>)[drizzleName];
-            if (typeof val === 'string') tableName = val;
-          }
-        } catch {
-          /* ignore */
-        }
+        const tableName = tableNameOf(table);
         if (tableName === 'snapshots') return Promise.resolve([...localSnapshots]);
         if (tableName === 'domains') return Promise.resolve([...localDomains]);
         return Promise.resolve([]);
       }),
+      selectWhere: vi.fn().mockImplementation((table: unknown) => {
+        const tableName = tableNameOf(table);
+        if (tableName === 'snapshots') return Promise.resolve([...localSnapshots]);
+        return Promise.resolve([...localDomains]);
+      }),
+      selectOne: vi.fn().mockImplementation((_table: unknown, condition: unknown) => {
+        const param = extractParam(condition);
+        const domain = localDomains.find((row) => row.id === param);
+        if (domain) return Promise.resolve(domain);
+        const snapshot = localSnapshots.find((row) => row.id === param);
+        if (snapshot) return Promise.resolve(snapshot);
+        const ruleset = localRulesetVersions.find(
+          (row) => row.id === param || row.version === param
+        );
+        return Promise.resolve(ruleset);
+      }),
+      transaction: vi.fn(async (callback: (db: IDatabaseAdapter) => Promise<unknown>) =>
+        callback(backfillDb as IDatabaseAdapter)
+      ),
+      insertMany: vi.fn(async (_table: unknown, rows: unknown[]) => rows),
+      updateOne: vi.fn(async (_table: unknown, values: Record<string, unknown>) => values),
     } as unknown as IDatabaseAdapter;
 
     const app = new Hono<Env>();
@@ -729,8 +751,7 @@ describe('Backfill cross-tenant isolation (loop bugfix)', () => {
     return app;
   }
 
-  it('processes batch even when cross-tenant snapshots exist (not return-early)', async () => {
-    // Tenant A backfills — snap-B (tenant B) should be SKIPPED, not STOP the batch
+  it('processes owned snapshots even when cross-tenant snapshots exist', async () => {
     const app = createBackfillApp(TENANT_A);
     const res = await app.request('/api/findings/backfill', {
       method: 'POST',
@@ -740,18 +761,16 @@ describe('Backfill cross-tenant isolation (loop bugfix)', () => {
 
     const body = (await res.json()) as {
       processed?: number;
-      success?: number;
       results?: Array<{ snapshotId: string; status: string; error?: string }>;
     };
 
-    // CRITICAL: The batch should NOT have been aborted by cross-tenant snapshot.
-    // If the old "return" bug exists, processed=0 because the loop exits on snap-B.
-    // Correct behavior: processed > 0 (snap-B is skipped, batch continues).
     expect(res.status).toBe(200);
     expect(body.processed ?? 0).toBeGreaterThan(0);
+    expect(body.results?.some((r) => r.snapshotId === 'snap-a')).toBe(true);
+    expect(body.results?.some((r) => r.snapshotId === 'snap-b')).toBe(false);
   });
 
-  it('includes cross-tenant snapshots in results with error (not excluded)', async () => {
+  it('never returns foreign snapshot ids in backfill results', async () => {
     const app = createBackfillApp(TENANT_A);
     const res = await app.request('/api/findings/backfill', {
       method: 'POST',
@@ -760,35 +779,27 @@ describe('Backfill cross-tenant isolation (loop bugfix)', () => {
     });
 
     const body = (await res.json()) as {
-      success?: number;
-      errors?: number;
-      results?: Array<{ snapshotId: string; status: string; error?: string }>;
+      results?: Array<{ snapshotId: string; domainName?: string }>;
+      stats?: { total?: number };
     };
 
     expect(res.status).toBe(200);
-
-    // snap-B (cross-tenant) must appear in results (not excluded by return-early)
-    const crossTenantResult = body.results?.find((r) => r.snapshotId === 'snap-b');
-    expect(crossTenantResult).toBeDefined();
-    expect(crossTenantResult?.status).toBe('error');
-    expect(crossTenantResult?.error).toMatch(/cross-tenant|denied|not found/i);
+    expect(body.results?.find((r) => r.snapshotId === 'snap-b')).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('theirs.example.com');
   });
 
-  it('marks cross-tenant snapshots as error status (not success)', async () => {
+  it('scopes dryRun stats to the caller tenant', async () => {
     const app = createBackfillApp(TENANT_A);
     const res = await app.request('/api/findings/backfill', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ dryRun: true }),
     });
 
-    const body = (await res.json()) as {
-      results?: Array<{ snapshotId: string; status: string }>;
-    };
-
-    const crossTenantResult = body.results?.find((r) => r.snapshotId === 'snap-b');
-    // Must be 'error', NOT 'success' (which would happen if cross-tenant was skipped silently)
-    expect(crossTenantResult?.status).toBe('error');
+    const body = (await res.json()) as { stats?: { total?: number; needsBackfill?: number } };
+    expect(res.status).toBe(200);
+    expect(body.stats?.total).toBe(1);
+    expect(body.stats?.needsBackfill).toBe(1);
   });
 
   it('dryRun returns stats without processing', async () => {

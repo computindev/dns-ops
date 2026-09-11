@@ -6,9 +6,9 @@
  */
 
 import type { EvaluationCoverage } from '@dns-ops/contracts';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { IDatabaseAdapter } from '../database/simple-adapter.js';
-import { type NewSnapshot, type Snapshot, snapshots } from '../schema/index.js';
+import { domains, type NewSnapshot, type Snapshot, snapshots } from '../schema/index.js';
 
 export class SnapshotRepository {
   constructor(private db: IDatabaseAdapter) {}
@@ -132,9 +132,17 @@ export class SnapshotRepository {
     return this.db.updateOne(snapshots, { rulesetVersionId }, eq(snapshots.id, id));
   }
 
-  async unpublishEvaluation(id: string): Promise<Snapshot | undefined> {
+  async unpublishEvaluation(
+    id: string,
+    owned?: { domainId: string }
+  ): Promise<Snapshot | undefined> {
     const existing = await this.findById(id);
     if (!existing) return undefined;
+    if (owned && existing.domainId !== owned.domainId) return undefined;
+    const predicate = owned
+      ? and(eq(snapshots.id, id), eq(snapshots.domainId, owned.domainId))
+      : eq(snapshots.id, id);
+    if (!predicate) return undefined;
     return this.db.updateOne(
       snapshots,
       {
@@ -162,7 +170,7 @@ export class SnapshotRepository {
           },
         },
       },
-      eq(snapshots.id, id)
+      predicate
     );
   }
 
@@ -203,31 +211,26 @@ export class SnapshotRepository {
   async findNeedingBackfill(
     targetRulesetVersionId: string,
     options: {
+      tenantId: string;
       domainId?: string;
       limit?: number;
       completedOnly?: boolean;
-    } = {}
-  ): Promise<Snapshot[]> {
-    const { domainId, limit = 100, completedOnly = true } = options;
-
-    let results = await this.db.select(snapshots);
-
-    // Filter by domain if specified
-    if (domainId) {
-      results = results.filter((s) => s.domainId === domainId);
     }
+  ): Promise<Snapshot[]> {
+    const { tenantId, domainId, limit = 100, completedOnly = true } = options;
+    const allowedDomainIds = await this.tenantDomainIds(tenantId, domainId);
+    if (allowedDomainIds.size === 0) return [];
 
-    // Filter by result state if completedOnly
+    let results = (await this.db.select(snapshots)).filter((s) => allowedDomainIds.has(s.domainId));
+
     if (completedOnly) {
       results = results.filter((s) => s.resultState === 'complete');
     }
 
-    // Filter to snapshots needing backfill (no ruleset or different ruleset)
     results = results.filter(
       (s) => !s.rulesetVersionId || s.rulesetVersionId !== targetRulesetVersionId
     );
 
-    // Sort by createdAt desc (most recent first)
     results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return results.slice(0, limit);
@@ -238,18 +241,14 @@ export class SnapshotRepository {
    */
   async countNeedingBackfill(
     targetRulesetVersionId: string,
-    options: { domainId?: string; completedOnly?: boolean } = {}
+    options: { tenantId: string; domainId?: string; completedOnly?: boolean }
   ): Promise<{ total: number; needsBackfill: number }> {
-    const { domainId, completedOnly = true } = options;
+    const { tenantId, domainId, completedOnly = true } = options;
+    const allowedDomainIds = await this.tenantDomainIds(tenantId, domainId);
+    if (allowedDomainIds.size === 0) return { total: 0, needsBackfill: 0 };
 
-    let results = await this.db.select(snapshots);
+    let results = (await this.db.select(snapshots)).filter((s) => allowedDomainIds.has(s.domainId));
 
-    // Filter by domain if specified
-    if (domainId) {
-      results = results.filter((s) => s.domainId === domainId);
-    }
-
-    // Filter by result state if completedOnly
     if (completedOnly) {
       results = results.filter((s) => s.resultState === 'complete');
     }
@@ -260,5 +259,16 @@ export class SnapshotRepository {
     ).length;
 
     return { total, needsBackfill };
+  }
+
+  private async tenantDomainIds(tenantId: string, domainId?: string): Promise<Set<string>> {
+    const owned = (await this.db.selectWhere(domains, eq(domains.tenantId, tenantId))).filter(
+      (domain) => domain.tenantId === tenantId
+    );
+    const allowed = new Set(owned.map((domain) => domain.id));
+    if (domainId) {
+      return allowed.has(domainId) ? new Set([domainId]) : new Set();
+    }
+    return allowed;
   }
 }

@@ -222,12 +222,11 @@ export const AUTH_POLICY_MATRIX: RoutePolicy[] = [
     policy: 'auth-write',
     notes: 'Uses requireWritePermission and tenant-scoped snapshot ownership',
   },
-  // Findings backfill (admin-like but uses requireAuth)
   {
     path: '/api/findings/backfill',
     method: 'POST',
-    policy: 'auth-read',
-    notes: 'Uses requireAuth, batch operations',
+    policy: 'auth-write',
+    notes: 'Uses requireWritePermission and tenant-scoped snapshot selection',
   },
   { path: '/api/findings/backfill/status', method: 'GET', policy: 'auth-read' },
 
