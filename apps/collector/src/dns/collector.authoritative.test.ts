@@ -284,6 +284,56 @@ describe('PR-07.6: Authoritative Collection', () => {
     expect(state).toBe('complete');
   });
 
+  it('counts NXDOMAIN and NODATA as complete negative answers on unknown zones', () => {
+    const collector = new DNSCollector({ ...baseConfig, zoneManagement: 'unknown' }, mockDb);
+    const flags = { aa: false, tc: false, rd: true, ra: true, ad: false, cd: false };
+    const results: DNSQueryResult[] = [
+      {
+        query: { name: 'www.example.com', type: 'A' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        responseCode: 0,
+        flags,
+        answers: [{ name: 'www.example.com', type: 'A', ttl: 60, data: '192.0.2.1' }],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+      {
+        query: { name: 'www.example.com', type: 'MX' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: true,
+        responseCode: 0,
+        flags,
+        answers: [],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+      },
+      {
+        query: { name: 'selector._domainkey.www.example.com', type: 'TXT' },
+        vantage: { type: 'public-recursive', identifier: '8.8.8.8' },
+        success: false,
+        responseCode: 3,
+        flags,
+        answers: [],
+        authority: [],
+        additional: [],
+        responseTime: 10,
+        error: 'NXDOMAIN',
+      },
+    ];
+    const state = (
+      collector as unknown as {
+        calculateResultState: (
+          queryResults: DNSQueryResult[],
+          errors: Array<{ queryName: string; queryType: string; vantage: string; error: string }>
+        ) => 'complete' | 'partial' | 'failed';
+      }
+    ).calculateResultState(results, []);
+    expect(state).toBe('complete');
+  });
+
   it('should return partial result when one authoritative server times out', async () => {
     const collector = new DNSCollector(baseConfig, mockDb);
 
