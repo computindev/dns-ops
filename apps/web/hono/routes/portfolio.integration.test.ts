@@ -51,11 +51,26 @@ function getTableName(table: unknown): string {
   return '';
 }
 
-function getConditionParam(condition: unknown): unknown {
-  const sql = condition as {
-    queryChunks?: Array<{ constructor?: { name?: string }; value?: unknown }>;
+function getConditionParams(condition: unknown): unknown[] {
+  const values: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const candidate = node as {
+      constructor?: { name?: string };
+      value?: unknown;
+      queryChunks?: unknown[];
+    };
+    if (candidate.constructor?.name === 'Param' && candidate.value !== undefined) {
+      values.push(candidate.value);
+    }
+    for (const chunk of candidate.queryChunks ?? []) walk(chunk);
   };
-  return sql.queryChunks?.find((chunk) => chunk?.constructor?.name === 'Param')?.value;
+  walk(condition);
+  return values;
+}
+
+function getConditionParam(condition: unknown): unknown {
+  return getConditionParams(condition)[0];
 }
 
 function createInitialState(): IntegrationState {
@@ -202,10 +217,13 @@ function createMockDb(state: IntegrationState): IDatabaseAdapter {
     }),
     selectOne: vi.fn(async (table: unknown, condition: unknown) => {
       const rows = getTable(state, table);
-      const param = getConditionParam(condition);
+      const params = getConditionParams(condition);
       return rows.find(
         (r) =>
-          r.id === param || r.normalizedName === param || r.name === param || r.shareToken === param
+          params.includes(r.id) ||
+          params.includes(r.normalizedName) ||
+          params.includes(r.name) ||
+          params.includes(r.shareToken)
       );
     }),
     insert: vi.fn(async (table: unknown, values: Record<string, unknown>) => {
@@ -259,8 +277,8 @@ function createMockDb(state: IntegrationState): IDatabaseAdapter {
     updateOne: vi.fn(
       async (table: unknown, values: Record<string, unknown>, condition: unknown) => {
         const rows = getTable(state, table);
-        const param = getConditionParam(condition);
-        const idx = rows.findIndex((r) => r.id === param);
+        const params = getConditionParams(condition);
+        const idx = rows.findIndex((r) => params.includes(r.id));
         if (idx === -1) return undefined;
         rows[idx] = { ...rows[idx], ...values };
         return rows[idx];
@@ -269,8 +287,8 @@ function createMockDb(state: IntegrationState): IDatabaseAdapter {
     delete: vi.fn(),
     deleteOne: vi.fn(async (table: unknown, condition: unknown) => {
       const rows = getTable(state, table);
-      const param = getConditionParam(condition);
-      const idx = rows.findIndex((r) => r.id === param);
+      const params = getConditionParams(condition);
+      const idx = rows.findIndex((r) => params.includes(r.id));
       if (idx >= 0) rows.splice(idx, 1);
     }),
     transaction: vi.fn(async (cb: (db: IDatabaseAdapter) => Promise<unknown>) =>
