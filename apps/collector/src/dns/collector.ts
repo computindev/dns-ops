@@ -5,7 +5,7 @@
  * Evaluates rules and persists findings immediately after collection.
  */
 
-import { type AuthoritativeEvidenceCoverage, determineStatus } from '@dns-ops/contracts';
+import { type AuthoritativeEvidenceCoverage, DNS_RCODE, determineStatus } from '@dns-ops/contracts';
 import type {
   IDatabaseAdapter,
   NewFinding,
@@ -95,6 +95,11 @@ function createCombinedRuleset(): Ruleset {
     ],
     createdAt: new Date(),
   };
+}
+
+function isConclusiveDnsResult(result: DNSQueryResult): boolean {
+  if (result.success) return true;
+  return result.responseCode === DNS_RCODE.NXDOMAIN;
 }
 
 /**
@@ -473,7 +478,7 @@ export class DNSCollector {
       return 'failed';
     }
 
-    const successCount = results.filter((r) => r.success).length;
+    const conclusiveCount = results.filter((r) => isConclusiveDnsResult(r)).length;
     const totalCount = results.length;
 
     if (this.config.zoneManagement === 'managed') {
@@ -484,11 +489,11 @@ export class DNSCollector {
       if (lacksAuthoritativeProof) return 'partial';
     }
 
-    if (successCount === totalCount) {
+    if (conclusiveCount === totalCount) {
       return this.config.zoneManagement === 'unmanaged' ? 'partial' : 'complete';
     }
 
-    if (successCount > 0) {
+    if (conclusiveCount > 0) {
       return 'partial';
     }
 
